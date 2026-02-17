@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { parseJson } from "@/lib/parsers";
 
 export interface AnypointEnvironment {
   id: string;
@@ -26,7 +27,7 @@ function getCachedEnvironments(orgId: string): AnypointEnvironment[] | null {
   try {
     const raw = sessionStorage.getItem(ENVS_CACHE_PREFIX + orgId);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as unknown;
+    const parsed = parseJson(raw);
     return Array.isArray(parsed) ? (parsed as AnypointEnvironment[]) : null;
   } catch {
     return null;

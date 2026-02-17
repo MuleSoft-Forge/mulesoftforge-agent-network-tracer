@@ -41,55 +41,49 @@ function CallbackContent() {
       return;
     }
 
-    // Fetch stored state from server (cookie)
-    fetch("/api/auth/state")
+    // Validate state using PUT (atomic consume)
+    fetch("/api/auth/state", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ state }),
+    })
       .then(async (res) => {
         if (!res.ok) {
-          const errorText = await res.text();
-          throw new Error(`Failed to fetch state: ${res.status} ${errorText}`);
+          const errorData = await res.json();
+          throw new Error(errorData.error || "State validation failed");
         }
         return res.json();
       })
       .then((data) => {
-        const storedState = data.state;
-
-        // Validate state (CSRF protection)
-        if (!storedState) {
-          setError("No stored state found. The sign-in session may have expired. Please try signing in again.");
-          return;
-        }
-        if (state !== storedState) {
-          setError(`Invalid state parameter. Expected: ${storedState?.substring(0, 10)}..., got: ${state?.substring(0, 10)}... Please try signing in again.`);
+        if (!data.valid) {
+          setError("Invalid state parameter. Please try signing in again.");
           return;
         }
 
-        // Exchange code for token
-        fetch("/api/auth/token", {
+        // State validated and consumed, proceed with token exchange
+        return fetch("/api/auth/token", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ code }),
-        })
-          .then(async (res) => {
-            if (!res.ok) {
-              const error = await res.json();
-              throw new Error(error.message || "Token exchange failed");
-            }
-            return res.json();
-          })
-          .then(() => {
-            // Redirect to home page after successful authentication
-            router.push("/");
-          })
-          .catch((err) => {
-            setError(err.message || "Authentication failed. Please try again.");
-          });
+        });
+      })
+      .then(async (res) => {
+        if (!res) {
+          return; // Early return if previous step failed
+        }
+        if (!res.ok) {
+          const error = await res.json();
+          throw new Error(error.message || "Token exchange failed");
+        }
+        return res.json();
+      })
+      .then(() => {
+        // Redirect to home page after successful authentication
+        router.push("/");
       })
       .catch((err) => {
-        setError("Failed to validate state. Please try signing in again.");
+        setError(err.message || "Authentication failed. Please try again.");
       });
-
   }, [searchParams, router]);
 
   if (error) {

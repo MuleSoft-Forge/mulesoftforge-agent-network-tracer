@@ -1,27 +1,19 @@
 import { NextResponse } from "next/server";
-import { getIronSession } from "iron-session";
-import { cookies } from "next/headers";
+import { getSession, isAuthenticated } from "@/lib/session";
 import { loggedFetch, debugError } from "@/lib/api-logger";
-import { sessionOptions, type SessionData } from "@/lib/session";
 
 const DEFAULT_BASE_URL = "https://anypoint.mulesoft.com";
 
 export async function GET() {
-  const session = await getIronSession<SessionData>(await cookies(), sessionOptions);
-
-  // Check if session was invalidated (server-side invalidation for corporate governance)
-  if (session.invalidatedAt) {
-    return NextResponse.json(
-      { error: "Session invalidated" },
-      { status: 401 }
-    );
+  // Authentication check
+  if (!(await isAuthenticated())) {
+    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
-
-  if (!session.accessToken) {
-    return NextResponse.json(
-      { error: "Not signed in" },
-      { status: 401 }
-    );
+  
+  const session = await getSession();
+  
+  if (session.invalidatedAt || !session.accessToken) {
+    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
 
   const baseUrl = session.baseUrl ?? DEFAULT_BASE_URL;

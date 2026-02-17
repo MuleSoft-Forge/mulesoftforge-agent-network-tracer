@@ -7,24 +7,16 @@ import { useEffect, useState, useRef } from "react";
 import { ChevronDown, LogOut } from "lucide-react";
 import { REGIONS } from "@/lib/regions";
 import type { RegionOption } from "@/lib/regions";
+import { parseProfile, type Profile } from "@/lib/parsers";
 
 const PROFILE_CACHE_KEY = "agent-network-profile";
-
-type Profile = {
-  firstName?: string;
-  lastName?: string;
-  email?: string;
-  username?: string;
-  organization?: { name?: string; id?: string; [key: string]: unknown };
-  [key: string]: unknown;
-};
 
 function getCachedProfile(): Profile | null {
   if (typeof window === "undefined") return null;
   try {
     const raw = sessionStorage.getItem(PROFILE_CACHE_KEY);
     if (!raw) return null;
-    return JSON.parse(raw) as Profile;
+    return parseProfile(raw);
   } catch {
     return null;
   }

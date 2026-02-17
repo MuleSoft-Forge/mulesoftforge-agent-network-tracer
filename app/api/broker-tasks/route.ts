@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getIronSession } from "iron-session";
-import { cookies } from "next/headers";
+import { getSession, isAuthenticated } from "@/lib/session";
 import { loggedFetch, debugLog, debugError } from "@/lib/api-logger";
-import { sessionOptions, type SessionData } from "@/lib/session";
+import { BrokerTasksRequestSchema } from "@/lib/schemas";
 
 export const dynamic = "force-dynamic";
 
@@ -752,8 +751,13 @@ async function parseRuntimeLogsFallbackForBroker(
 }
 
 export async function POST(request: NextRequest) {
-  const session = await getIronSession<SessionData>(await cookies(), sessionOptions);
-
+  // Authentication check using unified session functions
+  if (!(await isAuthenticated())) {
+    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  }
+  
+  const session = await getSession();
+  
   if (session.invalidatedAt) {
     return NextResponse.json({ error: "Session invalidated" }, { status: 401 });
   }
@@ -763,26 +767,26 @@ export async function POST(request: NextRequest) {
   }
 
   const baseUrl = session.baseUrl ?? DEFAULT_BASE_URL;
-  const { orgId, apiInstanceId, timeRangeMs } = await request.json();
-
-  if (!orgId) {
+  
+  // Parse and validate request body with Zod
+  const body = await request.json();
+  const parseResult = BrokerTasksRequestSchema.safeParse(body);
+  
+  if (!parseResult.success) {
     return NextResponse.json(
-      { error: "orgId is required" },
+      {
+        error: "Invalid request",
+        details: parseResult.error.format(),
+      },
       { status: 400 }
     );
   }
-
-  if (!apiInstanceId) {
-    return NextResponse.json(
-      { error: "apiInstanceId is required" },
-      { status: 400 }
-    );
-  }
-
-  // Default to 24 hours, but enforce 7-day maximum to match Visualizer API limit
+  
+  const { orgId, apiInstanceId, timeRangeMs = 24 * 3600 * 1000 } = parseResult.data;
+  
+  // Enforce 7-day maximum to match Visualizer API limit
   const maxTimeRangeMs = 7 * 24 * 3600 * 1000; // 7 days
-  const requestedTimeRange = timeRangeMs || 24 * 3600 * 1000;
-  const timeRange = Math.min(requestedTimeRange, maxTimeRangeMs);
+  const timeRange = Math.min(timeRangeMs, maxTimeRangeMs);
 
   try {
     // Build Lucene query - filter by orgId first, then apiInstanceId and taskId

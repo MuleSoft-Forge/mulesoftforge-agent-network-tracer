@@ -1,12 +1,10 @@
 import { redirect } from "next/navigation";
-import { getSession } from "@/lib/session";
+import { isAuthenticated } from "@/lib/session";
 
 export default async function AppLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
-  const session = await getSession();
-
-  if (!session.authenticated) {
+  if (!(await isAuthenticated())) {
     redirect("/");
   }
 

@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getIronSession } from "iron-session";
-import { cookies } from "next/headers";
+import { getSession, isAuthenticated } from "@/lib/session";
 import { loggedFetch, debugError } from "@/lib/api-logger";
-import { sessionOptions, type SessionData } from "@/lib/session";
+import { ExchangeIconRequestSchema } from "@/lib/schemas";
 
 export const dynamic = "force-dynamic";
 
@@ -13,23 +12,35 @@ const DEFAULT_BASE_URL = "https://anypoint.mulesoft.com";
  * (e.g. /exchange/files/api/v1/organizations/.../icon) can be loaded on the canvas.
  */
 export async function GET(request: NextRequest) {
-  const session = await getIronSession<SessionData>(await cookies(), sessionOptions);
-
-  if (session.invalidatedAt) {
-    return NextResponse.json({ error: "Session invalidated" }, { status: 401 });
+  // Authentication check
+  if (!(await isAuthenticated())) {
+    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
-
-  if (!session.accessToken) {
+  
+  const session = await getSession();
+  
+  if (session.invalidatedAt || !session.accessToken) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
 
+  // Validate query parameters
   const path = request.nextUrl.searchParams.get("path");
-  if (path == null || path === "") {
-    return NextResponse.json({ error: "path is required" }, { status: 400 });
+  const parseResult = ExchangeIconRequestSchema.safeParse({ path });
+  
+  if (!parseResult.success) {
+    return NextResponse.json(
+      {
+        error: "Invalid request",
+        details: parseResult.error.format(),
+      },
+      { status: 400 }
+    );
   }
+  
+  const { path: validatedPath } = parseResult.data;
 
   const baseUrl = session.baseUrl ?? DEFAULT_BASE_URL;
-  const pathNormalized = path.startsWith("/") ? path : `/${path}`;
+  const pathNormalized = validatedPath.startsWith("/") ? validatedPath : `/${validatedPath}`;
   const url = `${baseUrl.replace(/\/$/, "")}${pathNormalized}`;
 
   try {

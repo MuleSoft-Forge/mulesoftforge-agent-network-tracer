@@ -5,32 +5,36 @@ import { getCredentialsForRegion } from "@/lib/regions";
 import type { RegionId } from "@/lib/regions";
 import { loggedFetch } from "@/lib/api-logger";
 import { sessionOptions, type SessionData } from "@/lib/session";
+import { TokenRequestSchema } from "@/lib/schemas";
 
 export async function POST(request: NextRequest) {
   try {
-    const { code } = await request.json();
-
-    if (!code) {
+    const body = await request.json();
+    const parseResult = TokenRequestSchema.safeParse(body);
+    
+    if (!parseResult.success) {
       return NextResponse.json(
         { message: "Authorization code is required" },
         { status: 400 }
       );
     }
-
+    
+    const { code } = parseResult.data;
+    
     const cookieStore = await cookies();
     const region = (cookieStore.get("anypoint_signin_region")?.value ?? "us") as RegionId;
     const creds = getCredentialsForRegion(region);
-
+    
     if (!creds) {
       return NextResponse.json(
         { message: "Invalid or unsupported region for sign-in" },
         { status: 400 }
       );
     }
-
+    
     const redirectUri = `${request.nextUrl.origin}/auth/callback`;
     const tokenUrl = `${creds.baseUrl}/accounts/api/v2/oauth2/token`;
-
+    
     const tokenResponse = await loggedFetch(tokenUrl, {
       method: "POST",
       headers: {
@@ -44,19 +48,17 @@ export async function POST(request: NextRequest) {
         client_secret: creds.clientSecret,
       }),
     });
-
+    
     if (!tokenResponse.ok) {
       return NextResponse.json(
         { message: "Failed to exchange authorization code" },
         { status: tokenResponse.status }
       );
     }
-
+    
     const tokenData = await tokenResponse.json();
     
-    // Manually seal session data and set cookie on response
-    // session.save() doesn't work in Next.js App Router, so we use sealData directly
-    // Explicitly clear invalidatedAt to ensure new session is valid (even if old cookie had it)
+    // Prepare session data
     const sessionData: SessionData = {
       accessToken: tokenData.access_token,
       refreshToken: tokenData.refresh_token,
@@ -71,8 +73,11 @@ export async function POST(request: NextRequest) {
     const secure = cookieOptions.secure ?? (process.env.NODE_ENV === "production");
     const sameSite = cookieOptions.sameSite ?? "lax";
     
+    // Create response
     const response = NextResponse.json({ success: true });
     
+    // Set session cookie ONLY on response (Next.js 15 pattern)
+    // Removed redundant cookieStore.set() to prevent double setting
     response.cookies.set("ant_session", sealed, {
       httpOnly: cookieOptions.httpOnly ?? true,
       secure: secure,
@@ -81,19 +86,12 @@ export async function POST(request: NextRequest) {
       path: "/",
     });
     
-    cookieStore.set("ant_session", sealed, {
-      httpOnly: cookieOptions.httpOnly ?? true,
-      secure: secure,
-      sameSite: sameSite,
-      maxAge: cookieOptions.maxAge ?? 90 * 24 * 60 * 60,
-      path: "/",
-    });
-
-    cookieStore.delete("anypoint_signin_region");
+    // Delete region cookie (no longer needed)
     response.cookies.delete("anypoint_signin_region");
-
+    
     return response;
   } catch (error) {
+    console.error("Token exchange error:", error);
     return NextResponse.json(
       { message: "Internal server error" },
       { status: 500 }

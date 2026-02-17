@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getIronSession } from "iron-session";
-import { cookies } from "next/headers";
+import { getSession, isAuthenticated } from "@/lib/session";
 import type { FabricGraphResponse, FabricNode } from "@/lib/adapters/visualizer-to-canonical";
 import type { BrokerInEnvironment } from "@/lib/visualizer/brokers-in-environment-types";
 import { loggedFetch, debugLog, debugError } from "@/lib/api-logger";
-import { sessionOptions, type SessionData } from "@/lib/session";
+import { BrokersInEnvironmentRequestSchema } from "@/lib/schemas";
 
 export const dynamic = "force-dynamic";
 
@@ -20,27 +19,45 @@ interface AnypointEnv {
 }
 
 export async function GET(request: NextRequest) {
-  const session = await getIronSession<SessionData>(await cookies(), sessionOptions);
-
+  // Authentication check
+  if (!(await isAuthenticated())) {
+    return NextResponse.json({ error: "Not signed in", brokers: [] }, { status: 401 });
+  }
+  
+  const session = await getSession();
+  
   if (session.invalidatedAt || !session.accessToken) {
     return NextResponse.json({ error: "Not signed in", brokers: [] }, { status: 401 });
   }
 
+  // Validate query parameters with Zod
   const orgId = request.nextUrl.searchParams.get("orgId");
   const environmentId = request.nextUrl.searchParams.get("environmentId");
   const activityPeriodParam = request.nextUrl.searchParams.get("activityPeriod");
+  
+  const parseResult = BrokersInEnvironmentRequestSchema.safeParse({
+    orgId,
+    environmentId,
+  });
+  
+  if (!parseResult.success) {
+    return NextResponse.json(
+      {
+        error: "Invalid request",
+        details: parseResult.error.format(),
+        brokers: [],
+      },
+      { status: 400 }
+    );
+  }
+  
+  const { orgId: validatedOrgId, environmentId: validatedEnvironmentId } = parseResult.data;
+  
   const activityPeriodMinutes = (() => {
     const n = activityPeriodParam != null ? parseInt(activityPeriodParam, 10) : NaN;
     if (!Number.isFinite(n) || n < 1) return DEFAULT_ACTIVITY_PERIOD_MINUTES;
     return Math.min(Math.max(n, 1), 10080); // clamp 1–7 days
   })();
-
-  if (!orgId || !environmentId) {
-    return NextResponse.json(
-      { error: "orgId and environmentId are required", brokers: [] },
-      { status: 400 }
-    );
-  }
 
   const baseUrl = session.baseUrl ?? DEFAULT_BASE_URL;
   const authHeader = `Bearer ${session.accessToken}`;
@@ -48,7 +65,7 @@ export async function GET(request: NextRequest) {
   try {
     // Resolve isProduction for the selected environment (fabric only has prod vs non-prod).
     const envsRes = await loggedFetch(
-      `${baseUrl}/accounts/api/organizations/${encodeURIComponent(orgId)}/environments`,
+      `${baseUrl}/accounts/api/organizations/${encodeURIComponent(validatedOrgId)}/environments`,
       { headers: { Authorization: authHeader } }
     );
     if (!envsRes.ok) {
@@ -61,18 +78,18 @@ export async function GET(request: NextRequest) {
     const envsBody = (await envsRes.json()) as { data?: AnypointEnv[] };
     const envs = Array.isArray(envsBody.data) ? envsBody.data : [];
     const selectedEnv = envs.find(
-      (e: AnypointEnv) => e.id != null && String(e.id) === environmentId
+      (e: AnypointEnv) => e.id != null && String(e.id) === validatedEnvironmentId
     );
     const isProduction = selectedEnv?.isProduction === true;
 
     // Single fabric call: instance IDs come from prod_instances_map / non_prod_instances_map.
     // FabricGraphFilterDTO does not include activityPeriod; pass it to any Visualizer endpoint that does (e.g. node runtime, runtime-edges).
     const fabricRes = await loggedFetch(
-      `${baseUrl}/visualizer/api/v2/organizations/${encodeURIComponent(orgId)}/fabric-network`,
+      `${baseUrl}/visualizer/api/v2/organizations/${encodeURIComponent(validatedOrgId)}/fabric-network`,
       {
         method: "POST",
         headers: { Authorization: authHeader, "Content-Type": "application/json" },
-        body: JSON.stringify({ orgIds: [orgId] }),
+        body: JSON.stringify({ orgIds: [validatedOrgId] }),
       }
     );
     if (!fabricRes.ok) {

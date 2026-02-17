@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, use, Suspense, Component } from "react";
+import type { ReactNode, ErrorInfo } from "react";
 import { ChevronRight, ChevronDown, Clock, CheckCircle2, XCircle, Circle } from "lucide-react";
 import { useDebugViewer } from "@/components/debug/useDebugViewer";
 import TaskDetailsPanel from "@/components/task-details/TaskDetailsPanel";
@@ -14,12 +15,92 @@ interface TaskDetailsProps {
   envId?: string;
 }
 
-export default function TaskDetails({ orgId, taskId, envId }: TaskDetailsProps) {
-  const [jobCard, setJobCard] = useState<JobCard | null>(null);
-  const [entries, setEntries] = useState<LogEntry[]>([]);
-  const [traceSpans, setTraceSpans] = useState<TraceSpan[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+interface TaskData {
+  jobCard: JobCard;
+  entries: LogEntry[];
+  traceSpans?: TraceSpan[];
+}
+
+/**
+ * Helper function to handle API errors and format error messages
+ */
+async function handleApiError(res: Response): Promise<never> {
+  const statusCode = res.status;
+  
+  // Read response text first, then try to parse as JSON
+  let responseText = "";
+  try {
+    responseText = await res.text();
+  } catch (textErr) {
+    // If we can't read text, fall back to status code
+    if (statusCode === 403) {
+      throw new Error("Log Search - Advanced package or a Titanium subscription to Anypoint Platform Required - Elasticsearch log search APIs - Enhanced raw storage (up to 128TB based on configuration) - Advanced logs and traces - LLM reasoning logs (for Agent Broker monitoring)");
+    }
+    throw new Error(`Failed to fetch: ${statusCode}`);
+  }
+  
+  // Try to parse as JSON
+  let data: { error?: string; code?: string; message?: string; details?: unknown } = {};
+  try {
+    if (responseText.trim()) {
+      data = JSON.parse(responseText);
+    }
+  } catch (jsonErr) {
+    // If JSON parsing fails, use the text content if available
+    if (responseText.trim()) {
+      if (statusCode === 400) {
+        throw new Error(`Invalid request: ${responseText.slice(0, 200)}`);
+      }
+      throw new Error(responseText.slice(0, 200));
+    }
+    // If no text content, fall back to status code based messages
+    if (statusCode === 403) {
+      throw new Error("Log Search - Advanced package or a Titanium subscription to Anypoint Platform Required - Elasticsearch log search APIs - Enhanced raw storage (up to 128TB based on configuration) - Advanced logs and traces - LLM reasoning logs (for Agent Broker monitoring)");
+    }
+    if (statusCode === 400) {
+      throw new Error("Invalid request - please check your parameters");
+    }
+    throw new Error(`Failed to fetch: ${statusCode}`);
+  }
+  
+  // Check for Monitoring Center Premium error specifically
+  if (statusCode === 403 && (data.code === "MONITORING_CENTER_PREMIUM_REQUIRED" || data.error?.includes("Monitoring Center Premium"))) {
+    const errorMessage = data.message || data.error || "Log Search - Advanced package or a Titanium subscription to Anypoint Platform Required - Elasticsearch log search APIs - Enhanced raw storage (up to 128TB based on configuration) - Advanced logs and traces - LLM reasoning logs (for Agent Broker monitoring)";
+    throw new Error(errorMessage);
+  }
+  
+  // Handle 400 Bad Request with better error messages
+  if (statusCode === 400) {
+    const errorMessage = data.error || data.message || "Invalid request";
+    
+    // Format Zod validation errors into a user-friendly message
+    let formattedDetails = "";
+    if (data.details && typeof data.details === "object") {
+      const details = data.details as Record<string, { _errors?: string[] }>;
+      const fieldErrors: string[] = [];
+      
+      for (const [field, value] of Object.entries(details)) {
+        if (value && typeof value === "object" && Array.isArray(value._errors) && value._errors.length > 0) {
+          fieldErrors.push(`${field}: ${value._errors.join(", ")}`);
+        }
+      }
+      
+      if (fieldErrors.length > 0) {
+        formattedDetails = ` - ${fieldErrors.join("; ")}`;
+      }
+    }
+    
+    throw new Error(`${errorMessage}${formattedDetails}`);
+  }
+  
+  // For other errors, use the error message from the response
+  throw new Error(data.error || data.message || `Failed to fetch: ${statusCode}`);
+}
+
+/**
+ * Content component that uses React 19's use() hook for data fetching
+ */
+function TaskDetailsContent({ orgId, taskId, envId, taskResource }: TaskDetailsProps & { taskResource: Promise<TaskData> }) {
   const [viewMode, setViewMode] = useState<ViewMode>("tree");
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set(["task"]));
   const [expandedEntries, setExpandedEntries] = useState<Set<number>>(new Set());
@@ -27,77 +108,28 @@ export default function TaskDetails({ orgId, taskId, envId }: TaskDetailsProps) 
   const [detailTab, setDetailTab] = useState<DetailTab>("input-output");
   const { openDebugViewer } = useDebugViewer();
 
+  // Use React 19's use() hook - this will suspend if the promise is pending
+  const data = use(taskResource);
+
+  const { jobCard, entries, traceSpans = [] } = data;
+
+  // Auto-select task on load
+  useEffect(() => {
+    if (jobCard && !selectedItem) {
+      setSelectedItem({
+        type: "task",
+        id: "task",
+        data: jobCard,
+      });
+    }
+  }, [jobCard, selectedItem]);
+
   // When selectedItem changes to a non-task item, switch away from traces tab if needed
   useEffect(() => {
     if (selectedItem != null && selectedItem.type !== "task" && detailTab === "traces") {
       setDetailTab("input-output");
     }
   }, [selectedItem, detailTab]);
-
-  // Load task details when taskId changes
-  useEffect(() => {
-    if (!orgId || !taskId) {
-      setJobCard(null);
-      setEntries([]);
-      setError(null);
-      setSelectedItem(null);
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-
-    const url = `/api/task-callstack?orgId=${encodeURIComponent(orgId)}&taskId=${encodeURIComponent(taskId)}${envId ? `&envId=${encodeURIComponent(envId)}` : ""}`;
-    fetch(url)
-      .then((res) => {
-        // Capture status code BEFORE parsing JSON
-        const statusCode = res.status;
-        
-        if (!res.ok) {
-          // Try to parse JSON, but handle errors separately
-          return res.json()
-            .then((data: { error?: string; code?: string; message?: string }) => {
-              // Check for Monitoring Center Premium error specifically
-              if (statusCode === 403 && (data.code === "MONITORING_CENTER_PREMIUM_REQUIRED" || data.error?.includes("Monitoring Center Premium"))) {
-                const errorMessage = data.message || data.error || "Log Search - Advanced package or a Titanium subscription to Anypoint Platform Required - Elasticsearch log search APIs - Enhanced raw storage (up to 128TB based on configuration) - Advanced logs and traces - LLM reasoning logs (for Agent Broker monitoring)";
-                throw new Error(errorMessage);
-              }
-              throw new Error(data.error || `Failed to fetch: ${statusCode}`);
-            })
-            .catch((jsonErr) => {
-              // If JSON parsing fails, check status code directly
-              if (statusCode === 403) {
-                throw new Error("Log Search - Advanced package or a Titanium subscription to Anypoint Platform Required - Elasticsearch log search APIs - Enhanced raw storage (up to 128TB based on configuration) - Advanced logs and traces - LLM reasoning logs (for Agent Broker monitoring)");
-              }
-              throw new Error(`Failed to fetch: ${statusCode}`);
-            });
-        }
-        return res.json();
-      })
-      .then((data: { jobCard: JobCard; entries: LogEntry[]; traceSpans?: TraceSpan[] }) => {
-        setJobCard(data.jobCard);
-        setEntries(data.entries ?? []);
-        setTraceSpans(data.traceSpans ?? []);
-        // Auto-select task on load
-        if (data.jobCard) {
-          setSelectedItem({
-            type: "task",
-            id: "task",
-            data: data.jobCard,
-          });
-        }
-      })
-      .catch((err) => {
-        console.error("Error fetching task call stack:", err);
-        // Check if it's a Monitoring Center Premium error
-        if (err.message && (err.message.includes("Monitoring Center Premium") || err.message.includes("Log Search - Advanced package"))) {
-          setError("Log Search - Advanced package or a Titanium subscription to Anypoint Platform Required - Elasticsearch log search APIs - Enhanced raw storage (up to 128TB based on configuration) - Advanced logs and traces - LLM reasoning logs (for Agent Broker monitoring)");
-        } else {
-          setError(err.message || "Failed to load task details");
-        }
-      })
-      .finally(() => setLoading(false));
-  }, [orgId, taskId, envId]);
 
   // Build hierarchical structure
   const treeStructure = useMemo(() => {
@@ -250,61 +282,7 @@ export default function TaskDetails({ orgId, taskId, envId }: TaskDetailsProps) 
     });
   };
 
-  if (!taskId) {
-    return (
-      <div className="flex h-full items-center justify-center text-sm text-gray-400">
-        Select a task to view its call stack.
-      </div>
-    );
-  }
-
-  if (loading) {
-    return (
-      <div className="flex h-full items-center justify-center text-sm text-gray-500">
-        Loading call stack...
-      </div>
-    );
-  }
-
-  if (error) {
-    const isEntitlementError = error.includes("Monitoring Center Premium");
-    return (
-      <div className="flex h-full flex-col items-center justify-center px-4">
-        <div className={`rounded-lg border p-4 max-w-md ${isEntitlementError ? "border-amber-300 bg-amber-50" : "border-red-200 bg-red-50"}`}>
-          <p className={`text-sm font-semibold mb-2 ${isEntitlementError ? "text-amber-900" : "text-red-900"}`}>
-            {isEntitlementError ? "Log Search - Advanced package or a Titanium subscription to Anypoint Platform Required" : "Error"}
-          </p>
-          {isEntitlementError && (
-            <div className="text-xs text-amber-800 mt-2 space-y-1">
-              <ul className="list-disc list-inside space-y-0.5">
-                <li>Elasticsearch log search APIs</li>
-                <li>Enhanced raw storage (up to 128TB based on configuration)</li>
-                <li>Advanced logs and traces</li>
-                <li>LLM reasoning logs (for Agent Broker monitoring)</li>
-              </ul>
-              <p className="mt-2 text-amber-700">
-                <a 
-                  href="https://docs.mulesoft.com/monitoring/#log-search" 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  className="underline hover:text-amber-900"
-                >
-                  Learn more about log search requirements
-                </a>
-              </p>
-            </div>
-          )}
-          {!isEntitlementError && (
-            <p className={`text-sm text-red-800`}>
-              {error}
-            </p>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  if (!jobCard || !treeStructure) {
+  if (!treeStructure) {
     return null;
   }
 
@@ -425,5 +403,134 @@ export default function TaskDetails({ orgId, taskId, envId }: TaskDetailsProps) 
       </div>
     </div>
   );
+}
+
+/**
+ * Error boundary component for handling API errors
+ */
+function TaskDetailsError({ error, orgId, taskId, envId }: { error: Error; orgId: string; taskId: string | null; envId?: string }) {
+  const isEntitlementError = error.message.includes("Monitoring Center Premium") || error.message.includes("Log Search - Advanced package");
+  
+  return (
+    <div className="flex h-full flex-col items-center justify-center px-4">
+      <div className={`rounded-lg border p-4 max-w-md ${isEntitlementError ? "border-amber-300 bg-amber-50" : "border-red-200 bg-red-50"}`}>
+        <p className={`text-sm font-semibold mb-2 ${isEntitlementError ? "text-amber-900" : "text-red-900"}`}>
+          {isEntitlementError ? "Log Search - Advanced package or a Titanium subscription to Anypoint Platform Required" : "Error"}
+        </p>
+        {isEntitlementError && (
+          <div className="text-xs text-amber-800 mt-2 space-y-1">
+            <ul className="list-disc list-inside space-y-0.5">
+              <li>Elasticsearch log search APIs</li>
+              <li>Enhanced raw storage (up to 128TB based on configuration)</li>
+              <li>Advanced logs and traces</li>
+              <li>LLM reasoning logs (for Agent Broker monitoring)</li>
+            </ul>
+            <p className="mt-2 text-amber-700">
+              <a 
+                href="https://docs.mulesoft.com/monitoring/#log-search" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="underline hover:text-amber-900"
+              >
+                Learn more about log search requirements
+              </a>
+            </p>
+          </div>
+        )}
+        {!isEntitlementError && (
+          <p className={`text-sm text-red-800`}>
+            {error.message}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Main component with Suspense boundary and error handling
+ */
+export default function TaskDetails({ orgId, taskId, envId }: TaskDetailsProps) {
+  // Create promise resource (memoized) - React 19 pattern
+  const taskResource = useMemo(() => {
+    if (!orgId || !taskId) {
+      return null;
+    }
+    
+    const url = `/api/task-callstack?orgId=${encodeURIComponent(orgId)}&taskId=${encodeURIComponent(taskId)}${envId ? `&envId=${encodeURIComponent(envId)}` : ""}`;
+    
+    return fetch(url)
+      .then(async (res) => {
+        if (!res.ok) {
+          return handleApiError(res);
+        }
+        return res.json() as Promise<TaskData>;
+      })
+      .catch((err) => {
+        console.error("Error fetching task call stack:", err);
+        // Re-throw to be caught by error boundary
+        throw err;
+      });
+  }, [orgId, taskId, envId]);
+
+  // Handle case when no taskId is selected
+  if (!taskId) {
+    return (
+      <div className="flex h-full items-center justify-center text-sm text-gray-400">
+        Select a task to view its call stack.
+      </div>
+    );
+  }
+
+  // Handle case when resource is null (shouldn't happen if taskId exists, but type-safe)
+  if (!taskResource) {
+    return null;
+  }
+
+  // Wrap content with Suspense and error boundary
+  return (
+    <ErrorBoundary
+      fallback={(error) => <TaskDetailsError error={error} orgId={orgId} taskId={taskId} envId={envId} />}
+    >
+      <Suspense
+        fallback={
+          <div className="flex h-full items-center justify-center text-sm text-gray-500">
+            Loading call stack...
+          </div>
+        }
+      >
+        <TaskDetailsContent orgId={orgId} taskId={taskId} envId={envId} taskResource={taskResource} />
+      </Suspense>
+    </ErrorBoundary>
+  );
+}
+
+/**
+ * Simple error boundary component for React 19
+ * Note: In a production app, you might want to use react-error-boundary library
+ */
+class ErrorBoundary extends Component<
+  { children: ReactNode; fallback: (error: Error) => ReactNode },
+  { error: Error | null }
+> {
+  constructor(props: { children: ReactNode; fallback: (error: Error) => ReactNode }) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error("TaskDetails error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.error) {
+      return this.props.fallback(this.state.error);
+    }
+    return this.props.children;
+  }
 }
 

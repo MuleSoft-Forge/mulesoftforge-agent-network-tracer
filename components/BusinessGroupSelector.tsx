@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { parseProfile, type Profile } from "@/lib/parsers";
 
 export const BUSINESS_GROUP_ALL = "ALL";
 export const BUSINESS_GROUP_NONE = "";
@@ -17,18 +18,14 @@ interface Organization {
   [key: string]: unknown;
 }
 
-interface Profile {
-  organization?: Organization;
-  memberOfOrganizations?: Organization[];
-  [key: string]: unknown;
-}
+// Profile type is imported from lib/parsers
 
 function getCachedProfile(): Profile | null {
   if (typeof window === "undefined") return null;
   try {
     const raw = sessionStorage.getItem(PROFILE_CACHE_KEY);
     if (!raw) return null;
-    return JSON.parse(raw) as Profile;
+    return parseProfile(raw);
   } catch {
     return null;
   }

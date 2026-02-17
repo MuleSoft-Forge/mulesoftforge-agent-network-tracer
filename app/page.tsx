@@ -3,11 +3,11 @@ import { redirect } from "next/navigation";
 import ControlPlaneSignIn from "@/components/ControlPlaneSignIn";
 import DebugLoggingCard from "@/components/DebugLoggingCard";
 import TierRequirementCard from "@/components/TierRequirementCard";
-import { getSession } from "@/lib/session";
+import { getSessionStatus } from "@/lib/session";
 import { getTagline } from "@/lib/site-config";
 
 export default async function HomePage() {
-  const session = await getSession();
+  const session = await getSessionStatus();
 
   if (session.authenticated) {
     redirect("/agent-network");

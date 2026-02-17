@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
-import { getIronSession } from "iron-session";
-import { cookies } from "next/headers";
-import { sessionOptions, type SessionData } from "@/lib/session";
+import { getSession, isAuthenticated } from "@/lib/session";
 import { getAuthorizationUrl } from "@/lib/auth/oauth";
 import type { RegionId } from "@/lib/regions";
 
@@ -15,18 +13,21 @@ function generateState(): string {
 }
 
 export async function GET(request: Request) {
-  // Check if already authenticated (using shared session config)
-  const session = await getIronSession<SessionData>(
-    await cookies(),
-    sessionOptions
-  );
+  // Check if already authenticated
+  if (await isAuthenticated()) {
+    return NextResponse.redirect(new URL("/agent-network", request.url));
+  }
+  
+  const session = await getSession();
   
   // Check if session was invalidated (server-side invalidation for corporate governance)
   if (session.invalidatedAt) {
-    // Session was invalidated, allow sign-in to proceed (will create new session)
-  } else if (session.accessToken && session.expiresAt && session.expiresAt > Date.now()) {
-    // Already authenticated with valid session, redirect to agent-network
-    return NextResponse.redirect(new URL("/agent-network", request.url));
+    // Session was invalidated, clear it first to start fresh
+    session.accessToken = undefined;
+    session.refreshToken = undefined;
+    session.expiresAt = undefined;
+    session.baseUrl = undefined;
+    session.invalidatedAt = undefined;
   }
 
   // Get region from URL params (defaults to "us")
@@ -40,15 +41,6 @@ export async function GET(request: Request) {
   const state = generateState();
 
   // Store state in session temporarily
-  // If session was invalidated, clear it first to start fresh
-  if (session.invalidatedAt) {
-    // Clear invalidated session data before storing new OAuth state
-    session.accessToken = undefined;
-    session.refreshToken = undefined;
-    session.expiresAt = undefined;
-    session.baseUrl = undefined;
-    session.invalidatedAt = undefined;
-  }
   session.oauthState = state;
   await session.save();
 

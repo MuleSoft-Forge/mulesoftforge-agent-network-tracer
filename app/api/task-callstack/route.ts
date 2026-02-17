@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getIronSession } from "iron-session";
-import { cookies } from "next/headers";
+import { getSession, isAuthenticated } from "@/lib/session";
 import { loggedFetch, debugError, debugLog } from "@/lib/api-logger";
-import { sessionOptions, type SessionData } from "@/lib/session";
+import { TaskCallstackRequestSchema } from "@/lib/schemas";
 
 export const dynamic = "force-dynamic";
 
@@ -528,13 +527,14 @@ async function parseRuntimeLogsFallback(
 }
 
 export async function GET(request: NextRequest) {
-  const session = await getIronSession<SessionData>(await cookies(), sessionOptions);
-
-  if (session.invalidatedAt) {
-    return NextResponse.json({ error: "Session invalidated" }, { status: 401 });
+  // Authentication check
+  if (!(await isAuthenticated())) {
+    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
-
-  if (!session.accessToken) {
+  
+  const session = await getSession();
+  
+  if (session.invalidatedAt || !session.accessToken) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
 
@@ -542,21 +542,36 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const orgId = searchParams.get("orgId");
   const taskId = searchParams.get("taskId");
-  const envId = searchParams.get("envId"); // Optional: needed for runtime logs fallback
+  // Convert null to undefined for optional parameters (Zod expects undefined, not null)
+  const apiInstanceId = searchParams.get("apiInstanceId") || undefined;
+  const envId = searchParams.get("envId") || undefined;
 
-  if (!orgId || !taskId) {
+  // Validate query parameters with Zod
+  const parseResult = TaskCallstackRequestSchema.safeParse({
+    orgId,
+    taskId,
+    apiInstanceId,
+    envId,
+  });
+  
+  if (!parseResult.success) {
     return NextResponse.json(
-      { error: "orgId and taskId required" },
+      {
+        error: "Invalid request",
+        details: parseResult.error.format(),
+      },
       { status: 400 }
     );
   }
+  
+  const { orgId: validatedOrgId, taskId: validatedTaskId, apiInstanceId: validatedApiInstanceId, envId: validatedEnvId } = parseResult.data;
 
   const timeRange = 30 * 24 * 3600 * 1000;
 
   try {
     // Phase 1: search by taskId - filter by orgId first since we search all indices
-    const phase1Query = `orgId=${orgId} AND "${taskId}"`;
-    const phase1 = await msearch(orgId, phase1Query, { timeRangeMs: timeRange }, session.accessToken, baseUrl);
+    const phase1Query = `orgId=${validatedOrgId} AND "${validatedTaskId}"`;
+    const phase1 = await msearch(validatedOrgId, phase1Query, { timeRangeMs: timeRange }, session.accessToken, baseUrl);
     
     // Check for Monitoring Center Premium entitlement error - try fallback
     // COMMENTED OUT: Fallback disabled - return 403 to show warning message
@@ -621,8 +636,8 @@ export async function GET(request: NextRequest) {
     let allHits = phase1.hits;
     let phase2Query: string | null = null;
     if (traceId) {
-      phase2Query = `orgId=${orgId} AND ("${traceId}" OR "${taskId}")`;
-      const phase2 = await msearch(orgId, phase2Query, { timeRangeMs: timeRange }, session.accessToken, baseUrl);
+      phase2Query = `orgId=${validatedOrgId} AND ("${traceId}" OR "${validatedTaskId}")`;
+      const phase2 = await msearch(validatedOrgId, phase2Query, { timeRangeMs: timeRange }, session.accessToken, baseUrl);
       
       // Check for Monitoring Center Premium entitlement error - try fallback
       // COMMENTED OUT: Fallback disabled - return 403 to show warning message
@@ -775,13 +790,13 @@ export async function GET(request: NextRequest) {
 
     // Fetch trace spans when we have traceId and envId (observability API)
     let traceSpans: TraceSpanRow[] = [];
-    if (traceId && envId && envId.trim() !== "") {
+    if (traceId && validatedEnvId && validatedEnvId.trim() !== "") {
       traceSpans = await fetchTraceSpans(
-        orgId,
+        validatedOrgId,
         traceId,
         session.accessToken,
         baseUrl,
-        envId,
+        validatedEnvId,
         firstEntry?.timestamp,
         lastEntry?.timestamp
       );
