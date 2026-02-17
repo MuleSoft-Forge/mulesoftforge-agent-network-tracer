@@ -9,6 +9,7 @@ import BusinessGroupSelector from "@/components/BusinessGroupSelector";
 import EnvironmentSelector, { type AnypointEnvironment } from "@/components/EnvironmentSelector";
 import TasksList from "@/components/TasksList";
 import Spinner from "@/components/Spinner";
+import { debugLog } from "@/lib/api-logger";
 import type { ActivityPeriod, Environment } from "@/lib/visualizer/runtime-edges";
 import { ACTIVITY_PERIODS } from "@/lib/visualizer/runtime-edges";
 import type { BrokerInEnvironment } from "@/lib/visualizer/brokers-in-environment-types";
@@ -262,7 +263,7 @@ export default function LeftSidebar({
               const broker = brokers.find((b: BrokerInEnvironment) => b.nodeId === selectedBrokerNodeId);
               if (broker && broker.instanceIds.length > 0) {
                 const apiInstanceId = broker.instanceIds[0];
-                console.log("TasksList props:", { 
+                debugLog("TasksList props:", { 
                   orgId: selection.value, 
                   apiInstanceId, 
                   brokerName: broker.name || broker.assetId,

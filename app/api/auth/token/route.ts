@@ -3,7 +3,7 @@ import { sealData } from "iron-session";
 import { cookies } from "next/headers";
 import { getCredentialsForRegion } from "@/lib/regions";
 import type { RegionId } from "@/lib/regions";
-import { loggedFetch, debugLog, debugError } from "@/lib/api-logger";
+import { loggedFetch } from "@/lib/api-logger";
 import { sessionOptions, type SessionData } from "@/lib/session";
 
 export async function POST(request: NextRequest) {
@@ -46,8 +46,6 @@ export async function POST(request: NextRequest) {
     });
 
     if (!tokenResponse.ok) {
-      const error = await tokenResponse.text();
-      debugError("Token exchange failed:", error);
       return NextResponse.json(
         { message: "Failed to exchange authorization code" },
         { status: tokenResponse.status }
@@ -55,20 +53,6 @@ export async function POST(request: NextRequest) {
     }
 
     const tokenData = await tokenResponse.json();
-    
-    debugLog("[TOKEN] ========== START TOKEN EXCHANGE ==========");
-    debugLog("[TOKEN] Token data received:", {
-      hasAccessToken: !!tokenData.access_token,
-      hasRefreshToken: !!tokenData.refresh_token,
-      expiresIn: tokenData.expires_in,
-    });
-    
-    // Check cookie BEFORE setting
-    const cookieBefore = cookieStore.get("ant_session");
-    debugLog("[TOKEN] Cookie BEFORE setting:", {
-      exists: !!cookieBefore,
-      value: cookieBefore ? `${cookieBefore.value.substring(0, 20)}...` : "null",
-    });
     
     // Manually seal session data and set cookie on response
     // session.save() doesn't work in Next.js App Router, so we use sealData directly
@@ -81,35 +65,14 @@ export async function POST(request: NextRequest) {
       invalidatedAt: undefined, // Explicitly clear any previous invalidation
     };
     
-    debugLog("[TOKEN] Session data to seal:", {
-      hasAccessToken: !!sessionData.accessToken,
-      hasRefreshToken: !!sessionData.refreshToken,
-      expiresAt: sessionData.expiresAt,
-      baseUrl: sessionData.baseUrl,
-    });
-    
-    debugLog("[TOKEN] Calling sealData()");
     const sealed = await sealData(sessionData, sessionOptions);
-    debugLog("[TOKEN] Sealed cookie:", {
-      length: sealed.length,
-      preview: `${sealed.substring(0, 30)}...`,
-    });
     
     const cookieOptions = sessionOptions.cookieOptions;
     const secure = cookieOptions.secure ?? (process.env.NODE_ENV === "production");
     const sameSite = cookieOptions.sameSite ?? "lax";
     
-    debugLog("[TOKEN] Cookie options:", {
-      httpOnly: cookieOptions.httpOnly ?? true,
-      secure,
-      sameSite,
-      maxAge: cookieOptions.maxAge ?? 90 * 24 * 60 * 60,
-      path: "/",
-    });
-    
     const response = NextResponse.json({ success: true });
     
-    debugLog("[TOKEN] Setting cookie via response.cookies.set()");
     response.cookies.set("ant_session", sealed, {
       httpOnly: cookieOptions.httpOnly ?? true,
       secure: secure,
@@ -118,12 +81,6 @@ export async function POST(request: NextRequest) {
       path: "/",
     });
     
-    // Check what's in response cookies
-    const responseCookies = response.headers.getSetCookie();
-    debugLog("[TOKEN] Response Set-Cookie headers:", responseCookies);
-    
-    // Also set on cookie store
-    debugLog("[TOKEN] Setting cookie on cookieStore");
     cookieStore.set("ant_session", sealed, {
       httpOnly: cookieOptions.httpOnly ?? true,
       secure: secure,
@@ -131,23 +88,12 @@ export async function POST(request: NextRequest) {
       maxAge: cookieOptions.maxAge ?? 90 * 24 * 60 * 60,
       path: "/",
     });
-    
-    // Verify it's set
-    const cookieAfter = cookieStore.get("ant_session");
-    debugLog("[TOKEN] Cookie AFTER setting:", {
-      exists: !!cookieAfter,
-      value: cookieAfter ? `${cookieAfter.value.substring(0, 30)}...` : "null",
-      matchesSealed: cookieAfter?.value === sealed,
-    });
 
     cookieStore.delete("anypoint_signin_region");
     response.cookies.delete("anypoint_signin_region");
-    
-    debugLog("[TOKEN] ========== END TOKEN EXCHANGE ==========");
 
     return response;
   } catch (error) {
-    debugError("Token exchange error:", error);
     return NextResponse.json(
       { message: "Internal server error" },
       { status: 500 }

@@ -31,7 +31,6 @@ export async function getSession() {
     // Check if session was invalidated (server-side invalidation for corporate governance)
     // Even if browser doesn't delete cookie, server will reject invalidated sessions
     if (session.invalidatedAt) {
-      console.log("[SESSION] Session rejected - invalidated at:", new Date(session.invalidatedAt).toISOString());
       return { authenticated: false };
     }
     

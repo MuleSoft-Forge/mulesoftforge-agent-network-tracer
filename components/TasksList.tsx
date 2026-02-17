@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
+import { debugError } from "@/lib/api-logger";
 import type { ActivityPeriod } from "@/lib/visualizer/runtime-edges";
 import { ACTIVITY_PERIODS } from "@/lib/visualizer/runtime-edges";
 

@@ -10,6 +10,7 @@ import {
 } from "@/lib/regions";
 import PrivacyPolicyModal from "@/components/PrivacyPolicyModal";
 import { PRIVACY_ACCEPT_STORAGE_KEY } from "@/components/PrivacyPolicyModal";
+import { debugLog } from "@/lib/api-logger";
 
 function getStoredPrivacyAccepted(): boolean {
   if (typeof window === "undefined") return false;
@@ -36,25 +37,25 @@ export default function ControlPlaneSignIn() {
 
   const handleSignInClick = (e: React.MouseEvent<HTMLButtonElement>) => {
     e.preventDefault();
-    console.log("[SIGN-IN] Button clicked, region:", region);
+    debugLog("[SIGN-IN] Button clicked, region:", region);
     
     const currentRegion = (selectRef.current?.value ?? region) as "us" | "eu" | "ca" | "jp";
     const regionOption = REGIONS.find((r: { id: string; available: boolean }) => r.id === currentRegion);
     
-    console.log("[SIGN-IN] Current region:", currentRegion, "available:", regionOption?.available);
+    debugLog("[SIGN-IN] Current region:", currentRegion, "available:", regionOption?.available);
     
     // Prevent sign-in if privacy policy not accepted (must accept via modal or /privacy page)
     if (!privacyAccepted) {
-      console.log("[SIGN-IN] Privacy policy not accepted, aborting");
+      debugLog("[SIGN-IN] Privacy policy not accepted, aborting");
       return;
     }
     if (!regionOption?.available) {
-      console.log("[SIGN-IN] Region not available, aborting");
+      debugLog("[SIGN-IN] Region not available, aborting");
       return;
     }
     
     const signInUrl = `/auth/sign-in?region=${currentRegion}`;
-    console.log("[SIGN-IN] Navigating to:", signInUrl);
+    debugLog("[SIGN-IN] Navigating to:", signInUrl);
     
     // Use window.location.href for reliable navigation
     window.location.href = signInUrl;

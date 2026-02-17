@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronDown } from "lucide-react";
+import { debugError } from "@/lib/api-logger";
 
 interface UserProfileData {
   firstName?: string;
@@ -40,7 +41,7 @@ export default function UserProfile() {
         }
       })
       .catch((error) => {
-        console.error("Error fetching profile:", error);
+        debugError("Error fetching profile:", error);
       })
       .finally(() => {
         setLoading(false);

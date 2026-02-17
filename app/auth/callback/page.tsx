@@ -52,11 +52,6 @@ function CallbackContent() {
       })
       .then((data) => {
         const storedState = data.state;
-        console.log("[CALLBACK] State validation:", {
-          urlState: state,
-          storedState: storedState,
-          match: state === storedState,
-        });
 
         // Validate state (CSRF protection)
         if (!storedState) {
@@ -93,7 +88,6 @@ function CallbackContent() {
       })
       .catch((err) => {
         setError("Failed to validate state. Please try signing in again.");
-        console.error("State validation error:", err);
       });
 
   }, [searchParams, router]);

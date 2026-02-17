@@ -26,12 +26,17 @@ export function getOAuthConfig(): OAuthConfig {
     );
   }
 
+  // Match scopes shown in authorization dialog (from _old project)
+  const scopes =
+    process.env.ANYPOINT_SCOPES ??
+    "profile offline_access read:exchange view:monitoring read:api_configuration read:api_policies";
+
   return {
     clientId,
     clientSecret,
     redirectUri: process.env.ANYPOINT_REDIRECT_URI || DEFAULT_REDIRECT_URI,
     baseUrl: process.env.ANYPOINT_BASE_URL || DEFAULT_BASE_URL,
-    scopes: "profile offline_access read:exchange view:monitoring read:api_configuration read:api_policies", // Match the scopes shown in authorization dialog
+    scopes,
   };
 }
 

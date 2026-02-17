@@ -11,6 +11,7 @@ import { filterVisualizerByBroker, filterVisualizerAllBrokers } from "@/lib/filt
 import { calculateTreeLayout } from "@/lib/layouts/canvas-layouts";
 import { fetchAndMergeRuntimeEdges, ACTIVITY_PERIODS } from "@/lib/visualizer/runtime-edges";
 import { enrichCanonicalWithLLMs } from "@/lib/adapters/enrich-with-llms";
+import { debugLog, debugError } from "@/lib/api-logger";
 import type { BrokerInEnvironment } from "@/lib/visualizer/brokers-in-environment-types";
 import type { CanonicalGraph, CanonicalNode } from "@/lib/agent-network-types";
 import type { FabricGraphResponse } from "@/lib/adapters/visualizer-to-canonical";
@@ -99,7 +100,7 @@ export default function MainContent() {
         const data = await res.json();
         if (!res.ok) {
           const errorMsg = data.error || (res.status === 401 ? "Not signed in" : `Failed: ${res.status}`);
-          console.error("[BROKERS] API error:", res.status, errorMsg, data);
+          debugError("[BROKERS] API error:", res.status, errorMsg, data);
           throw new Error(errorMsg);
         }
         return data;
@@ -107,7 +108,7 @@ export default function MainContent() {
       .then((data: { brokers?: BrokerInEnvironment[]; error?: string }) => {
         if (cancelled) return;
         if (data.error) {
-          console.error("[BROKERS] Response contains error:", data.error);
+          debugError("[BROKERS] Response contains error:", data.error);
           setError(data.error);
           setBrokers([]);
           // Clear selection if there's an error
@@ -116,7 +117,7 @@ export default function MainContent() {
           const newBrokers = Array.isArray(data.brokers) ? data.brokers : [];
           setBrokers(newBrokers);
           setError(null);
-          console.log("[BROKERS] Loaded brokers:", newBrokers.length);
+          debugLog("[BROKERS] Loaded brokers:", newBrokers.length);
           
           // Restore broker selection if previously selected broker still exists
           setSelectedBroker((prevBroker) => {
@@ -128,7 +129,7 @@ export default function MainContent() {
       })
       .catch((err: unknown) => {
         if (!cancelled) {
-          console.error("[BROKERS] Fetch error:", err);
+          debugError("[BROKERS] Fetch error:", err);
           setBrokers([]);
           setError(err instanceof Error ? err.message : "Failed to load brokers");
         }
@@ -224,7 +225,7 @@ export default function MainContent() {
     // Filter by selected broker
     const filteredData = filterVisualizerByBroker(fabricData, selectedBroker.assetId);
 
-    console.log("Filtered graph data:", {
+    debugLog("Filtered graph data:", {
       brokerAssetId: selectedBroker.assetId,
       filteredNodes: filteredData.nodes?.length ?? 0,
       filteredEdges: filteredData.edges?.length ?? 0,
@@ -234,7 +235,7 @@ export default function MainContent() {
 
     const canonical = visualizerToCanonical(filteredData);
 
-    console.log("Canonical graph (before LLM enrichment):", {
+    debugLog("Canonical graph (before LLM enrichment):", {
       nodes: canonical.nodes.length,
       edges: canonical.edges.length,
       nodeIds: canonical.nodes.map((n) => n.id),
@@ -247,7 +248,7 @@ export default function MainContent() {
       .then((enriched) => {
         if (cancelled) return;
 
-        console.log("Canonical graph (after LLM enrichment):", {
+        debugLog("Canonical graph (after LLM enrichment):", {
           nodes: enriched.nodes.length,
           edges: enriched.edges.length,
           llmNodes: enriched.nodes.filter((n) => n.type === "LLM").length,
@@ -271,7 +272,7 @@ export default function MainContent() {
       })
       .catch((error) => {
         if (!cancelled) {
-          console.error("Error enriching graph with LLMs:", error);
+          debugError("Error enriching graph with LLMs:", error);
           // Fallback to canonical without LLMs if enrichment fails
           const positions = calculateTreeLayout(canonical);
           canonical.nodes.forEach((node: CanonicalNode) => {
