@@ -1,0 +1,60 @@
+import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+import { hasSessionCookie } from "@/lib/auth/middleware-session";
+
+export async function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+
+  // Public routes that don't require authentication - allow through immediately
+  const publicRoutes = [
+    "/",
+    "/auth/sign-in",
+    "/auth/callback",
+    "/about",
+    "/help",
+    "/privacy",
+  ];
+
+  // Check if route is public first
+  if (publicRoutes.includes(pathname)) {
+    // Allow sign-in to proceed even if cookie exists - route handler will check if session is valid/invalidated
+    // This is important for corporate governance scenarios where cookie deletion is prevented
+    // The sign-in route handler will check for invalidation and allow OAuth flow if needed
+    return NextResponse.next();
+  }
+
+  // Protect /agent-network (routes under /(app) are handled by this path)
+  if (pathname.startsWith("/agent-network")) {
+    if (!hasSessionCookie(request)) {
+      // Redirect to sign-in with return URL
+      const signInUrl = new URL("/auth/sign-in", request.url);
+      signInUrl.searchParams.set("redirect", pathname);
+      return NextResponse.redirect(signInUrl);
+    }
+    return NextResponse.next();
+  }
+
+  // Protect API routes (except /api/auth/*)
+  if (pathname.startsWith("/api/") && !pathname.startsWith("/api/auth/")) {
+    if (!hasSessionCookie(request)) {
+      return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+    }
+    return NextResponse.next();
+  }
+
+  // Allow all other routes through (static files, etc.)
+  return NextResponse.next();
+}
+
+export const config = {
+  matcher: [
+    /*
+     * Match all request paths except for the ones starting with:
+     * - _next/static (static files)
+     * - _next/image (image optimization files)
+     * - favicon.ico (favicon file)
+     * - public files (public directory)
+     */
+    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+  ],
+};

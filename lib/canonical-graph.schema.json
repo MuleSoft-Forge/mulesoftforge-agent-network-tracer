@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mulesoftforge/agent-network-tracer/canonical-graph",
+  "title": "Canonical Agent Network Graph",
+  "description": "Unified graph model for the agent network canvas. Same shape as React Flow (MuleSoft Agent Visualizer): use nodes/edges directly, no adapter. Produced by Visualizer (runtime) and GraphQL+Exchange (design) adapters.",
+  "type": "object",
+  "required": ["nodes", "edges", "mode"],
+  "properties": {
+    "nodes": {
+      "type": "array",
+      "description": "Graph nodes: brokers and their children (agents, MCPs, LLMs).",
+      "items": { "$ref": "#/$defs/CanonicalNode" }
+    },
+    "edges": {
+      "type": "array",
+      "description": "Directed edges from broker to children (source → target).",
+      "items": { "$ref": "#/$defs/CanonicalEdge" }
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["design", "runtime"],
+      "description": "design = catalog/versions (GraphQL+Exchange). runtime = deployed topology (Visualizer)."
+    }
+  },
+  "x-reactFlow": {
+    "description": "Canonical is React Flow shape. Use graph.nodes and graph.edges directly (node.position required; edge.source / edge.target)."
+  },
+  "$defs": {
+    "NodeType": {
+      "type": "string",
+      "enum": ["BROKER", "AGENT", "MCP", "LLM"],
+      "description": "Node kind for layout and styling; maps to React Flow custom node type."
+    },
+    "CanonicalDependency": {
+      "type": "object",
+      "description": "Design mode: dependency from Exchange API.",
+      "required": ["assetId", "version", "name", "type"],
+      "properties": {
+        "assetId": { "type": "string" },
+        "version": { "type": "string" },
+        "name": { "type": "string" },
+        "type": { "type": "string" }
+      }
+    },
+    "CanonicalConnectionRef": {
+      "type": "object",
+      "description": "Design mode: connection ref from agent-network YAML (kind + name).",
+      "required": ["kind", "name"],
+      "properties": {
+        "kind": { "type": "string", "examples": ["agent", "mcp", "llm"] },
+        "name": { "type": "string" }
+      }
+    },
+    "Position": {
+      "type": "object",
+      "description": "Required for React Flow. Default from producers; layout can update.",
+      "required": ["x", "y"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" }
+      }
+    },
+    "CanonicalNode": {
+      "type": "object",
+      "description": "A node in the canonical graph: broker or child (agent, MCP, LLM). React Flow shape.",
+      "required": ["id", "label", "version", "type", "organizationId", "position"],
+      "properties": {
+        "id": { "type": "string", "description": "Stable id (React Flow node.id)." },
+        "label": { "type": "string", "description": "Display name." },
+        "version": { "type": "string", "description": "Semver or '—' when unknown." },
+        "type": { "$ref": "#/$defs/NodeType" },
+        "organizationId": { "type": "string", "description": "Organization/group id (groupId)." },
+        "position": { "$ref": "#/$defs/Position", "description": "Required. Default from producers; layout can update." },
+        "instanceIds": { "type": "array", "items": { "type": "string" }, "description": "Runtime only: instance IDs from Visualizer prod_instances_map." },
+        "exchangeAssetId": { "type": "string", "description": "Optional: Exchange assetId for catalog link." },
+        "exchangeDependencies": { "type": "array", "items": { "$ref": "#/$defs/CanonicalDependency" }, "description": "Design: from Exchange API dependencies[]." },
+        "brokerRuntimeId": { "type": "string", "description": "Design: from YAML brokers key. Correlates to runtime node id." },
+        "llmRef": { "type": "string", "description": "Design: from YAML spec.llm.ref.name." },
+        "agentRefs": { "type": "array", "items": { "type": "string" }, "description": "Design: from YAML links[].agent.ref.name." },
+        "mcpRefs": { "type": "array", "items": { "type": "string" }, "description": "Design: from YAML links or connections where kind is mcp." },
+        "connectionRefs": { "type": "array", "items": { "$ref": "#/$defs/CanonicalConnectionRef" }, "description": "Design: from YAML connections[] (kind + ref.name)." },
+        "rawYaml": { "type": "string", "description": "Design: full agent-network YAML for this asset (e.g. show in UI when selected)." }
+      }
+    },
+    "CanonicalEdge": {
+      "type": "object",
+      "description": "Directed edge (React Flow shape). type drives dashed (designTime) vs solid (runTime).",
+      "required": ["id", "source", "target"],
+      "properties": {
+        "id": { "type": "string", "description": "Unique edge id." },
+        "source": { "type": "string", "description": "Node id of the source (React Flow edge.source)." },
+        "target": { "type": "string", "description": "Node id of the target (React Flow edge.target)." },
+        "type": { "type": "string", "enum": ["designTime", "runTime"], "description": "designTime = from catalog/YAML (dashed). runTime = from Visualizer (solid)." }
+      }
+    }
+  }
+}

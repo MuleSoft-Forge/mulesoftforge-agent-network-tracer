@@ -1,0 +1,37 @@
+# Exclude ElectronApp (366MB - not needed for web deployment)
+ElectronApp/
+
+# Exclude documentation and research files
+mulesoft-api/
+mulesoft-docs/
+docs/
+spec/
+
+# Exclude reference/look-and-feel files
+lookand feel/
+
+# Exclude local development scripts
+scripts/
+Makefile
+
+# Exclude Cursor IDE configuration
+.cursor/
+.vscode/
+
+# Exclude test/debug files
+currentTokenToTest.json
+*.test.ts
+*.test.tsx
+__tests__/
+
+# Exclude config that's not needed at runtime
+config/README.md
+
+# Already ignored by .gitignore but explicit here
+.env
+.env*.local
+node_modules/
+.next/
+out/
+build/
+coverage/
