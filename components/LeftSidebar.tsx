@@ -187,103 +187,116 @@ export default function LeftSidebar({
         </button>
       </div>
       <div
-        className={`flex flex-1 flex-col overflow-hidden p-3 ${
+        className={`flex flex-1 flex-col overflow-hidden ${
           !expanded ? "w-0 min-w-0 overflow-hidden opacity-0 pointer-events-none" : ""
         }`}
       >
-        <ActivityPeriodSelector
-          value={activityPeriodKey}
-          onSelect={handleActivityPeriodSelect}
-          disabled={loadingBrokers}
-        />
-        <div className="mt-4">
-          <BusinessGroupSelector
-            initialOrgId={undefined}
-            onSelect={handleSelect}
+        <div className="flex-1 overflow-y-auto p-3">
+          <ActivityPeriodSelector
+            value={activityPeriodKey}
+            onSelect={handleActivityPeriodSelect}
             disabled={loadingBrokers}
           />
-        </div>
-        <div className="mt-4 space-y-3">
-          <EnvironmentSelector
-            orgId={
-              selection && selection.value !== "ALL" ? selection.value : null
-            }
-            value={selectedEnvironmentId}
-            onSelect={handleEnvironmentSelect}
-            disabled={loadingBrokers}
-          />
-        </div>
-        {selection && selection.value !== "ALL" && selectedEnvironmentId && (
-          <div className="mt-4 space-y-2">
-            <div className="flex items-center gap-2">
-              <label
-                htmlFor="broker-select"
-                className="text-sm font-semibold text-gray-900"
-              >
-                Broker
-              </label>
-              {loadingBrokers && brokers.length === 0 && <Spinner size="s" />}
-            </div>
-            {loadingBrokers && brokers.length === 0 ? (
-              <div className="flex items-center gap-2 py-2">
-                <span className="text-sm text-gray-500">Loading brokers...</span>
-              </div>
-            ) : brokers.length > 0 ? (
-              <div className="relative">
-                <select
-                  id="broker-select"
-                  value={selectedBrokerNodeId}
-                  onChange={handleBrokerChange}
-                  disabled={loadingBrokers}
-                  className={`w-full rounded-anypoint border border-gray-300 bg-white px-3 py-2 pr-8 text-sm text-gray-900 transition-all duration-150 ease-[cubic-bezier(0.46,0.03,0.52,0.96)] focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 ${
-                    loadingBrokers ? "opacity-60 cursor-wait" : ""
-                  }`}
-                >
-                  <option value="">Select broker</option>
-                  {brokers.map((b: BrokerInEnvironment) => (
-                    <option key={b.nodeId} value={b.nodeId}>
-                      {b.name || b.assetId}
-                    </option>
-                  ))}
-                </select>
-                {loadingBrokers && brokers.length > 0 && (
-                  <div className="absolute right-10 top-1/2 -translate-y-1/2">
-                    <Spinner size="s" />
-                  </div>
-                )}
-              </div>
-            ) : (
-              <p className="text-sm text-gray-500">No Brokers Activity Exists</p>
-            )}
-          </div>
-        )}
-        {selection && selection.value !== "ALL" && selectedBrokerNodeId && (
           <div className="mt-4">
-            {(() => {
-              const broker = brokers.find((b: BrokerInEnvironment) => b.nodeId === selectedBrokerNodeId);
-              if (broker && broker.instanceIds.length > 0) {
-                const apiInstanceId = broker.instanceIds[0];
-                debugLog("TasksList props:", { 
-                  orgId: selection.value, 
-                  apiInstanceId, 
-                  brokerName: broker.name || broker.assetId,
-                  allInstanceIds: broker.instanceIds 
-                });
-                return (
-                  <TasksList
-                    key={`${selection.value}-${apiInstanceId}`}
-                    orgId={selection.value}
-                    apiInstanceId={apiInstanceId}
-                    selectedTaskId={selectedTaskId}
-                    onTaskSelect={onTaskSelect || (() => {})}
-                    activityPeriod={activityPeriodKey}
-                  />
-                );
-              }
-              return null;
-            })()}
+            <BusinessGroupSelector
+              initialOrgId={undefined}
+              onSelect={handleSelect}
+              disabled={loadingBrokers}
+            />
           </div>
-        )}
+          <div className="mt-4 space-y-3">
+            <EnvironmentSelector
+              orgId={
+                selection && selection.value !== "ALL" ? selection.value : null
+              }
+              value={selectedEnvironmentId}
+              onSelect={handleEnvironmentSelect}
+              disabled={loadingBrokers}
+            />
+          </div>
+          {selection && selection.value !== "ALL" && selectedEnvironmentId && (
+            <div className="mt-4 space-y-2">
+              <div className="flex items-center gap-2">
+                <label
+                  htmlFor="broker-select"
+                  className="text-sm font-semibold text-gray-900"
+                >
+                  Broker
+                </label>
+                {loadingBrokers && brokers.length === 0 && <Spinner size="s" />}
+              </div>
+              {loadingBrokers && brokers.length === 0 ? (
+                <div className="flex items-center gap-2 py-2">
+                  <span className="text-sm text-gray-500">Loading brokers...</span>
+                </div>
+              ) : brokers.length > 0 ? (
+                <div className="relative">
+                  <select
+                    id="broker-select"
+                    value={selectedBrokerNodeId}
+                    onChange={handleBrokerChange}
+                    disabled={loadingBrokers}
+                    className={`w-full rounded-anypoint border border-gray-300 bg-white px-3 py-2 pr-8 text-sm text-gray-900 transition-all duration-150 ease-[cubic-bezier(0.46,0.03,0.52,0.96)] focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 ${
+                      loadingBrokers ? "opacity-60 cursor-wait" : ""
+                    }`}
+                  >
+                    <option value="">Select broker</option>
+                    {brokers.map((b: BrokerInEnvironment) => (
+                      <option key={b.nodeId} value={b.nodeId}>
+                        {b.name || b.assetId}
+                      </option>
+                    ))}
+                  </select>
+                  {loadingBrokers && brokers.length > 0 && (
+                    <div className="absolute right-10 top-1/2 -translate-y-1/2">
+                      <Spinner size="s" />
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-sm text-gray-500">No Brokers Activity Exists</p>
+              )}
+            </div>
+          )}
+          {selection && selection.value !== "ALL" && selectedBrokerNodeId && (
+            <div className="mt-4">
+              {(() => {
+                const broker = brokers.find((b: BrokerInEnvironment) => b.nodeId === selectedBrokerNodeId);
+                if (broker && broker.instanceIds.length > 0) {
+                  const apiInstanceId = broker.instanceIds[0];
+                  debugLog("TasksList props:", { 
+                    orgId: selection.value, 
+                    apiInstanceId, 
+                    brokerName: broker.name || broker.assetId,
+                    allInstanceIds: broker.instanceIds 
+                  });
+                  return (
+                    <TasksList
+                      key={`${selection.value}-${apiInstanceId}`}
+                      orgId={selection.value}
+                      apiInstanceId={apiInstanceId}
+                      selectedTaskId={selectedTaskId}
+                      onTaskSelect={onTaskSelect || (() => {})}
+                      activityPeriod={activityPeriodKey}
+                    />
+                  );
+                }
+                return null;
+              })()}
+            </div>
+          )}
+        </div>
+        <div className="border-t border-gray-200 bg-white px-3 py-2">
+          <p className="text-xs text-gray-600">
+            Questions:{" "}
+            <a
+              href="mailto:jeffcock@mulesoftforge.com"
+              className="text-primary hover:text-indigo-700 hover:underline"
+            >
+              Ask Me
+            </a>
+          </p>
+        </div>
       </div>
     </div>
   );

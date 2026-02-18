@@ -95,14 +95,12 @@ export default function PrivacyPolicyContent() {
           professional profile. Please do not use official MuleSoft/Salesforce internal channels.
         </p>
         <p className="mt-2">
-          LinkedIn:{" "}
+          Email:{" "}
           <a
-            href="https://www.linkedin.com/in/georgejeffcock"
-            target="_blank"
-            rel="noopener noreferrer"
+            href="mailto:jeffcock@mulesoftforge.com"
             className="font-medium text-primary hover:underline focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
           >
-            https://www.linkedin.com/in/georgejeffcock
+            jeffcock@mulesoftforge.com
           </a>
         </p>
       </section>
