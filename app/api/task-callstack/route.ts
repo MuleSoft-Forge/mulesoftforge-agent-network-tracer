@@ -152,6 +152,18 @@ function parseFields(message: string) {
   return f;
 }
 
+/**
+ * Normalize timestamp from Elasticsearch/flex-gateway: may be ISO string or numeric string (epoch ms).
+ * Returns a number (ms) for consistent duration math and UI formatting.
+ */
+function normalizeTimestamp(ts: string | number | null | undefined): number | string {
+  if (ts == null) return "";
+  if (typeof ts === "number" && !Number.isNaN(ts)) return ts;
+  const str = String(ts);
+  if (/^\d+$/.test(str)) return parseInt(str, 10);
+  return ts as string;
+}
+
 function summarizeLine(type: string, message: string, fields: Record<string, unknown>): string {
   switch (type) {
     case "INBOUND_REQUEST":
@@ -701,22 +713,18 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Sort by timestamp
+    // Sort by timestamp (handle numeric string = epoch ms from flex-gateway)
     unique.sort((a: unknown, b: unknown) => {
       const hitA = a as { _source?: { timestamp?: number | string } };
       const hitB = b as { _source?: { timestamp?: number | string } };
-      const ta =
-        typeof hitA._source?.timestamp === "number"
-          ? hitA._source.timestamp
-          : new Date((hitA._source?.timestamp as string) || "").getTime();
-      const tb =
-        typeof hitB._source?.timestamp === "number"
-          ? hitB._source.timestamp
-          : new Date((hitB._source?.timestamp as string) || "").getTime();
+      const na = normalizeTimestamp(hitA._source?.timestamp);
+      const nb = normalizeTimestamp(hitB._source?.timestamp);
+      const ta = typeof na === "number" ? na : new Date(na).getTime();
+      const tb = typeof nb === "number" ? nb : new Date(nb).getTime();
       return ta - tb;
     });
 
-    // Classify and parse each entry
+    // Classify and parse each entry (normalize timestamp: flex-gateway sends epoch ms as string)
     const entries = unique.map((h: unknown, i: number) => {
       const hit = h as { _source?: { message?: string; logger?: string; timestamp?: string | number; "log-level"?: string; appId?: string; workerId?: string; [key: string]: unknown }; _id?: string; _index?: string };
       const s = hit._source || {};
@@ -725,11 +733,13 @@ export async function GET(request: NextRequest) {
       const type = classifyLog(logger, message);
       const fields = parseFields(message);
       const summary = summarizeLine(type, message, fields);
+      const rawTs = s.timestamp as string | number | undefined;
+      const timestamp = normalizeTimestamp(rawTs);
       return {
         index: i,
         type,
         summary,
-        timestamp: s.timestamp as string | number,
+        timestamp: typeof timestamp === "number" ? timestamp : rawTs ?? "",
         logger,
         level: (s["log-level"] as string) || "",
         appId: (s.appId as string) || "",
@@ -754,12 +764,18 @@ export async function GET(request: NextRequest) {
       const t1 =
         typeof firstEntry.timestamp === "number"
           ? firstEntry.timestamp
-          : new Date(firstEntry.timestamp).getTime();
+          : /^\d+$/.test(String(firstEntry.timestamp))
+            ? parseInt(String(firstEntry.timestamp), 10)
+            : new Date(firstEntry.timestamp).getTime();
       const t2 =
         typeof lastEntry.timestamp === "number"
           ? lastEntry.timestamp
-          : new Date(lastEntry.timestamp).getTime();
-      duration = ((t2 - t1) / 1000).toFixed(1);
+          : /^\d+$/.test(String(lastEntry.timestamp))
+            ? parseInt(String(lastEntry.timestamp), 10)
+            : new Date(lastEntry.timestamp).getTime();
+      if (!Number.isNaN(t1) && !Number.isNaN(t2)) {
+        duration = ((t2 - t1) / 1000).toFixed(1);
+      }
     }
 
     const maxIter = Math.max(0, ...entries.map((e: typeof entries[0]) => parseInt((e.fields.iteration as string) || "0", 10)));

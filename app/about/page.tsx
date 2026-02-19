@@ -7,6 +7,19 @@ export default function AboutPage() {
   return (
     <div className="mx-auto max-w-4xl px-4 py-8">
       <h1 className="mb-6 text-2xl font-semibold text-gray-900">About</h1>
+
+      {/* LinkedIn embedded post - first entry */}
+      <section className="mb-8 flex justify-center">
+        <iframe
+          src="https://www.linkedin.com/embed/feed/update/urn:li:ugcPost:7429791216717832193"
+          height="1214"
+          width="504"
+          frameBorder="0"
+          allowFullScreen
+          title="Embedded post"
+          className="max-w-full"
+        />
+      </section>
       
       {/* Two cards side by side */}
       <div className="mb-8 flex flex-col gap-6 sm:flex-row sm:justify-center sm:items-stretch">

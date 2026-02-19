@@ -221,8 +221,14 @@ function TaskDetailsContent({ orgId, taskId, envId, taskResource }: TaskDetailsP
   };
 
   const formatDate = (ts: string | number) => {
-    const date = typeof ts === "number" ? new Date(ts) : new Date(ts);
-    if (isNaN(date.getTime())) return "Invalid date";
+    const ms =
+      typeof ts === "number"
+        ? ts
+        : /^\d+$/.test(String(ts))
+          ? parseInt(String(ts), 10)
+          : new Date(ts).getTime();
+    const date = new Date(ms);
+    if (Number.isNaN(date.getTime())) return "Invalid date";
     return date.toLocaleString("en-US", {
       month: "short",
       day: "numeric",
@@ -234,8 +240,14 @@ function TaskDetailsContent({ orgId, taskId, envId, taskResource }: TaskDetailsP
   };
 
   const formatTimestamp = (ts: string | number) => {
-    const date = typeof ts === "number" ? new Date(ts) : new Date(ts);
-    if (isNaN(date.getTime())) return "Invalid date";
+    const ms =
+      typeof ts === "number"
+        ? ts
+        : /^\d+$/.test(String(ts))
+          ? parseInt(String(ts), 10)
+          : new Date(ts).getTime();
+    const date = new Date(ms);
+    if (Number.isNaN(date.getTime())) return "Invalid date";
     return date.toISOString().replace(/^.*T/, "").replace(/Z$/, "").slice(0, 12);
   };
 
