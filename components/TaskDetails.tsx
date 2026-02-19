@@ -105,7 +105,7 @@ function TaskDetailsContent({ orgId, taskId, envId, taskResource }: TaskDetailsP
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set(["task"]));
   const [expandedEntries, setExpandedEntries] = useState<Set<number>>(new Set());
   const [selectedItem, setSelectedItem] = useState<SelectedItem | null>(null);
-  const [detailTab, setDetailTab] = useState<DetailTab>("input-output");
+  const [detailTab, setDetailTab] = useState<DetailTab>("message");
   const { openDebugViewer } = useDebugViewer();
 
   // Use React 19's use() hook - this will suspend if the promise is pending
@@ -127,7 +127,7 @@ function TaskDetailsContent({ orgId, taskId, envId, taskResource }: TaskDetailsP
   // When selectedItem changes to a non-task item, switch away from traces tab if needed
   useEffect(() => {
     if (selectedItem != null && selectedItem.type !== "task" && detailTab === "traces") {
-      setDetailTab("input-output");
+      setDetailTab("message");
     }
   }, [selectedItem, detailTab]);
 
@@ -398,8 +398,8 @@ function TaskDetailsContent({ orgId, taskId, envId, taskResource }: TaskDetailsP
                   const entryIndex = entries.findIndex((e: LogEntry) => e._id === entry._id);
                   if (entryIndex >= 0) {
                     setSelectedItem({ type: "step", id: `entry-${entryIndex}`, data: entry });
-                    // Switch to input-output tab when selecting a child entry (traces are task-level only)
-                    setDetailTab("input-output");
+                    // Switch to message tab when selecting a child entry (traces are task-level only)
+                    setDetailTab("message");
                     // Expand the entry in list view
                     setExpandedEntries((prev) => new Set([...prev, entryIndex]));
                   }

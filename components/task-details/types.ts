@@ -63,7 +63,7 @@ export interface JobCard {
 }
 
 export type ViewMode = "tree" | "list";
-export type DetailTab = "input-output" | "metadata" | "traces" | "raw";
+export type DetailTab = "message" | "metadata" | "traces" | "raw";
 
 export interface SelectedItem {
   type: "task" | "iteration" | "step" | "tool";

@@ -29,6 +29,59 @@ function formatJsonIfPossible(value: unknown): string {
   return String(value);
 }
 
+// Helper function to format raw message nicely
+function formatRawMessage(rawMessage: string | undefined): string {
+  if (!rawMessage) {
+    return "";
+  }
+
+  // Try to extract and format JSON-RPC payloads
+  const jsonRpcMatch = rawMessage.match(/\{"jsonrpc"[\s\S]*\}/);
+  if (jsonRpcMatch) {
+    try {
+      const rpc = JSON.parse(jsonRpcMatch[0]);
+      if (rpc.params?.message) {
+        // Format the message params nicely
+        const formatted = JSON.stringify(rpc, null, 2);
+        return formatted;
+      }
+    } catch {
+      // Continue to other formatting attempts
+    }
+  }
+
+  // Try to extract JSON from HTTP body
+  const jsonMatch = rawMessage.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
+      return JSON.stringify(parsed, null, 2);
+    } catch {
+      // Continue to HTTP formatting
+    }
+  }
+
+  // Try to format HTTP request/response
+  if (rawMessage.includes("HTTP/1.1") || rawMessage.includes("LISTENER") || rawMessage.includes("REQUESTER")) {
+    // Format HTTP messages with better line breaks
+    return rawMessage
+      .replace(/\r\n/g, "\n")
+      .replace(/\r/g, "\n")
+      .split("\n")
+      .map((line, idx, arr) => {
+        // Add spacing between headers and body
+        if (idx > 0 && line.trim() === "" && arr[idx - 1]?.trim() !== "") {
+          return "\n";
+        }
+        return line;
+      })
+      .join("\n");
+  }
+
+  // Default: return as-is
+  return rawMessage;
+}
+
 interface TaskDetailsPanelProps {
   selectedItem: SelectedItem;
   jobCard: JobCard;
@@ -57,90 +110,45 @@ export default function TaskDetailsPanel({
   const renderContent = () => {
     if (selectedItem.type === "task") {
       const taskData = selectedItem.data as JobCard;
+      // Find the INBOUND_REQUEST entry to get the raw message
+      const inboundEntry = logEntries.find((e) => e.type === "INBOUND_REQUEST");
+      const rawMessage = inboundEntry?.raw?.message as string | undefined;
+      
       return (
         <>
-          {detailTab === "input-output" && (
+          {detailTab === "message" && (
             <div className="space-y-4">
               <div>
                 <div className="mb-2 flex items-center justify-between">
-                  <h4 className="font-semibold text-gray-900">Input</h4>
+                  <h4 className="font-semibold text-gray-900">Message</h4>
                   <button
                     type="button"
                     className="text-xs text-indigo-600 hover:text-indigo-800"
                     onClick={() => {
-                      const input = document.getElementById("task-input");
-                      if (input) input.classList.toggle("max-h-96");
+                      const message = document.getElementById("task-message");
+                      if (message) message.classList.toggle("max-h-96");
                     }}
                   >
                     View all
                   </button>
                 </div>
                 <div
-                  id="task-input"
-                  className="max-h-40 overflow-auto scrollbar-thin rounded-lg border border-gray-200 bg-white p-3"
+                  id="task-message"
+                  className="max-h-96 overflow-auto scrollbar-thin rounded-lg border border-gray-200 bg-white p-3"
                 >
-                  {taskData.userMessage != null && taskData.userMessage !== "" ? (
-                    <pre className="text-xs">
-                      {formatJsonIfPossible(taskData.userMessage)}
+                  {rawMessage ? (
+                    <pre className="whitespace-pre-wrap break-words text-xs font-mono">
+                      {formatRawMessage(rawMessage)}
                     </pre>
                   ) : (
                     <pre className="text-xs">
-                      {JSON.stringify(
-                        {
-                          taskId: taskData.taskId,
-                          contextId: taskData.contextId,
-                          messageId: taskData.messageId,
-                        },
-                        null,
-                        2
-                      )}
+                      {taskData.userMessage ? formatJsonIfPossible(taskData.userMessage) : "No message available"}
                     </pre>
                   )}
                   <div className="mt-2 flex flex-wrap gap-1 text-[10px] text-gray-500">
                     <span className="rounded bg-blue-50 px-1.5 py-0.5">From Logs</span>
-                  </div>
-                </div>
-              </div>
-              <div>
-                <div className="mb-2 flex items-center justify-between">
-                  <h4 className="font-semibold text-gray-900">Output</h4>
-                  <button
-                    type="button"
-                    className="text-xs text-indigo-600 hover:text-indigo-800"
-                    onClick={() => {
-                      const output = document.getElementById("task-output");
-                      if (output) output.classList.toggle("max-h-96");
-                    }}
-                  >
-                    View all
-                  </button>
-                </div>
-                <div
-                  id="task-output"
-                  className="max-h-40 overflow-auto scrollbar-thin rounded-lg border border-gray-200 bg-white p-3"
-                >
-                  {taskData.finalResponseBody != null ? (
-                    <pre className="text-xs">
-                      {formatJsonIfPossible(taskData.finalResponseBody)}
-                    </pre>
-                  ) : (
-                    <pre className="text-xs">
-                      {JSON.stringify(
-                        {
-                          outcome: taskData.outcome,
-                          duration: taskData.duration,
-                          iterations: taskData.iterations,
-                          toolsUsed: taskData.toolsUsed,
-                        },
-                        null,
-                        2
-                      )}
-                    </pre>
-                  )}
-                  <div className="mt-2 flex flex-wrap gap-1 text-[10px] text-gray-500">
-                    <span className="rounded bg-blue-50 px-1.5 py-0.5">From Logs</span>
-                    {taskData.finalResponseBody != null && (
-                      <span className="rounded bg-green-50 px-1.5 py-0.5">FINAL_RESPONSE</span>
+                    {inboundEntry && (
+                      <span className="rounded bg-blue-50 px-1.5 py-0.5">INBOUND_REQUEST</span>
                     )}
                   </div>
                 </div>
@@ -431,32 +439,55 @@ export default function TaskDetailsPanel({
         endTime: string | number;
         entries: LogEntry[];
       };
+      // Find the first entry with a raw message (prefer TOOL_INPUT or A2A_MESSAGE_SENT)
+      const messageEntry = iterData.entries.find(
+        (e) => e.type === "TOOL_INPUT" || e.type === "A2A_MESSAGE_SENT" || e.type === "LLM_TOOL_SELECTION"
+      ) || iterData.entries[0];
+      const rawMessage = messageEntry?.raw?.message as string | undefined;
+      
       return (
         <>
-          {detailTab === "input-output" && (
+          {detailTab === "message" && (
             <div className="space-y-4">
               <div>
-                <h4 className="mb-2 font-semibold text-gray-900">Input</h4>
-                <div className="max-h-40 overflow-auto scrollbar-thin rounded-lg border border-gray-200 bg-white p-3">
-                  <pre className="text-xs">
-                    {JSON.stringify(
-                      { iteration: iterData.iteration, tool: iterData.toolName },
-                      null,
-                      2
-                    )}
-                  </pre>
+                <div className="mb-2 flex items-center justify-between">
+                  <h4 className="font-semibold text-gray-900">Message</h4>
+                  <button
+                    type="button"
+                    className="text-xs text-indigo-600 hover:text-indigo-800"
+                    onClick={() => {
+                      const message = document.getElementById("iteration-message");
+                      if (message) message.classList.toggle("max-h-96");
+                    }}
+                  >
+                    View all
+                  </button>
                 </div>
-              </div>
-              <div>
-                <h4 className="mb-2 font-semibold text-gray-900">Output</h4>
-                <div className="max-h-40 overflow-auto scrollbar-thin rounded-lg border border-gray-200 bg-white p-3">
-                  <pre className="text-xs">
-                    {JSON.stringify(
-                      { duration: iterData.duration, entries: iterData.entries.length },
-                      null,
-                      2
+                <div
+                  id="iteration-message"
+                  className="max-h-96 overflow-auto scrollbar-thin rounded-lg border border-gray-200 bg-white p-3"
+                >
+                  {rawMessage ? (
+                    <pre className="whitespace-pre-wrap break-words text-xs font-mono">
+                      {formatRawMessage(rawMessage)}
+                    </pre>
+                  ) : (
+                    <pre className="text-xs">
+                      {JSON.stringify(
+                        { iteration: iterData.iteration, tool: iterData.toolName },
+                        null,
+                        2
+                      )}
+                    </pre>
+                  )}
+                  <div className="mt-2 flex flex-wrap gap-1 text-[10px] text-gray-500">
+                    {messageEntry && (
+                      <>
+                        <span className="rounded bg-blue-50 px-1.5 py-0.5">From Logs</span>
+                        <span className="rounded bg-blue-50 px-1.5 py-0.5">{messageEntry.type}</span>
+                      </>
                     )}
-                  </pre>
+                  </div>
                 </div>
               </div>
             </div>
@@ -555,104 +586,49 @@ export default function TaskDetailsPanel({
           }
         }
         
+        const rawMessage = entry.raw?.message as string | undefined;
+        
         return (
           <>
-            {detailTab === "input-output" && (
+            {detailTab === "message" && (
               <div className="space-y-4">
-                {entry.type === "FINAL_RESPONSE" && finalResponseBody != null ? (
-                  <div>
-                    <div className="mb-2 flex items-center justify-between">
-                      <h4 className="font-semibold text-gray-900">Final Response</h4>
-                      <button
-                        type="button"
-                        className="text-xs text-indigo-600 hover:text-indigo-800"
-                        onClick={() => {
-                          const output = document.getElementById("step-output");
-                          if (output) output.classList.toggle("max-h-96");
-                        }}
-                      >
-                        View all
-                      </button>
-                    </div>
-                    <div
-                      id="step-output"
-                      className="max-h-40 overflow-auto scrollbar-thin rounded-lg border border-gray-200 bg-white p-3"
+                <div>
+                  <div className="mb-2 flex items-center justify-between">
+                    <h4 className="font-semibold text-gray-900">Message</h4>
+                    <button
+                      type="button"
+                      className="text-xs text-indigo-600 hover:text-indigo-800"
+                      onClick={() => {
+                        const message = document.getElementById("step-message");
+                        if (message) message.classList.toggle("max-h-96");
+                      }}
                     >
-                      <pre className="text-xs">
-                        {formatJsonIfPossible(finalResponseBody)}
-                      </pre>
-                    </div>
-                    <div className="mt-2 flex flex-wrap gap-1 text-[10px] text-gray-500">
-                      <span className="rounded bg-green-50 px-1.5 py-0.5">FINAL_RESPONSE</span>
-                    </div>
+                      View all
+                    </button>
                   </div>
-                ) : (
-                  <>
-                    {entry.fields.toolInputJson != null && (
-                      <div>
-                        <div className="mb-2 flex items-center justify-between">
-                          <h4 className="font-semibold text-gray-900">Tool Input</h4>
-                          <button
-                            type="button"
-                            className="text-xs text-indigo-600 hover:text-indigo-800"
-                            onClick={() => {
-                              const input = document.getElementById("step-input");
-                              if (input) input.classList.toggle("max-h-96");
-                            }}
-                          >
-                            View all
-                          </button>
-                        </div>
-                        <div
-                          id="step-input"
-                          className="max-h-40 overflow-auto scrollbar-thin rounded-lg border border-gray-200 bg-white p-3"
-                        >
-                          <pre className="text-xs">
-                            {formatJsonIfPossible(entry.fields.toolInputJson)}
-                          </pre>
-                        </div>
-                      </div>
-                    )}
-                    {entry.fields.toolOutputJson != null && (
-                      <div>
-                        <div className="mb-2 flex items-center justify-between">
-                          <h4 className="font-semibold text-gray-900">Tool Output</h4>
-                          <button
-                            type="button"
-                            className="text-xs text-indigo-600 hover:text-indigo-800"
-                            onClick={() => {
-                              const output = document.getElementById("step-output");
-                              if (output) output.classList.toggle("max-h-96");
-                            }}
-                          >
-                            View all
-                          </button>
-                        </div>
-                        <div
-                          id="step-output"
-                          className="max-h-40 overflow-auto scrollbar-thin rounded-lg border border-gray-200 bg-white p-3"
-                        >
-                          <pre className="text-xs">
-                            {formatJsonIfPossible(entry.fields.toolOutputJson)}
-                          </pre>
-                        </div>
-                      </div>
-                    )}
-                    {entry.fields.userMessage != null && entry.fields.userMessage !== "" && (
-                      <div>
-                        <h4 className="mb-2 font-semibold text-gray-900">User Message</h4>
-                        <div className="max-h-40 overflow-auto scrollbar-thin rounded-lg border border-gray-200 bg-white p-3">
+                  <div
+                    id="step-message"
+                    className="max-h-96 overflow-auto scrollbar-thin rounded-lg border border-gray-200 bg-white p-3"
+                  >
+                    {rawMessage ? (
+                      <pre className="whitespace-pre-wrap break-words text-xs font-mono">
+                        {formatRawMessage(rawMessage)}
+                      </pre>
+                    ) : (
+                      <div className="text-sm text-gray-500">
+                        {entry.fields.userMessage ? (
                           <pre className="text-xs">{formatJsonIfPossible(entry.fields.userMessage)}</pre>
-                        </div>
+                        ) : (
+                          "No message available"
+                        )}
                       </div>
                     )}
-                    {entry.fields.toolInputJson == null &&
-                      entry.fields.toolOutputJson == null &&
-                      (entry.fields.userMessage == null || entry.fields.userMessage === "") && (
-                      <div className="text-sm text-gray-500">No input/output data available</div>
-                    )}
-                  </>
-                )}
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-1 text-[10px] text-gray-500">
+                    <span className="rounded bg-blue-50 px-1.5 py-0.5">From Logs</span>
+                    <span className="rounded bg-blue-50 px-1.5 py-0.5">{entry.type}</span>
+                  </div>
+                </div>
               </div>
             )}
             {detailTab === "metadata" && (
@@ -731,14 +707,14 @@ export default function TaskDetailsPanel({
       <div className="flex border-b border-gray-200 bg-white">
         <button
           type="button"
-          onClick={() => onTabChange("input-output")}
+          onClick={() => onTabChange("message")}
           className={`px-4 py-2 text-xs font-medium transition-colors ${
-            detailTab === "input-output"
+            detailTab === "message"
               ? "border-b-2 border-indigo-500 text-indigo-700"
               : "text-gray-600 hover:text-gray-900"
           }`}
         >
-          Input & output
+          Message
         </button>
         <button
           type="button"
