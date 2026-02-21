@@ -69,7 +69,8 @@ export async function isAuthenticated(): Promise<boolean> {
 
 /**
  * Get session status (for Server Components)
- * Returns minimal data suitable for serialization
+ * Returns minimal data suitable for serialization.
+ * Uses the same auth rule as isAuthenticated() to avoid redirect loops (home says "authenticated" but layout says "not").
  */
 export async function getSessionStatus() {
   try {
@@ -79,7 +80,9 @@ export async function getSessionStatus() {
       return { authenticated: false };
     }
     
-    const isAuth = !!(session.accessToken && session.expiresAt && session.expiresAt > Date.now());
+    const { accessToken, expiresAt } = session;
+    const fiveMinBuffer = 5 * 60 * 1000;
+    const isAuth = !!(accessToken && expiresAt && expiresAt > Date.now() + fiveMinBuffer);
     
     return {
       authenticated: isAuth,

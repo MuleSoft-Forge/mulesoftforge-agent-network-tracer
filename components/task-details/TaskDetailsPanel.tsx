@@ -1,7 +1,8 @@
 "use client";
 
-import type { JobCard, LogEntry, DetailTab, SelectedItem, TraceSpan } from "./types";
+import type { ApiStatus, JobCard, LogEntry, DetailTab, SelectedItem, TraceSpan } from "./types";
 import TraceVisualization from "./TraceVisualization";
+import LLMReasoningPanel from "./LLMReasoningPanel";
 
 // Helper function to format JSON strings
 function formatJsonIfPossible(value: unknown): string {
@@ -82,6 +83,49 @@ function formatRawMessage(rawMessage: string | undefined): string {
   return rawMessage;
 }
 
+/** Human-readable label and optional badge color for API status values */
+function apiStatusLabel(
+  api: keyof ApiStatus,
+  value: string
+): { label: string; ok: boolean } {
+  const labels: Record<string, Record<string, { label: string; ok: boolean }>> = {
+    logSearch: {
+      ok: { label: "200 OK", ok: true },
+      "403_entitlement": { label: "403 Entitlement (Monitoring Center Premium required)", ok: false },
+      "403_unauthorized": { label: "403 Unauthorized", ok: false },
+      error: { label: "Error", ok: false },
+    },
+    objectStore: {
+      ok: { label: "200 OK", ok: true },
+      "403_forbidden": { label: "403 Forbidden", ok: false },
+      no_store: { label: "No object store found", ok: false },
+      no_keys: { label: "Object store found but no keys", ok: false },
+      skipped: { label: "Skipped", ok: true },
+      error: { label: "Error", ok: false },
+    },
+    deploymentApi: {
+      ok: { label: "200 OK", ok: true },
+      "403_forbidden": { label: "403 Forbidden (e.g. Read Applications scope)", ok: false },
+      not_used: { label: "Not used", ok: true },
+      error: { label: "Error", ok: false },
+    },
+    traceSpans: {
+      ok: { label: "200 OK", ok: true },
+      "403": { label: "403 Forbidden", ok: false },
+      skipped: { label: "Skipped", ok: true },
+      error: { label: "Error", ok: false },
+    },
+  };
+  return labels[api]?.[value] ?? { label: value, ok: false };
+}
+
+const API_STATUS_ROW_LABELS: Record<keyof ApiStatus, string> = {
+  logSearch: "Log search (msearch)",
+  objectStore: "Object Store",
+  deploymentApi: "Deployment API (AMC)",
+  traceSpans: "Trace spans (Observability)",
+};
+
 interface TaskDetailsPanelProps {
   selectedItem: SelectedItem;
   jobCard: JobCard;
@@ -91,6 +135,8 @@ interface TaskDetailsPanelProps {
   formatTimestamp: (ts: string | number) => string;
   traceSpans?: TraceSpan[];
   logEntries?: LogEntry[];
+  /** True when task details are from no-entitlement mode (runtime logs) */
+  isNoEntitlement?: boolean;
   onLogEntrySelect?: (entry: LogEntry) => void;
   onNavigateTask?: (taskId: string) => void;
 }
@@ -104,6 +150,7 @@ export default function TaskDetailsPanel({
   formatTimestamp,
   traceSpans = [],
   logEntries = [],
+  isNoEntitlement = false,
   onLogEntrySelect,
   onNavigateTask,
 }: TaskDetailsPanelProps) {
@@ -153,6 +200,50 @@ export default function TaskDetailsPanel({
                   </div>
                 </div>
               </div>
+            </div>
+          )}
+          {detailTab === "apiStatus" && (
+            <div className="space-y-3">
+              <h4 className="font-semibold text-gray-900">Backend API status</h4>
+              <p className="text-xs text-gray-500">
+                What worked and what did not for this task. Use this when diagnosing &quot;app not working&quot; (often permissions).
+              </p>
+              {taskData.apiStatus ? (
+                <table className="w-full border-collapse rounded-lg border border-gray-200 text-left text-sm">
+                  <thead>
+                    <tr className="bg-gray-50">
+                      <th className="border-b border-gray-200 px-3 py-2 font-medium text-gray-700">API</th>
+                      <th className="border-b border-gray-200 px-3 py-2 font-medium text-gray-700">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(Object.keys(taskData.apiStatus) as (keyof ApiStatus)[]).map((key) => {
+                      const value = taskData.apiStatus![key];
+                      const { label, ok } = apiStatusLabel(key, value);
+                      return (
+                        <tr key={key} className="border-b border-gray-100 last:border-0">
+                          <td className="px-3 py-2 text-gray-700">{API_STATUS_ROW_LABELS[key]}</td>
+                          <td className="px-3 py-2">
+                            <span
+                              className={
+                                ok
+                                  ? "rounded bg-green-50 px-1.5 py-0.5 text-xs text-green-800"
+                                  : "rounded bg-amber-50 px-1.5 py-0.5 text-xs text-amber-800"
+                              }
+                            >
+                              {label}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              ) : (
+                <p className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-4 text-sm text-gray-500">
+                  No API status for this task. Status is shown after loading task details.
+                </p>
+              )}
             </div>
           )}
           {detailTab === "metadata" && (
@@ -417,6 +508,27 @@ export default function TaskDetailsPanel({
               ) : (
                 <div className="p-4 text-sm text-gray-500">
                   No trace spans available. Trace spans require a traceId and envId to be fetched.
+                </div>
+              )}
+            </div>
+          )}
+          {detailTab === "reasoning" && (
+            <div className="space-y-4">
+              {taskData.objectStore?.available &&
+               taskData.objectStore?.llmReasoning &&
+               (taskData.objectStore.llmReasoning.steps?.length || taskData.objectStore.llmReasoning.rawReasoning?.length) ? (
+                <LLMReasoningPanel
+                  reasoning={taskData.objectStore.llmReasoning}
+                  source="objectStore"
+                />
+              ) : (
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">
+                  <div className="flex items-center gap-2">
+                    <span>No LLM reasoning available from Object Store.</span>
+                  </div>
+                  <div className="mt-2 text-xs text-gray-400">
+                    LLM reasoning is provided via Object Store and is available for tasks processed by the Agent Broker (entitlement and non-entitlement modes).
+                  </div>
                 </div>
               )}
             </div>
@@ -686,6 +798,13 @@ export default function TaskDetailsPanel({
 
   return (
     <div className="flex h-full flex-col">
+      {isNoEntitlement && (
+        <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800">
+          <span className="font-medium">No-entitlement mode</span>
+          {" — "}
+          Task details from runtime logs. Traces and some API metadata are not shown.
+        </div>
+      )}
       <div className="border-b border-gray-200 bg-white px-4 py-3">
         <h3 className="text-sm font-semibold text-gray-900">
           {selectedItem.type === "task" && `Task ${(selectedItem.data as JobCard).taskId}`}
@@ -705,6 +824,19 @@ export default function TaskDetailsPanel({
       </div>
 
       <div className="flex border-b border-gray-200 bg-white">
+        {selectedItem.type === "task" && (
+          <button
+            type="button"
+            onClick={() => onTabChange("apiStatus")}
+            className={`px-4 py-2 text-xs font-medium transition-colors ${
+              detailTab === "apiStatus"
+                ? "border-b-2 border-indigo-500 text-indigo-700"
+                : "text-gray-600 hover:text-gray-900"
+            }`}
+          >
+            API status
+          </button>
+        )}
         <button
           type="button"
           onClick={() => onTabChange("message")}
@@ -728,22 +860,40 @@ export default function TaskDetailsPanel({
           Metadata
         </button>
         {selectedItem.type === "task" && (
-          <button
-            type="button"
-            onClick={() => onTabChange("traces")}
-            className={`px-4 py-2 text-xs font-medium transition-colors ${
-              detailTab === "traces"
-                ? "border-b-2 border-indigo-500 text-indigo-700"
-                : "text-gray-600 hover:text-gray-900"
-            }`}
-          >
-            Traces
+          <>
             {traceSpans.length > 0 && (
-              <span className="ml-1 rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] text-indigo-700">
-                {traceSpans.length}
-              </span>
+              <button
+                type="button"
+                onClick={() => onTabChange("traces")}
+                className={`px-4 py-2 text-xs font-medium transition-colors ${
+                  detailTab === "traces"
+                    ? "border-b-2 border-indigo-500 text-indigo-700"
+                    : "text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                Traces
+                <span className="ml-1 rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] text-indigo-700">
+                  {traceSpans.length}
+                </span>
+              </button>
             )}
-          </button>
+            <button
+              type="button"
+              onClick={() => onTabChange("reasoning")}
+              className={`px-4 py-2 text-xs font-medium transition-colors ${
+                detailTab === "reasoning"
+                  ? "border-b-2 border-indigo-500 text-indigo-700"
+                  : "text-gray-600 hover:text-gray-900"
+              }`}
+            >
+              LLM Reasoning
+              {jobCard.objectStore?.available && jobCard.objectStore?.llmReasoning && (
+                <span className="ml-1 rounded-full bg-purple-100 px-1.5 py-0.5 text-[10px] text-purple-700">
+                  Available
+                </span>
+              )}
+            </button>
+          </>
         )}
         <button
           type="button"

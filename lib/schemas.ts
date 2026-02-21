@@ -54,6 +54,10 @@ export const TaskCallstackRequestSchema = z.object({
   taskId: z.string().min(1),
   apiInstanceId: z.string().min(1).optional(),
   envId: z.string().min(1).optional(),
+  skipTraces: z
+    .string()
+    .optional()
+    .transform((v) => v === "true" || v === "1"),
 });
 
 // ============================================================================

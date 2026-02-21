@@ -10,6 +10,25 @@ export const dynamic = "force-dynamic";
 const DEFAULT_BASE_URL = "https://anypoint.mulesoft.com";
 const DEFAULT_ACTIVITY_PERIOD_MINUTES = 1440; // 24h
 
+/**
+ * Check if an API instance exists in the given environment (Runtime Manager API).
+ * Used to filter fabric instance IDs to the exact selected environment.
+ */
+async function apiInstanceExistsInEnvironment(
+  baseUrl: string,
+  orgId: string,
+  environmentId: string,
+  apiInstanceId: string,
+  authHeader: string
+): Promise<boolean> {
+  const url = `${baseUrl}/apimanager/api/v1/organizations/${encodeURIComponent(orgId)}/environments/${encodeURIComponent(environmentId)}/apis/${encodeURIComponent(apiInstanceId)}`;
+  const res = await loggedFetch(url, {
+    method: "GET",
+    headers: { Authorization: authHeader },
+  });
+  return res.ok;
+}
+
 /** Anypoint environment from GET .../organizations/{orgId}/environments (response.data[]. */
 interface AnypointEnv {
   id?: string;
@@ -118,9 +137,25 @@ export async function GET(request: NextRequest) {
 
     for (const node of brokerNodes) {
       const nodeId = node.id ?? `${node.organizationId}:${node.assetId}`;
-      const instanceIds: string[] = isProduction
+      const rawInstanceIds: string[] = isProduction
         ? (prodMap[nodeId] ?? []).filter((id): id is string => typeof id === "string" && id.length > 0)
         : (nonProdMap[nodeId] ?? []).filter((id): id is string => typeof id === "string" && id.length > 0);
+
+      if (rawInstanceIds.length === 0) continue;
+
+      // Restrict to the exact selected environment: check each instance via Runtime Manager.
+      const existenceChecks = await Promise.all(
+        rawInstanceIds.map((id) =>
+          apiInstanceExistsInEnvironment(
+            baseUrl,
+            validatedOrgId,
+            validatedEnvironmentId,
+            id,
+            authHeader
+          )
+        )
+      );
+      const instanceIds = rawInstanceIds.filter((_, i) => existenceChecks[i]);
 
       if (instanceIds.length > 0) {
         brokers.push({
@@ -133,7 +168,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    debugLog("[BROKERS] Returning brokers:", {
+    debugLog("[BROKERS] Returning brokers (filtered to env " + validatedEnvironmentId + "):", {
       count: brokers.length,
       brokerIds: brokers.map((b: BrokerInEnvironment) => b.nodeId),
     });

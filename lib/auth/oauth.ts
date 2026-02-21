@@ -26,7 +26,15 @@ export function getAuthorizationUrl(state: string, redirectUri?: string): string
     state,
   });
 
-  return `${getAuthorizationEndpoint()}?${params.toString()}`;
+  const authUrl = `${getAuthorizationEndpoint()}?${params.toString()}`;
+  
+  // Debug logging: Log requested scopes (only in development)
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[OAuth] Requesting scopes:", config.scopes);
+    console.log("[OAuth] Authorization URL scopes parameter:", params.get("scope"));
+  }
+
+  return authUrl;
 }
 
 /**

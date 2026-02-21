@@ -25,10 +25,8 @@ interface TasksListProps {
   selectedTaskId?: string | null;
   onTaskSelect: (taskId: string | null) => void;
   activityPeriod?: ActivityPeriod;
-}
-
-function isEntitlementError(message: string): boolean {
-  return message.includes("Monitoring Center Premium") || message.includes("Log Search - Advanced");
+  /** Called when broker-tasks response is received; use mode === "no-entitlement" to skip trace fetches in task details */
+  onBrokerTasksData?: (data: { mode?: string }) => void;
 }
 
 export default function TasksList({
@@ -37,6 +35,7 @@ export default function TasksList({
   selectedTaskId: externalSelectedTaskId,
   onTaskSelect,
   activityPeriod = "24h",
+  onBrokerTasksData,
 }: TasksListProps) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(false);
@@ -84,9 +83,10 @@ export default function TasksList({
         
         return data;
       })
-      .then((data: { tasks: Task[] } | null) => {
+      .then((data: { tasks: Task[]; mode?: string } | null) => {
         if (data != null && "tasks" in data) {
           setTasks(data.tasks || []);
+          onBrokerTasksData?.({ mode: data.mode });
         }
       })
       .catch((err) => {
@@ -98,7 +98,7 @@ export default function TasksList({
         }
       })
       .finally(() => setLoading(false));
-  }, [orgId, apiInstanceId, activityPeriod]);
+  }, [orgId, apiInstanceId, activityPeriod, onBrokerTasksData]);
 
   useEffect(() => {
     fetchTasks();
@@ -136,35 +136,9 @@ export default function TasksList({
         <p className="text-xs text-gray-500">Loading tasks...</p>
       )}
       {apiInstanceId && error && (
-        <div className={`rounded border p-2 mb-2 ${isEntitlementError(error) ? "border-amber-300 bg-amber-50" : "border-red-200 bg-red-50"}`}>
-          <p className={`text-xs font-semibold ${isEntitlementError(error) ? "text-amber-900" : "text-red-900"}`}>
-            {isEntitlementError(error) ? "Log Search - Advanced package or a Titanium subscription to Anypoint Platform Required" : "Error"}
-          </p>
-          {isEntitlementError(error) && (
-            <div className="text-[10px] text-amber-800 mt-1 space-y-0.5">
-              <ul className="list-disc list-inside space-y-0.5">
-                <li>Elasticsearch log search APIs</li>
-                <li>Enhanced raw storage (up to 128TB based on configuration)</li>
-                <li>Advanced logs and traces</li>
-                <li>LLM reasoning logs (for Agent Broker monitoring)</li>
-              </ul>
-              <p className="mt-1 text-amber-700">
-                <a 
-                  href="https://docs.mulesoft.com/monitoring/#log-search" 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  className="underline hover:text-amber-900"
-                >
-                  Learn more about log search requirements
-                </a>
-              </p>
-            </div>
-          )}
-          {!isEntitlementError(error) && (
-            <p className={`text-xs mt-1 text-red-800`}>
-              {error}
-            </p>
-          )}
+        <div className="rounded border border-red-200 bg-red-50 p-2 mb-2">
+          <p className="text-xs font-semibold text-red-900">Error</p>
+          <p className="text-xs mt-1 text-red-800">{error}</p>
         </div>
       )}
       {apiInstanceId && !loading && !error && (

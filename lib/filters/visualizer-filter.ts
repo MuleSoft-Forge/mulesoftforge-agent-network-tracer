@@ -3,13 +3,14 @@ import type { FabricGraphResponse, FabricNode, FabricEdge } from "@/lib/adapters
 /**
  * Common BFS function to find all nodes reachable from starting node IDs.
  * Returns set of reachable node IDs.
+ * Uses unidirectional traversal (forward only: source → target).
  */
 function findReachableNodes(
   nodes: FabricNode[],
   edges: FabricEdge[],
   startNodeIds: string[]
 ): Set<string> {
-  // Build adjacency list (bidirectional)
+  // Build adjacency list (unidirectional: source → target only)
   const adjacencyList = new Map<string, Set<string>>();
   
   // Initialize for all nodes
@@ -17,13 +18,11 @@ function findReachableNodes(
     adjacencyList.set(node.id, new Set());
   }
   
-  // Add edges (bidirectional)
+  // Add edges (unidirectional: only forward direction)
   for (const edge of edges) {
     const sourceNeighbors = adjacencyList.get(edge.sourceId);
-    const targetNeighbors = adjacencyList.get(edge.targetId);
-    if (sourceNeighbors && targetNeighbors) {
+    if (sourceNeighbors) {
       sourceNeighbors.add(edge.targetId);
-      targetNeighbors.add(edge.sourceId);
     }
   }
   
@@ -103,19 +102,37 @@ export function filterVisualizerByBroker(
   const nodes = response.nodes || [];
   const edges = response.edges || [];
   
+  // Debug: Log all broker nodes and their assetIds
+  const allBrokers = nodes.filter((n: FabricNode) => n.type === "BROKER");
+  console.log("[filterVisualizerByBroker] Looking for broker with assetId:", brokerAssetId);
+  console.log("[filterVisualizerByBroker] Available brokers:", allBrokers.map((b: FabricNode) => ({ id: b.id, assetId: b.assetId, name: b.name })));
+  
   // Find the broker node by assetId
   const brokerNode = nodes.find(
     (n: FabricNode) => n.type === "BROKER" && n.assetId === brokerAssetId
   );
   
   if (!brokerNode) {
+    console.warn("[filterVisualizerByBroker] Broker not found! Searched for assetId:", brokerAssetId);
+    console.warn("[filterVisualizerByBroker] Available broker assetIds:", allBrokers.map((b: FabricNode) => b.assetId));
     return { nodes: [], edges: [], prod_instances_map: {}, non_prod_instances_map: {} };
   }
   
-  // Use BFS to find reachable nodes via runtime edges
+  console.log("[filterVisualizerByBroker] Found broker node:", { id: brokerNode.id, assetId: brokerNode.assetId, name: brokerNode.name });
+  
+  // Use BFS to find reachable nodes via runtime edges (unidirectional: source → target only)
   // If no edges exist (no runtime traffic), only the broker node will be included
   const reachableNodeIds = findReachableNodes(nodes, edges, [brokerNode.id]);
-  return filterByReachableNodes(response, reachableNodeIds);
+  console.log("[filterVisualizerByBroker] Reachable node IDs:", Array.from(reachableNodeIds));
+  
+  const filtered = filterByReachableNodes(response, reachableNodeIds);
+  console.log("[filterVisualizerByBroker] Filtered result:", { 
+    nodes: filtered.nodes?.length ?? 0, 
+    edges: filtered.edges?.length ?? 0,
+    nodeIds: filtered.nodes?.map((n: FabricNode) => n.id) ?? []
+  });
+  
+  return filtered;
 }
 
 /**

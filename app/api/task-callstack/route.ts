@@ -2,10 +2,36 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession, isAuthenticated } from "@/lib/session";
 import { loggedFetch, debugError, debugLog } from "@/lib/api-logger";
 import { TaskCallstackRequestSchema } from "@/lib/schemas";
+import { fetchObjectStoreData, getObjectStoreRegionFromDeployment } from "@/lib/object-store/client";
+import { getOAuthConfig, AMC_COMMON_SCOPES_TO_TRY } from "@/lib/auth/config";
+import type { ApiStatus } from "@/components/task-details/types";
 
 export const dynamic = "force-dynamic";
 
 const DEFAULT_BASE_URL = "https://anypoint.mulesoft.com";
+
+/**
+ * AMC 403: The token is allowed to list deployments but not to read deployment detail or
+ * specs (and thus not logs). Mulesoft docs: scope "Read Applications" (read:applications)
+ * allows GET /organizations/{{org}}/environments/{{envId}}/deployments/** — the org must
+ * grant that scope for the Connected App so detail/specs/logs are allowed.
+ */
+function buildAmc403Message(apiErrorMessage: string, currentScopes: string): string {
+  return `Application Manager API returned 403 Forbidden.
+
+API Error: ${apiErrorMessage}
+
+The token can list deployments but is not allowed to read deployment detail or specs (and thus not logs). Mulesoft docs: scope "Read Applications" (read:applications) allows GET .../organizations/{{org}}/environments/{{envId}}/deployments/**. Ensure your Anypoint org has granted the Connected App the Read Applications scope so deployment detail, specs, and logs are allowed.
+
+To test different scopes:
+1. Set ANYPOINT_SCOPES environment variable with the scope you want to test, e.g.:
+   export ANYPOINT_SCOPES="profile read:exchange view:monitoring read:api_configuration read:api_policies manage:store_data <SCOPE_TO_TEST>"
+2. Update your Connected App in Anypoint Platform to include that scope
+3. Sign out and sign back in
+
+Common scopes to try: ${AMC_COMMON_SCOPES_TO_TRY}
+Current scopes being requested: ${currentScopes}`;
+}
 
 async function msearch(
   orgId: string,
@@ -228,9 +254,13 @@ type TraceSpanRow = {
   envName?: string;
 };
 
+/** Status of the Observability spans:search call for apiStatus. */
+type TraceSpansStatus = "ok" | "403" | "skipped" | "error";
+
 /**
  * Fetch OTEL trace spans for a trace from Anypoint Observability API.
  * Requires orgId, traceId, and envId. Uses timestamp BETWEEN for time range (API requirement).
+ * Returns spans and status for API status table in task details.
  */
 async function fetchTraceSpans(
   orgId: string,
@@ -240,9 +270,9 @@ async function fetchTraceSpans(
   envId: string,
   traceStartTime?: string | number,
   traceEndTime?: string | number
-): Promise<TraceSpanRow[]> {
+): Promise<{ spans: TraceSpanRow[]; status: TraceSpansStatus }> {
   if (!traceId || traceId.trim() === "" || !orgId || !envId || envId.trim() === "") {
-    return [];
+    return { spans: [], status: "skipped" };
   }
 
   try {
@@ -274,31 +304,290 @@ async function fetchTraceSpans(
 
     if (!res.ok) {
       debugLog("[fetchTraceSpans] spans:search failed:", res.status);
-      return [];
+      const status: TraceSpansStatus = res.status === 403 ? "403" : "error";
+      return { spans: [], status };
     }
 
     const data = (await res.json()) as { data?: TraceSpanRow[] };
-    const spans = data.data ?? [];
-    return spans.filter((span: TraceSpanRow): span is TraceSpanRow & { traceId: string; spanId: string } => Boolean(span.traceId && span.spanId));
+    const spans = (data.data ?? []).filter((span: TraceSpanRow): span is TraceSpanRow & { traceId: string; spanId: string } => Boolean(span.traceId && span.spanId));
+    return { spans, status: "ok" };
   } catch (err) {
     debugLog("[fetchTraceSpans] error:", err);
-    return [];
+    return { spans: [], status: "error" };
   }
 }
 
 /**
- * Fallback: Parse runtime logs when Premium is not available
- * This is inefficient but allows us to extract some task information
+ * Parse runtime logs text for a given taskId and return entries + jobCard, or null if none.
  */
-async function parseRuntimeLogsFallback(
+function parseRuntimeLogsToEntriesAndJobCard(
+  logsText: string,
+  taskId: string
+): { entries: unknown[]; jobCard: unknown } | null {
+  const taskIdPattern = taskId.replace(/-/g, "[-]");
+  const lineTaskIdRegex = new RegExp(taskIdPattern, "gi");
+  const logLines = logsText.split("\n").filter((line: string) => line.trim().length > 0);
+  const entries: unknown[] = [];
+  let entryIndex = 0;
+  for (const line of logLines) {
+    lineTaskIdRegex.lastIndex = 0;
+    if (!lineTaskIdRegex.test(line)) continue;
+    const timestampMatch = line.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)/);
+    const timestamp = timestampMatch ? timestampMatch[1] : new Date().toISOString();
+    const loggerMatch = line.match(/\[[\w]+\]\s+(\S+)\s+(\S+)/);
+    const logger = loggerMatch ? loggerMatch[1] : "";
+    const level = loggerMatch ? loggerMatch[2] : "";
+    const messageMatch = line.match(/^[\d-T:Z.]+\s+\w+\s+\[[\w]+\]\s+[\w-]+\s+[\w-]+\s+(.+)$/);
+    const message = messageMatch ? messageMatch[1] : line;
+    const type = classifyLog(logger, message);
+    const fields = parseFields(message);
+    const summary = summarizeLine(type, message, fields);
+    entries.push({
+      index: entryIndex++,
+      type,
+      summary,
+      timestamp,
+      logger,
+      level,
+      appId: "",
+      workerId: "",
+      fields,
+      raw: { message, logger, timestamp, "log-level": level },
+      _id: `runtime-${entryIndex}`,
+      _index: "runtime",
+    });
+  }
+  if (entries.length === 0) return null;
+  const inbound = entries.find((e: unknown) => (e as { type?: string }).type === "INBOUND_REQUEST");
+  const finalResp = entries.find((e: unknown) => (e as { type?: string }).type === "FINAL_RESPONSE");
+  const toolSelections = entries.filter((e: unknown) => (e as { type?: string }).type === "LLM_TOOL_SELECTION");
+  const toolExecutions = entries.filter((e: unknown) => (e as { type?: string }).type === "TOOL_EXECUTED");
+  const firstEntry = entries[0] as { timestamp?: string | number };
+  const lastEntry = entries[entries.length - 1] as { timestamp?: string | number };
+  let duration: string | null = null;
+  if (firstEntry && lastEntry) {
+    const t1 = typeof firstEntry.timestamp === "number" ? firstEntry.timestamp : new Date(firstEntry.timestamp || "").getTime();
+    const t2 = typeof lastEntry.timestamp === "number" ? lastEntry.timestamp : new Date(lastEntry.timestamp || "").getTime();
+    duration = ((t2 - t1) / 1000).toFixed(1);
+  }
+  const maxIter = Math.max(0, ...entries.map((e: unknown) => parseInt(String((e as { fields?: { iteration?: string } }).fields?.iteration || "0"), 10)));
+  const toolStrings = toolSelections
+    .map((e: unknown) => (e as { fields?: { tool?: string } }).fields?.tool as string)
+    .filter((t: string | undefined): t is string => typeof t === "string" && Boolean(t));
+  const allTools: string[] = Array.from(new Set(toolStrings));
+  const jobCard = {
+    taskId,
+    contextId: (entries.find((e: unknown) => (e as { fields?: { contextId?: string } }).fields?.contextId) as { fields?: { contextId?: string } } | undefined)?.fields?.contextId || "",
+    traceId: "",
+    broker: (entries.find((e: unknown) => (e as { fields?: { agent?: string } }).fields?.agent) as { fields?: { agent?: string } } | undefined)?.fields?.agent || "",
+    apiInstanceId: (entries.find((e: unknown) => (e as { fields?: { apiInstanceId?: string } }).fields?.apiInstanceId) as { fields?: { apiInstanceId?: string } } | undefined)?.fields?.apiInstanceId || "",
+    userMessage: inbound ? ((inbound as { fields?: { userMessage?: string } }).fields?.userMessage || "") : "",
+    messageId: inbound ? ((inbound as { fields?: { messageId?: string } }).fields?.messageId || "") : "",
+    outcome: finalResp ? ((finalResp as { fields?: { resultStatus?: string } }).fields?.resultStatus || "completed") : toolExecutions.length > 0 ? "completed" : "",
+    startTime: firstEntry ? firstEntry.timestamp : "",
+    endTime: lastEntry ? lastEntry.timestamp : "",
+    duration,
+    iterations: maxIter,
+    toolsUsed: allTools.map((t: string) => t.replace(/^[a-zA-Z0-9]+_/, "")),
+    totalEntries: entries.length,
+    appId: "",
+  };
+  return { entries, jobCard };
+}
+
+/**
+ * In no-entitlement mode we still have envId and often apiInstanceId; resolve deploymentId and try Object Store.
+ * Returns objectStore payload and status for apiStatus. Uses Runtime Manager (and AMC if needed) to get deploymentId.
+ */
+async function fetchObjectStoreInNoEntitlementMode(
+  orgId: string,
+  envId: string,
+  taskId: string,
+  jobCard: { broker?: string; apiInstanceId?: string; appId?: string },
+  apiInstanceIdFromRequest: string | undefined,
+  accessToken: string,
+  baseUrl: string
+): Promise<{
+  objectStore: {
+    available: boolean;
+    objectStoreStatus?: "ok" | "403_forbidden" | "no_store" | "no_keys";
+    llmReasoning?: unknown;
+    toolCallIds?: string[];
+    downstreamContextIds?: unknown;
+    errors?: string[];
+  };
+  objectStoreApiStatus: ApiStatus["objectStore"];
+}> {
+  const brokerName = (jobCard.broker ?? "").trim();
+  const apiInstanceId = (jobCard.apiInstanceId || apiInstanceIdFromRequest || "").trim();
+  const appId = (jobCard.appId ?? "").trim();
+
+  let deploymentId: string | null = null;
+  if (appId) {
+    const appIdMatch = appId.match(/^APP_([a-f0-9-]+)__/);
+    if (appIdMatch) deploymentId = appIdMatch[1];
+    else if (/^[a-f0-9-]{36}$/.test(appId)) deploymentId = appId;
+  }
+  if (!deploymentId && apiInstanceId) {
+    try {
+      const rmRes = await loggedFetch(
+        `${baseUrl}/apimanager/api/v1/organizations/${orgId}/environments/${envId}/apis/${apiInstanceId}`,
+        { method: "GET", headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+      if (rmRes.ok) {
+        const apiInfo = (await rmRes.json()) as {
+          deployment?: { applicationId?: string; deploymentId?: string | null };
+          appId?: string;
+        };
+        const dep = apiInfo.deployment || {};
+        deploymentId =
+          dep.deploymentId ?? dep.applicationId ?? apiInfo.deployment?.applicationId ?? null;
+        if (!deploymentId && apiInfo.appId) {
+          const m = String(apiInfo.appId).match(/^APP_([a-f0-9-]+)__/);
+          if (m) deploymentId = m[1];
+        }
+      }
+    } catch (e) {
+      debugLog("[NO-ENTITLEMENT] Object Store: error resolving deploymentId from Runtime Manager", e);
+    }
+  }
+
+  if (!envId || !deploymentId) {
+    return {
+      objectStore: { available: false },
+      objectStoreApiStatus: "skipped",
+    };
+  }
+
+  try {
+    debugLog("[NO-ENTITLEMENT] Attempting Object Store fetch - orgId, envId, taskId, brokerName, deploymentId", orgId, envId, taskId, brokerName, deploymentId);
+    const objectStoreData = await fetchObjectStoreData(
+      orgId,
+      envId,
+      taskId,
+      brokerName,
+      deploymentId,
+      accessToken,
+      undefined,
+      undefined
+    );
+    const status: ApiStatus["objectStore"] =
+      objectStoreData.objectStoreStatus ??
+      (objectStoreData.available ? "ok" : objectStoreData.errors?.some((e: string) => e.includes("403")) ? "403_forbidden" : "error");
+    return {
+      objectStore: {
+        available: objectStoreData.available,
+        objectStoreStatus: objectStoreData.objectStoreStatus,
+        llmReasoning: objectStoreData.llmReasoning,
+        toolCallIds: objectStoreData.toolCallIds,
+        downstreamContextIds: objectStoreData.downstreamContextIds,
+        errors: objectStoreData.errors,
+      },
+      objectStoreApiStatus: status,
+    };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "Unknown error";
+    debugLog("[NO-ENTITLEMENT] Object Store fetch error:", msg);
+    const objectStoreApiStatus: ApiStatus["objectStore"] = msg.includes("403") ? "403_forbidden" : "error";
+    return {
+      objectStore: { available: false, errors: [msg] },
+      objectStoreApiStatus,
+    };
+  }
+}
+
+/**
+ * No-entitlement mode: get task details from runtime logs (AMC deployments + logs/file).
+ * When apiInstanceId and envId are set, tries the broker's deployment first (same as task list).
+ */
+async function getTaskDetailsFromRuntimeLogs(
   orgId: string,
   taskId: string,
   envId: string | null,
   accessToken: string,
   baseUrl: string,
-  timeRangeMs: number
+  timeRangeMs: number,
+  apiInstanceId?: string | null
 ): Promise<{ entries: unknown[]; jobCard: unknown } | null> {
-  debugLog("[FALLBACK] Attempting to parse runtime logs for taskId:", taskId);
+  debugLog("[NO-ENTITLEMENT] Getting task details from runtime logs for taskId:", taskId);
+
+  const now = Date.now();
+  const startTime = now - timeRangeMs;
+  const endTime = now;
+
+  // Fast path: when we have the broker's apiInstanceId and envId, fetch from that deployment first (same as task list)
+  if (envId && apiInstanceId) {
+    try {
+      const rmUrl = `${baseUrl}/apimanager/api/v1/organizations/${orgId}/environments/${envId}/apis/${apiInstanceId}`;
+      const rmRes = await loggedFetch(rmUrl, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (rmRes.ok) {
+        const apiInfo = (await rmRes.json()) as {
+          deploymentId?: string;
+          deployment?: { applicationId?: string; deploymentId?: string | null };
+          instanceLabel?: string;
+          assetId?: string;
+        };
+        const dep = apiInfo.deployment || {};
+        const deploymentIdToTry = dep.deploymentId ?? dep.applicationId ?? apiInfo.deploymentId;
+        const brokerName = (apiInfo.instanceLabel || apiInfo.assetId || "").toLowerCase();
+
+        let deploymentId: string | null = deploymentIdToTry || null;
+        if (!deploymentId && brokerName) {
+          const listRes = await loggedFetch(
+            `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${envId}/deployments`,
+            { method: "GET", headers: { Authorization: `Bearer ${accessToken}` } }
+          );
+          if (listRes.ok) {
+            const listData = (await listRes.json()) as { items?: Array<{ id: string; name: string }> };
+            const items = listData.items || [];
+            const normalizedBroker = brokerName.replace(/-/g, "");
+            for (const item of items) {
+              const nameNorm = (item.name || "").toLowerCase().replace(/-/g, "");
+              if (nameNorm === normalizedBroker || nameNorm.includes(normalizedBroker) || normalizedBroker.includes(nameNorm)) {
+                deploymentId = item.id;
+                debugLog("[NO-ENTITLEMENT] Matched broker deployment by name:", item.name, "->", item.id);
+                break;
+              }
+            }
+          }
+        }
+        if (deploymentId) {
+          const detailRes = await loggedFetch(
+            `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${envId}/deployments/${deploymentId}`,
+            { method: "GET", headers: { Authorization: `Bearer ${accessToken}` } }
+          );
+          if (detailRes.ok) {
+            const detail = (await detailRes.json()) as { desiredVersion?: string; replicas?: Array<{ id: string }> };
+            const specId = detail.desiredVersion ?? detail.replicas?.[0]?.id;
+            if (specId) {
+              const searchParams = { startTime, endTime, length: 10000, descending: true };
+              const logsUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${envId}/deployments/${deploymentId}/specs/${specId}/logs/file?search=${encodeURIComponent(JSON.stringify(searchParams))}`;
+              const logsRes = await loggedFetch(logsUrl, {
+                method: "GET",
+                headers: { Authorization: `Bearer ${accessToken}` },
+              });
+              if (logsRes.ok) {
+                const logsText = await logsRes.text();
+                const taskIdPattern = taskId.replace(/-/g, "[-]");
+                if (new RegExp(taskIdPattern, "gi").test(logsText)) {
+                  const parsed = parseRuntimeLogsToEntriesAndJobCard(logsText, taskId);
+                  if (parsed) {
+                    debugLog("[NO-ENTITLEMENT] Task details from broker deployment");
+                    return parsed;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      debugLog("[NO-ENTITLEMENT] Broker deployment fast path failed:", e);
+    }
+  }
 
   // If envId not provided, get list of environments to try
   let environmentsToTry: Array<{ id: string; name: string }> = [];
@@ -316,29 +605,26 @@ async function parseRuntimeLogsFallback(
       });
 
       if (envsRes.ok) {
-        const envsData = (await envsRes.json()) as { data?: Array<{ id: string; name: string }> };
-        environmentsToTry = envsData.data || [];
-        debugLog("[FALLBACK] Found", environmentsToTry.length, "environments to try");
+        const envsData = (await envsRes.json()) as { data?: Array<{ id: string; name: string; type?: string }> };
+        const allEnvs = envsData.data || [];
+        environmentsToTry = allEnvs.filter((e) => (e.type || "").toLowerCase() !== "design");
+        debugLog("[NO-ENTITLEMENT] Found", environmentsToTry.length, "runtime environments to try (excluded Design)");
       } else {
-        debugLog("[FALLBACK] Failed to fetch environments:", envsRes.status);
+        debugLog("[NO-ENTITLEMENT] Failed to fetch environments:", envsRes.status);
         return null;
       }
     } catch (error) {
-      debugLog("[FALLBACK] Error fetching environments:", error);
+      debugLog("[NO-ENTITLEMENT] Error fetching environments:", error);
       return null;
     }
   }
 
   if (environmentsToTry.length === 0) {
-    debugLog("[FALLBACK] No environments to try");
+    debugLog("[NO-ENTITLEMENT] No environments to try");
     return null;
   }
 
   try {
-    const now = Date.now();
-    const startTime = now - timeRangeMs;
-    const endTime = now;
-
     // Step 1: Try each environment to find deployments containing our taskId
     for (const env of environmentsToTry) {
       try {
@@ -354,18 +640,35 @@ async function parseRuntimeLogsFallback(
           continue; // Try next environment
         }
 
-        const deployments = (await deploymentsRes.json()) as Array<{ id: string; name: string; replicas?: Array<{ id: string }> }>;
-        debugLog("[FALLBACK] Found", deployments.length, "deployments in environment", env.id);
+        const deploymentsData = (await deploymentsRes.json()) as { items?: Array<{ id: string; name: string }> };
+        const deployments = deploymentsData.items || [];
+        debugLog("[NO-ENTITLEMENT] Found", deployments.length, "deployments in environment", env.id);
 
-        // Step 2: Try each deployment's logs to find taskId
+        // Step 2: For each deployment, get detail (for specId) then logs
         for (const deployment of deployments) {
-          if (!deployment.replicas || deployment.replicas.length === 0) {
+          let specId: string | null = null;
+          try {
+            const deploymentDetailUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${env.id}/deployments/${deployment.id}`;
+            const deploymentDetailRes = await loggedFetch(deploymentDetailUrl, {
+              method: "GET",
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+              },
+            });
+            if (!deploymentDetailRes.ok) {
+              continue;
+            }
+            const deploymentDetail = (await deploymentDetailRes.json()) as {
+              desiredVersion?: string;
+              replicas?: Array<{ id: string }>;
+            };
+            specId = deploymentDetail.desiredVersion ?? deploymentDetail.replicas?.[0]?.id ?? null;
+          } catch {
             continue;
           }
-
-          // Use the first replica's specId (simplified - in reality we'd need to handle multiple replicas)
-          const replicaId = deployment.replicas[0].id;
-          const specId = replicaId; // Simplified assumption
+          if (!specId) {
+            continue;
+          }
 
           try {
             // Fetch logs file for this deployment
@@ -391,149 +694,26 @@ async function parseRuntimeLogsFallback(
 
             const logsText = await logsRes.text();
             
-            // Step 3: Parse logs for taskId
-            // Look for taskId in JSON-RPC responses and log messages
-            const taskIdRegex = new RegExp(taskId.replace(/-/g, "[-]"), "gi");
-            if (!taskIdRegex.test(logsText)) {
-              continue; // TaskId not found in this deployment's logs
+            const parsed = parseRuntimeLogsToEntriesAndJobCard(logsText, taskId);
+            if (parsed) {
+              debugLog("[NO-ENTITLEMENT] Found taskId in deployment:", deployment.id, "entries:", parsed.entries.length);
+              return parsed;
             }
-
-            debugLog("[FALLBACK] Found taskId in deployment:", deployment.id);
-
-            // Step 4: Parse log lines and extract entries
-            const logLines = logsText.split("\n").filter((line: string) => line.trim().length > 0);
-            const entries: unknown[] = [];
-            let entryIndex = 0;
-
-            for (const line of logLines) {
-              // Skip if line doesn't contain taskId
-              if (!taskIdRegex.test(line)) {
-                continue;
-              }
-
-              // Try to parse timestamp from log line format: "2026-02-13T10:17:12.523Z DEBUG [8jpc4] ..."
-              const timestampMatch = line.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)/);
-              const timestamp = timestampMatch ? timestampMatch[1] : new Date().toISOString();
-
-              // Extract logger and level
-              const loggerMatch = line.match(/\[[\w]+\]\s+(\S+)\s+(\S+)/);
-              const logger = loggerMatch ? loggerMatch[1] : "";
-              const level = loggerMatch ? loggerMatch[2] : "";
-
-              // Extract message (everything after timestamp and logger info)
-              const messageMatch = line.match(/^[\d-T:Z.]+\s+\w+\s+\[[\w]+\]\s+[\w-]+\s+[\w-]+\s+(.+)$/);
-              const message = messageMatch ? messageMatch[1] : line;
-
-              // Classify and parse
-              const type = classifyLog(logger, message);
-              const fields = parseFields(message);
-              const summary = summarizeLine(type, message, fields);
-
-              entries.push({
-                index: entryIndex++,
-                type,
-                summary,
-                timestamp,
-                logger,
-                level,
-                appId: "",
-                workerId: "",
-                fields,
-                raw: { message, logger, timestamp, "log-level": level },
-                _id: `fallback-${entryIndex}`,
-                _index: "fallback",
-              });
-            }
-
-            if (entries.length === 0) {
-              continue; // No entries found, try next deployment
-            }
-
-            // Step 5: Build job card from parsed entries
-            const inbound = entries.find((e: unknown) => {
-              const entry = e as { type?: string };
-              return entry.type === "INBOUND_REQUEST";
-            });
-            const finalResp = entries.find((e: unknown) => {
-              const entry = e as { type?: string };
-              return entry.type === "FINAL_RESPONSE";
-            });
-            const toolSelections = entries.filter((e: unknown) => {
-              const entry = e as { type?: string };
-              return entry.type === "LLM_TOOL_SELECTION";
-            });
-            const toolExecutions = entries.filter((e: unknown) => {
-              const entry = e as { type?: string };
-              return entry.type === "TOOL_EXECUTED";
-            });
-
-            const firstEntry = entries[0] as { timestamp?: string | number };
-            const lastEntry = entries[entries.length - 1] as { timestamp?: string | number };
-            let duration: string | null = null;
-            if (firstEntry && lastEntry) {
-              const t1 = typeof firstEntry.timestamp === "number" ? firstEntry.timestamp : new Date(firstEntry.timestamp || "").getTime();
-              const t2 = typeof lastEntry.timestamp === "number" ? lastEntry.timestamp : new Date(lastEntry.timestamp || "").getTime();
-              duration = ((t2 - t1) / 1000).toFixed(1);
-            }
-
-            const maxIter = Math.max(0, ...entries.map((e: unknown) => {
-              const entry = e as { fields?: { iteration?: string } };
-              return parseInt((entry.fields?.iteration as string) || "0", 10);
-            }));
-            const toolStrings = toolSelections.map((e: unknown) => {
-              const entry = e as { fields?: { tool?: string } };
-              return entry.fields?.tool as string;
-            }).filter((t: string | undefined): t is string => typeof t === "string" && Boolean(t));
-            const allTools: string[] = Array.from(new Set(toolStrings));
-
-            const jobCard = {
-              taskId,
-              contextId: (entries.find((e: unknown) => {
-                const entry = e as { fields?: { contextId?: string } };
-                return entry.fields?.contextId;
-              }) as { fields?: { contextId?: string } } | undefined)?.fields?.contextId || "",
-              traceId: "",
-              broker: (entries.find((e: unknown) => {
-                const entry = e as { fields?: { agent?: string } };
-                return entry.fields?.agent;
-              }) as { fields?: { agent?: string } } | undefined)?.fields?.agent || "",
-              apiInstanceId: (entries.find((e: unknown) => {
-                const entry = e as { fields?: { apiInstanceId?: string } };
-                return entry.fields?.apiInstanceId;
-              }) as { fields?: { apiInstanceId?: string } } | undefined)?.fields?.apiInstanceId || "",
-              userMessage: inbound ? ((inbound as { fields?: { userMessage?: string } }).fields?.userMessage || "") : "",
-              messageId: inbound ? ((inbound as { fields?: { messageId?: string } }).fields?.messageId || "") : "",
-              outcome: finalResp
-                ? ((finalResp as { fields?: { resultStatus?: string } }).fields?.resultStatus || "completed")
-                : toolExecutions.length > 0
-                  ? "completed"
-                  : "",
-              startTime: firstEntry ? firstEntry.timestamp : "",
-              endTime: lastEntry ? lastEntry.timestamp : "",
-              duration,
-              iterations: maxIter,
-              toolsUsed: allTools.map((t: string) => t.replace(/^[a-zA-Z0-9]+_/, "")),
-              totalEntries: entries.length,
-              appId: "",
-            };
-
-            debugLog("[FALLBACK] Successfully parsed", entries.length, "log entries");
-            return { entries, jobCard };
           } catch (error) {
-            debugLog("[FALLBACK] Error parsing logs for deployment", deployment.id, ":", error);
+            debugLog("[NO-ENTITLEMENT] Error parsing logs for deployment", deployment.id, ":", error);
             continue; // Try next deployment
           }
         }
       } catch (error) {
-        debugLog("[FALLBACK] Error processing environment", env.id, ":", error);
+        debugLog("[NO-ENTITLEMENT] Error processing environment", env.id, ":", error);
         continue; // Try next environment
       }
     }
 
-    debugLog("[FALLBACK] TaskId not found in any deployment logs");
+    debugLog("[NO-ENTITLEMENT] TaskId not found in any deployment logs");
     return null;
   } catch (error) {
-    debugError("[FALLBACK] Error in runtime logs fallback:", error);
+    debugError("[NO-ENTITLEMENT] Error getting task details from runtime logs:", error);
     return null;
   }
 }
@@ -557,6 +737,7 @@ export async function GET(request: NextRequest) {
   // Convert null to undefined for optional parameters (Zod expects undefined, not null)
   const apiInstanceId = searchParams.get("apiInstanceId") || undefined;
   const envId = searchParams.get("envId") || undefined;
+  const skipTracesParam = searchParams.get("skipTraces") ?? undefined;
 
   // Validate query parameters with Zod
   const parseResult = TaskCallstackRequestSchema.safeParse({
@@ -564,6 +745,7 @@ export async function GET(request: NextRequest) {
     taskId,
     apiInstanceId,
     envId,
+    skipTraces: skipTracesParam,
   });
   
   if (!parseResult.success) {
@@ -576,7 +758,7 @@ export async function GET(request: NextRequest) {
     );
   }
   
-  const { orgId: validatedOrgId, taskId: validatedTaskId, apiInstanceId: validatedApiInstanceId, envId: validatedEnvId } = parseResult.data;
+  const { orgId: validatedOrgId, taskId: validatedTaskId, apiInstanceId: validatedApiInstanceId, envId: validatedEnvId, skipTraces: skipTracesRequested } = parseResult.data;
 
   const timeRange = 30 * 24 * 3600 * 1000;
 
@@ -585,53 +767,59 @@ export async function GET(request: NextRequest) {
     const phase1Query = `orgId=${validatedOrgId} AND "${validatedTaskId}"`;
     const phase1 = await msearch(validatedOrgId, phase1Query, { timeRangeMs: timeRange }, session.accessToken, baseUrl);
     
-    // Check for Monitoring Center Premium entitlement error - try fallback
-    // COMMENTED OUT: Fallback disabled - return 403 to show warning message
+    // No-entitlement mode: get task details from runtime logs
     if (phase1.error === "MONITORING_CENTER_PREMIUM_REQUIRED") {
-      return NextResponse.json(
-        { 
-          error: "Monitoring Center Premium entitlement required",
-          message: "Log Search - Advanced package or a Titanium subscription to Anypoint Platform Required - Elasticsearch log search APIs - Enhanced raw storage (up to 128TB based on configuration) - Advanced logs and traces - LLM reasoning logs (for Agent Broker monitoring)",
-          code: "MONITORING_CENTER_PREMIUM_REQUIRED"
-        },
-        { status: 403 }
-      );
-    }
-    /*
-    if (phase1.error === "MONITORING_CENTER_PREMIUM_REQUIRED") {
-      debugLog("[FALLBACK] Premium required, attempting runtime logs fallback");
-      
-      // Try fallback: parse runtime logs
-      const fallbackResult = await parseRuntimeLogsFallback(
-        orgId,
-        taskId,
-        envId,
+      debugLog("[NO-ENTITLEMENT] Premium required, getting task details from runtime logs");
+      const runtimeLogsResult = await getTaskDetailsFromRuntimeLogs(
+        validatedOrgId,
+        validatedTaskId,
+        validatedEnvId ?? null,
         session.accessToken,
         baseUrl,
-        timeRange
+        timeRange,
+        validatedApiInstanceId ?? undefined
       );
 
-      if (fallbackResult) {
-        debugLog("[FALLBACK] Successfully parsed runtime logs");
+      if (runtimeLogsResult) {
+        debugLog("[NO-ENTITLEMENT] Task details from runtime logs");
+        const jobCardFromRuntime = runtimeLogsResult.jobCard as Record<string, unknown>;
+        const { objectStore, objectStoreApiStatus } = await fetchObjectStoreInNoEntitlementMode(
+          validatedOrgId,
+          validatedEnvId ?? "",
+          validatedTaskId,
+          {
+            broker: jobCardFromRuntime.broker as string | undefined,
+            apiInstanceId: jobCardFromRuntime.apiInstanceId as string | undefined,
+            appId: jobCardFromRuntime.appId as string | undefined,
+          },
+          validatedApiInstanceId ?? undefined,
+          session.accessToken,
+          baseUrl
+        );
+        const noEntitlementApiStatus: ApiStatus = {
+          logSearch: "403_entitlement",
+          objectStore: objectStoreApiStatus,
+          deploymentApi: "ok",
+          traceSpans: "skipped",
+        };
         return NextResponse.json({
-          jobCard: fallbackResult.jobCard,
-          entries: fallbackResult.entries,
+          jobCard: { ...jobCardFromRuntime, objectStore, apiStatus: noEntitlementApiStatus },
+          entries: runtimeLogsResult.entries,
+          traceSpans: [],
           rawQueries: { phase1: phase1Query, phase2: null, traceId: null },
-          fallback: true, // Indicate this is fallback data
+          mode: "no-entitlement",
         });
       }
 
-      // Fallback failed, return error
       return NextResponse.json(
-        { 
+        {
           error: "Monitoring Center Premium entitlement required",
-          message: "Monitoring Center Premium entitlement required. This feature requires access to log search functionality.",
-          code: "MONITORING_CENTER_PREMIUM_REQUIRED"
+          message: "Log Search - Advanced package or a Titanium subscription to Anypoint Platform Required - Elasticsearch log search APIs - Enhanced raw storage (up to 128TB based on configuration) - Advanced logs and traces - LLM reasoning logs (for Agent Broker monitoring)",
+          code: "MONITORING_CENTER_PREMIUM_REQUIRED",
         },
         { status: 403 }
       );
     }
-    */
 
     // Extract trace_id from any entry with traceparent
     let traceId: string | null = null;
@@ -651,54 +839,60 @@ export async function GET(request: NextRequest) {
       phase2Query = `orgId=${validatedOrgId} AND ("${traceId}" OR "${validatedTaskId}")`;
       const phase2 = await msearch(validatedOrgId, phase2Query, { timeRangeMs: timeRange }, session.accessToken, baseUrl);
       
-      // Check for Monitoring Center Premium entitlement error - try fallback
-      // COMMENTED OUT: Fallback disabled - return 403 to show warning message
+      // No-entitlement mode: get task details from runtime logs
       if (phase2.error === "MONITORING_CENTER_PREMIUM_REQUIRED") {
-        return NextResponse.json(
-          { 
-            error: "Monitoring Center Premium entitlement required",
-            message: "Log Search - Advanced package or a Titanium subscription to Anypoint Platform Required - Elasticsearch log search APIs - Enhanced raw storage (up to 128TB based on configuration) - Advanced logs and traces - LLM reasoning logs (for Agent Broker monitoring)",
-            code: "MONITORING_CENTER_PREMIUM_REQUIRED"
-          },
-          { status: 403 }
-        );
-      }
-      /*
-      if (phase2.error === "MONITORING_CENTER_PREMIUM_REQUIRED") {
-        debugLog("[FALLBACK] Premium required in phase2, attempting runtime logs fallback");
-        
-        // Try fallback: parse runtime logs
-        const fallbackResult = await parseRuntimeLogsFallback(
-          orgId,
-          taskId,
-          envId,
+        debugLog("[NO-ENTITLEMENT] Premium required in phase2, getting task details from runtime logs");
+        const runtimeLogsResult = await getTaskDetailsFromRuntimeLogs(
+          validatedOrgId,
+          validatedTaskId,
+          validatedEnvId ?? null,
           session.accessToken,
           baseUrl,
-          timeRange
+          timeRange,
+          validatedApiInstanceId ?? undefined
         );
 
-        if (fallbackResult) {
-          debugLog("[FALLBACK] Successfully parsed runtime logs");
-          return NextResponse.json({
-            jobCard: fallbackResult.jobCard,
-            entries: fallbackResult.entries,
-            rawQueries: { phase1: phase1Query, phase2: phase2Query, traceId },
-            fallback: true, // Indicate this is fallback data
-          });
-        }
+      if (runtimeLogsResult) {
+        debugLog("[NO-ENTITLEMENT] Task details from runtime logs");
+        const jobCardFromRuntime = runtimeLogsResult.jobCard as Record<string, unknown>;
+        const { objectStore, objectStoreApiStatus } = await fetchObjectStoreInNoEntitlementMode(
+          validatedOrgId,
+          validatedEnvId ?? "",
+          validatedTaskId,
+          {
+            broker: jobCardFromRuntime.broker as string | undefined,
+            apiInstanceId: jobCardFromRuntime.apiInstanceId as string | undefined,
+            appId: jobCardFromRuntime.appId as string | undefined,
+          },
+          validatedApiInstanceId ?? undefined,
+          session.accessToken,
+          baseUrl
+        );
+        const noEntitlementApiStatus: ApiStatus = {
+          logSearch: "403_entitlement",
+          objectStore: objectStoreApiStatus,
+          deploymentApi: "ok",
+          traceSpans: "skipped",
+        };
+        return NextResponse.json({
+          jobCard: { ...jobCardFromRuntime, objectStore, apiStatus: noEntitlementApiStatus },
+          entries: runtimeLogsResult.entries,
+          traceSpans: [],
+          rawQueries: { phase1: phase1Query, phase2: phase2Query, traceId },
+          mode: "no-entitlement",
+        });
+      }
 
-        // Fallback failed, return error
         return NextResponse.json(
-          { 
+          {
             error: "Monitoring Center Premium entitlement required",
-            message: "Monitoring Center Premium entitlement required. This feature requires access to log search functionality.",
-            code: "MONITORING_CENTER_PREMIUM_REQUIRED"
+            message: "Log Search - Advanced package or a Titanium subscription to Anypoint Platform Required - Elasticsearch log search APIs - Enhanced raw storage (up to 128TB based on configuration) - Advanced logs and traces - LLM reasoning logs (for Agent Broker monitoring)",
+            code: "MONITORING_CENTER_PREMIUM_REQUIRED",
           },
           { status: 403 }
         );
       }
-      */
-      
+
       allHits = phase2.hits;
     }
 
@@ -782,11 +976,389 @@ export async function GET(request: NextRequest) {
     const toolStrings = toolSelections.map((e: typeof entries[0]) => e.fields.tool as string).filter((t: string | undefined): t is string => typeof t === "string" && Boolean(t));
     const allTools: string[] = Array.from(new Set(toolStrings));
 
+    const brokerName: string = String((entries.find((e: typeof entries[0]) => e.fields.agent) || {}).fields?.agent ?? "");
+    const appId = (entries.find((e: typeof entries[0]) => e.appId && !e.appId.startsWith("_")) || {}).appId || "";
+    const apiInstanceId = (entries.find((e: typeof entries[0]) => e.fields.apiInstanceId) || {}).fields?.apiInstanceId || "";
+
+    // Extract deployment ID from appId if it's in the format APP_{deploymentId}__...
+    // Or try to get it from the appId directly if it's a deployment ID
+    let deploymentId: string | null = null;
+    if (appId) {
+      const appIdMatch = appId.match(/^APP_([a-f0-9-]+)__/);
+      if (appIdMatch) {
+        deploymentId = appIdMatch[1];
+      } else if (/^[a-f0-9-]{36}$/.test(appId)) {
+        // appId might be the deployment ID itself
+        deploymentId = appId;
+      }
+    }
+
+    // Track deployment type for better error messages
+    let deploymentType: string | undefined;
+    
+    // Track Application Manager API 403 error for UI display
+    let applicationManager403Error: string | null = null;
+    /** Deployment API (AMC) status for apiStatus table: not_used | ok | 403_forbidden */
+    let deploymentApiStatus: "ok" | "403_forbidden" | "not_used" = "not_used";
+
+    // If we don't have deploymentId yet, try to get it from API instance ID via Runtime Manager API
+    if (!deploymentId && apiInstanceId && validatedEnvId) {
+      try {
+        debugLog(`[ObjectStore] Attempting to get deploymentId from API instance ID: ${apiInstanceId}`);
+        const runtimeManagerUrl = `${baseUrl}/apimanager/api/v1/organizations/${validatedOrgId}/environments/${validatedEnvId}/apis/${apiInstanceId}`;
+        const rmRes = await loggedFetch(runtimeManagerUrl, {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${session.accessToken}`,
+          },
+        });
+
+        if (rmRes.ok) {
+          const apiInstanceInfo = (await rmRes.json()) as { 
+            deploymentId?: string;
+            deployment?: {
+              id?: number;
+              applicationId?: string;
+              type?: string;
+            };
+            appId?: string;
+            metadata?: { source?: string };
+          };
+          
+          // Store deployment type for later use
+          deploymentType = apiInstanceInfo.deployment?.type;
+          
+          // Log deployment type for debugging
+          if (deploymentType) {
+            debugLog(`[ObjectStore] Deployment type: ${deploymentType}`);
+          }
+          
+          // For Hybrid deployments, Runtime Manager's applicationId is NOT the Object Store deploymentId
+          // We need to use Application Manager API to get the correct deploymentId
+          // For other deployment types, try Runtime Manager first
+          if (deploymentType === "HY") {
+            debugLog(`[ObjectStore] Hybrid deployment detected - will use Application Manager API for correct deploymentId`);
+            // Fall through to Application Manager API lookup below
+          } else if (apiInstanceInfo.deployment?.applicationId) {
+            // For non-Hybrid deployments, try Runtime Manager's applicationId first
+            deploymentId = apiInstanceInfo.deployment.applicationId;
+            debugLog(`[ObjectStore] Found deploymentId from Runtime Manager API deployment.applicationId: ${deploymentId}`);
+          } else if (apiInstanceInfo.deploymentId) {
+            deploymentId = apiInstanceInfo.deploymentId;
+            debugLog(`[ObjectStore] Found deploymentId from Runtime Manager API: ${deploymentId}`);
+          } else if (apiInstanceInfo.appId) {
+            // Try to extract from appId if it's in the format APP_{deploymentId}__...
+            const appIdMatch = apiInstanceInfo.appId.match(/^APP_([a-f0-9-]+)__/);
+            if (appIdMatch) {
+              deploymentId = appIdMatch[1];
+              debugLog(`[ObjectStore] Extracted deploymentId from Runtime Manager appId: ${deploymentId}`);
+            }
+          }
+          
+          // If we still don't have deploymentId (or it's Hybrid), try Application Manager API
+          // Use appId from logs if available, otherwise try metadata.source
+          if (!deploymentId && appId) {
+            debugLog(`[ObjectStore] Looking up deployment by app name in Application Manager API: ${appId}`);
+            const deploymentsUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${validatedOrgId}/environments/${validatedEnvId}/deployments?name=${encodeURIComponent(appId)}`;
+            const deploymentsRes = await loggedFetch(deploymentsUrl, {
+              method: "GET",
+              headers: {
+                Authorization: `Bearer ${session.accessToken}`,
+                "Content-Type": "application/json",
+              },
+            });
+            
+            if (deploymentsRes.ok) {
+              const deploymentsData = (await deploymentsRes.json()) as { items?: Array<{ id: string; name: string }> };
+              const matchingDeployment = deploymentsData.items?.find((d: { name: string }) => d.name === appId);
+              if (matchingDeployment) {
+                deploymentId = matchingDeployment.id;
+                debugLog(`[ObjectStore] Found deploymentId from Application Manager API by app name: ${deploymentId}`);
+              } else {
+                debugLog(`[ObjectStore] No deployment found with name: ${appId}`);
+              }
+            } else if (deploymentsRes.status === 403) {
+              deploymentApiStatus = "403_forbidden";
+              // Capture full error response - API might tell us what scope is needed
+              const errorText = await deploymentsRes.text().catch(() => "");
+              let errorJson: { message?: string; error?: string; scope?: string } = {};
+              try {
+                errorJson = JSON.parse(errorText);
+              } catch {
+                // Not JSON, use raw text
+              }
+              
+              const apiErrorMessage = errorJson.message || errorJson.error || errorText || "No error details provided";
+              const { getOAuthConfig } = await import("@/lib/auth/config");
+              const currentScopes = getOAuthConfig().scopes;
+              const errorMsg = buildAmc403Message(apiErrorMessage, currentScopes);
+              debugError(`[ObjectStore] ${errorMsg}`);
+              applicationManager403Error = errorMsg;
+            } else {
+              if (deploymentsRes.ok) deploymentApiStatus = "ok";
+              debugLog(`[ObjectStore] Application Manager API returned status ${deploymentsRes.status}`);
+            }
+          } else if (!deploymentId && apiInstanceInfo.metadata?.source) {
+            // Extract app name from metadata.source format: urn:gav:{orgId}:{appName}:{version}
+            // Example: "urn:gav:eca25329-9592-4ff1-9054-1b08d103b991:maf-unite-the-hyperscalers:1.0.1"
+            const sourceParts = apiInstanceInfo.metadata.source.split(":");
+            if (sourceParts.length >= 4) {
+              const appName = sourceParts[3]; // 4th segment is the app name
+              debugLog(`[ObjectStore] Extracted app name from metadata.source: ${appName}`);
+              
+              // Now search deployments by name to find the deploymentId
+              const deploymentsUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${validatedOrgId}/environments/${validatedEnvId}/deployments?name=${encodeURIComponent(appName)}`;
+              const deploymentsRes = await loggedFetch(deploymentsUrl, {
+                method: "GET",
+                headers: {
+                  Authorization: `Bearer ${session.accessToken}`,
+                  "Content-Type": "application/json",
+                },
+              });
+              
+              if (deploymentsRes.ok) {
+                const deploymentsData = (await deploymentsRes.json()) as { items?: Array<{ id: string; name: string }> };
+                const matchingDeployment = deploymentsData.items?.find((d: { name: string }) => d.name === appName);
+                if (matchingDeployment) {
+                  deploymentId = matchingDeployment.id;
+                  debugLog(`[ObjectStore] Found deploymentId from Application Manager API by app name: ${deploymentId}`);
+                } else {
+                  debugLog(`[ObjectStore] No deployment found with name: ${appName}`);
+                }
+              } else if (deploymentsRes.status === 403) {
+                deploymentApiStatus = "403_forbidden";
+                // Capture full error response - API might tell us what scope is needed
+                const errorText = await deploymentsRes.text().catch(() => "");
+                let errorJson: { message?: string; error?: string; scope?: string } = {};
+                try {
+                  errorJson = JSON.parse(errorText);
+                } catch {
+                  // Not JSON, use raw text
+                }
+                
+                const apiErrorMessage = errorJson.message || errorJson.error || errorText || "No error details provided";
+                const { getOAuthConfig } = await import("@/lib/auth/config");
+                const currentScopes = getOAuthConfig().scopes;
+                const errorMsg = buildAmc403Message(apiErrorMessage, currentScopes);
+                debugError(`[ObjectStore] ${errorMsg}`);
+                applicationManager403Error = errorMsg;
+              } else {
+                if (deploymentsRes.ok) deploymentApiStatus = "ok";
+                debugLog(`[ObjectStore] Application Manager API returned status ${deploymentsRes.status}`);
+              }
+            }
+          }
+        } else {
+          debugLog(`[ObjectStore] Runtime Manager API returned status ${rmRes.status} for API instance ${apiInstanceId}`);
+        }
+      } catch (error) {
+        debugLog(`[ObjectStore] Error fetching deploymentId from Runtime Manager API:`, error);
+        // Continue without deploymentId
+      }
+    }
+    
+    // If we still don't have deploymentId but have appId from logs, try Application Manager API directly
+    if (!deploymentId && appId && validatedEnvId) {
+      try {
+        debugLog(`[ObjectStore] Attempting to get deploymentId from Application Manager API using appId: ${appId}`);
+        const deploymentsUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${validatedOrgId}/environments/${validatedEnvId}/deployments?name=${encodeURIComponent(appId)}`;
+        const deploymentsRes = await loggedFetch(deploymentsUrl, {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${session.accessToken}`,
+            "Content-Type": "application/json",
+          },
+        });
+        
+              if (deploymentsRes.ok) {
+                const deploymentsData = (await deploymentsRes.json()) as { items?: Array<{ id: string; name: string; applicationId?: string | null }> };
+                const matchingDeployment = deploymentsData.items?.find((d: { name: string }) => d.name === appId);
+                if (matchingDeployment) {
+                  deploymentId = matchingDeployment.id;
+                  debugLog(`[ObjectStore] Found deploymentId from Application Manager API by app name: ${deploymentId}`);
+                  // Also get deployment type if available
+                  if (matchingDeployment.applicationId === null && !deploymentType) {
+                    // If applicationId is null, it's likely a Hybrid deployment
+                    deploymentType = "HY";
+                  }
+                } else {
+                  debugLog(`[ObjectStore] No deployment found with name: ${appId}`);
+                }
+              } else if (deploymentsRes.status === 403) {
+                deploymentApiStatus = "403_forbidden";
+                // Capture full error response - API might tell us what scope is needed
+                const errorText = await deploymentsRes.text().catch(() => "");
+                let errorJson: { message?: string; error?: string; scope?: string } = {};
+                try {
+                  errorJson = JSON.parse(errorText);
+                } catch {
+                  // Not JSON, use raw text
+                }
+                
+                const apiErrorMessage = errorJson.message || errorJson.error || errorText || "No error details provided";
+                const currentScopes = getOAuthConfig().scopes;
+                const errorMsg = buildAmc403Message(apiErrorMessage, currentScopes);
+                debugError(`[ObjectStore] ${errorMsg}`);
+                applicationManager403Error = errorMsg;
+              } else {
+                debugLog(`[ObjectStore] Application Manager API returned status ${deploymentsRes.status}`);
+              }
+      } catch (error) {
+        debugLog(`[ObjectStore] Error fetching deploymentId from Application Manager API:`, error);
+        // Continue without deploymentId
+      }
+    }
+
+    // OPTIMIZATION: Fetch Object Store and trace spans in parallel since they're independent
+    // Fetch Object Store data if we have envId and deployment ID (brokerName can be empty - we'll still get no_store/403/no_keys from client)
+    let objectStoreData: {
+      available: boolean;
+      objectStoreStatus?: "ok" | "403_forbidden" | "no_store" | "no_keys";
+      llmReasoning?: {
+        steps?: Array<{ step: string; content: string[] }>;
+        rawReasoning?: string[];
+      };
+      toolCallIds?: string[];
+      downstreamContextIds?: Array<{ agent: string; contextId: string; taskId: string }>;
+      errors?: string[];
+    } = { available: false };
+
+    // Prepare Object Store fetch promise
+    const objectStorePromise = (async () => {
+      if (validatedEnvId && deploymentId && session.accessToken) {
+        const accessToken = session.accessToken;
+        try {
+          let objectStoreRegion: string | undefined;
+          try {
+            const deploymentDetailRes = await loggedFetch(
+              `${baseUrl}/amc/application-manager/api/v2/organizations/${validatedOrgId}/environments/${validatedEnvId}/deployments/${deploymentId}`,
+              { method: "GET", headers: { Authorization: `Bearer ${accessToken}` } }
+            );
+            if (deploymentDetailRes.ok) {
+              deploymentApiStatus = "ok";
+              const deploymentDetail = (await deploymentDetailRes.json()) as Parameters<typeof getObjectStoreRegionFromDeployment>[0];
+              objectStoreRegion = getObjectStoreRegionFromDeployment(deploymentDetail) ?? undefined;
+              if (objectStoreRegion) debugLog(`[ObjectStore] Resolved region from deployment URLs: ${objectStoreRegion}`);
+            } else if (deploymentDetailRes.status === 403) {
+              deploymentApiStatus = "403_forbidden";
+            }
+          } catch (e) {
+            debugLog(`[ObjectStore] Could not fetch deployment detail for region hint:`, e);
+          }
+          debugLog(`[ObjectStore] Attempting to fetch Object Store data - orgId: ${validatedOrgId}, envId: ${validatedEnvId}, taskId: ${validatedTaskId}, brokerName: ${brokerName}, deploymentId: ${deploymentId}, appId: ${appId}, deploymentType: ${deploymentType || "unknown"}, objectStoreRegion: ${objectStoreRegion ?? "(none)"}`);
+          const result = await fetchObjectStoreData(
+            validatedOrgId,
+            validatedEnvId,
+            validatedTaskId,
+            brokerName,
+            deploymentId,
+            accessToken,
+            deploymentType,
+            objectStoreRegion
+          );
+          if (result.available) {
+            debugLog("[ObjectStore] Successfully fetched Object Store data");
+          } else {
+            const has403 = result.errors?.some((e: string) => e.includes("403"));
+            if (has403) {
+              debugError(`[ObjectStore] 403 Forbidden error detected - errors: ${JSON.stringify(result.errors)}`);
+            } else {
+              debugLog(`[ObjectStore] Object Store data not available - errors: ${JSON.stringify(result.errors)}`);
+            }
+          }
+          return result;
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : "Unknown error";
+          const is403 = errorMessage.includes("403");
+          if (is403) {
+            debugError(`[ObjectStore] 403 Forbidden error during fetch: ${errorMessage}`);
+          } else {
+            debugError(`[ObjectStore] Error fetching Object Store data: ${errorMessage}`);
+          }
+          return {
+            available: false,
+            objectStoreStatus: (is403 ? "403_forbidden" : undefined) as "403_forbidden" | undefined,
+            errors: [errorMessage],
+          };
+        }
+      } else {
+        const skipReason = !validatedEnvId ? "missing envId" : !deploymentId ? "missing deploymentId" : !session.accessToken ? "missing accessToken" : "unknown";
+        debugLog(
+          `[ObjectStore] Skipping Object Store fetch - reason: ${skipReason}, envId: ${validatedEnvId ? validatedEnvId : "none"}, brokerName: ${brokerName || "none"}, deploymentId: ${deploymentId || "none"}, appId: ${appId || "none"}, apiInstanceId: ${apiInstanceId || "none"}`
+        );
+        const result: {
+          available: boolean;
+          objectStoreStatus?: "ok" | "403_forbidden" | "no_store" | "no_keys";
+          errors?: string[];
+        } = { available: false };
+        if (!deploymentId) {
+          result.errors = [];
+          if (applicationManager403Error) {
+            result.errors.push(applicationManager403Error);
+          } else {
+            result.errors.push(`Cannot fetch Object Store: ${skipReason}. appId="${appId}", apiInstanceId="${apiInstanceId}"`);
+          }
+        }
+        return result;
+      }
+    })();
+
+    // Prepare trace spans fetch promise
+    const traceSpansPromise = (async (): Promise<{ spans: TraceSpanRow[]; status: TraceSpansStatus }> => {
+      if (!skipTracesRequested && traceId && validatedEnvId && validatedEnvId.trim() !== "" && session.accessToken) {
+        return await fetchTraceSpans(
+          validatedOrgId,
+          traceId,
+          session.accessToken,
+          baseUrl,
+          validatedEnvId,
+          firstEntry?.timestamp,
+          lastEntry?.timestamp
+        );
+      }
+      return { spans: [], status: "skipped" };
+    })();
+
+    // Execute both fetches in parallel
+    const [objectStoreResult, traceSpansResult] = await Promise.all([objectStorePromise, traceSpansPromise]);
+    objectStoreData = objectStoreResult;
+    const traceSpans = traceSpansResult.spans;
+    const traceSpansStatus = traceSpansResult.status;
+
+    // API status summary for task details (support / "app not working" diagnosis)
+    const objectStoreStatus: ApiStatus["objectStore"] =
+      objectStoreData.objectStoreStatus ??
+      (objectStoreData.available
+        ? "ok"
+        : objectStoreData.errors?.some((e: string) => e.includes("403"))
+          ? "403_forbidden"
+          : objectStoreData.errors?.some(
+                (e: string) =>
+                  e.includes("Object Store not found") || e.includes("not found for deployment")
+              )
+            ? "no_store"
+            : objectStoreData.errors?.some(
+                  (e: string) =>
+                    e.includes("Task value not found") ||
+                    e.includes("Partition not found") ||
+                    e.includes("No key found")
+                )
+              ? "no_keys"
+              : objectStoreData.errors?.length
+                ? "error"
+                : "skipped");
+    const apiStatus: ApiStatus = {
+      logSearch: "ok",
+      objectStore: objectStoreStatus,
+      deploymentApi: deploymentApiStatus,
+      traceSpans: traceSpansStatus,
+    };
+
     const jobCard = {
       taskId,
       contextId: (entries.find((e: typeof entries[0]) => e.fields.contextId) || {}).fields?.contextId || "",
       traceId: traceId || "",
-      broker: (entries.find((e: typeof entries[0]) => e.fields.agent) || {}).fields?.agent || "",
+      broker: brokerName,
       apiInstanceId: (entries.find((e: typeof entries[0]) => e.fields.apiInstanceId) || {}).fields?.apiInstanceId || "",
       userMessage: inbound ? ((inbound.fields.userMessage as string) || "") : "",
       messageId: inbound ? ((inbound.fields.messageId as string) || "") : "",
@@ -801,22 +1373,10 @@ export async function GET(request: NextRequest) {
       iterations: maxIter,
       toolsUsed: allTools.map((t: string) => t.replace(/^[a-zA-Z0-9]+_/, "")),
       totalEntries: entries.length,
-      appId: (entries.find((e: typeof entries[0]) => e.appId && !e.appId.startsWith("_")) || {}).appId || "",
+      appId,
+      objectStore: objectStoreData,
+      apiStatus,
     };
-
-    // Fetch trace spans when we have traceId and envId (observability API)
-    let traceSpans: TraceSpanRow[] = [];
-    if (traceId && validatedEnvId && validatedEnvId.trim() !== "") {
-      traceSpans = await fetchTraceSpans(
-        validatedOrgId,
-        traceId,
-        session.accessToken,
-        baseUrl,
-        validatedEnvId,
-        firstEntry?.timestamp,
-        lastEntry?.timestamp
-      );
-    }
 
     return NextResponse.json({
       jobCard,

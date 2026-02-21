@@ -27,9 +27,13 @@ export function getOAuthConfig(): OAuthConfig {
   }
 
   // Match scopes shown in authorization dialog (from _old project)
+  // Added read:applications for Application Manager API access (needed for Hybrid deployment Object Store lookup)
+  // Added manage:store_data for Object Store partition access (needed for reading broker state)
+  // NOTE: If you get 403 errors from APIs, try testing different scopes. See AMC_COMMON_SCOPES_TO_TRY for Application Manager.
+  // Set ANYPOINT_SCOPES in .env.local (space-separated) to override. Object Store: manage:store_data, manage:store, read:store
   const scopes =
-    process.env.ANYPOINT_SCOPES ??
-    "profile offline_access read:exchange view:monitoring read:api_configuration read:api_policies";
+    process.env.ANYPOINT_SCOPES?.trim() ||
+    "profile read:exchange view:monitoring read:api_configuration read:api_policies manage:store_data read:applications";
 
   return {
     clientId,
@@ -55,3 +59,10 @@ export function getTokenEndpoint(): string {
   const config = getOAuthConfig();
   return `${config.baseUrl}/accounts/api/v2/oauth2/token`;
 }
+
+/**
+ * Human-readable list of scopes to suggest when AMC returns 403 (single source of truth for 403 messages).
+ * Application Manager API: read:applications (docs: allows GET .../deployments/**), read:deployments, manage:applications, view:applications, read:runtime
+ */
+export const AMC_COMMON_SCOPES_TO_TRY =
+  "read:applications, read:deployments, manage:applications, view:applications, read:runtime";

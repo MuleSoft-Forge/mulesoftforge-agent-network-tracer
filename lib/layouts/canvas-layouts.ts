@@ -140,27 +140,44 @@ function placeBrokerChildren(
 
 /**
  * Place descendants of nodes recursively, centering each parent above its children
+ * Includes cycle detection to prevent infinite recursion
  */
+const MAX_DEPTH = 50; // Safety limit to prevent infinite recursion
+
 function placeDescendants(
   parentNodes: CanonicalNode[],
   childrenMap: Map<string, string[]>,
   nodeMap: Map<string, CanonicalNode>,
   positions: Map<string, Position>,
-  startY: number
+  startY: number,
+  visited: Set<string> = new Set(),
+  depth: number = 0
 ): void {
-  if (parentNodes.length === 0) return;
+  if (parentNodes.length === 0 || depth >= MAX_DEPTH) {
+    if (depth >= MAX_DEPTH) {
+      console.warn(`[CanvasLayout] Maximum depth ${MAX_DEPTH} reached in placeDescendants - possible cycle detected`);
+    }
+    return;
+  }
 
   let currentY = startY;
   const nextLevelParents: CanonicalNode[] = [];
 
   // Process each parent node
   for (const parent of parentNodes) {
+    // Skip if already visited (cycle detection)
+    if (visited.has(parent.id)) {
+      continue;
+    }
+    visited.add(parent.id);
+
     const childIds = childrenMap.get(parent.id) || [];
     if (childIds.length === 0) continue;
 
     const children = childIds
       .map((id: string) => nodeMap.get(id))
-      .filter((node): node is CanonicalNode => node !== undefined);
+      .filter((node): node is CanonicalNode => node !== undefined)
+      .filter((node) => !visited.has(node.id)); // Filter out already visited nodes
 
     if (children.length === 0) continue;
 
@@ -170,13 +187,16 @@ function placeDescendants(
 
     const childStartX = parentPos.x - ((children.length - 1) * (NODE_WIDTH + PAD)) / 2;
     children.forEach((child, i) => {
-      positions.set(child.id, {
-        x: childStartX + i * (NODE_WIDTH + PAD),
-        y: currentY,
-      });
+      // Only place if not already positioned (avoid overwriting positions)
+      if (!positions.has(child.id)) {
+        positions.set(child.id, {
+          x: childStartX + i * (NODE_WIDTH + PAD),
+          y: currentY,
+        });
+      }
     });
 
-    // Add children as parents for next level
+    // Add children as parents for next level (only if not already visited)
     nextLevelParents.push(...children);
   }
 
@@ -187,7 +207,9 @@ function placeDescendants(
       childrenMap,
       nodeMap,
       positions,
-      currentY + NODE_HEIGHT + PAD * 2
+      currentY + NODE_HEIGHT + PAD * 2,
+      visited,
+      depth + 1
     );
   }
 }

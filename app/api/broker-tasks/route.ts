@@ -75,17 +75,17 @@ async function msearch(
 }
 
 /**
- * Fallback: Parse runtime logs when Premium is not available
- * This is inefficient but allows us to extract some task information
+ * No-entitlement mode: get broker tasks via Runtime Manager + Application Manager logs/file.
+ * Used when the org does not have Monitoring Center Premium (_msearch not available).
  */
-async function parseRuntimeLogsFallbackForBroker(
+async function getBrokerTasksFromRuntimeLogs(
   orgId: string,
   apiInstanceId: string,
   accessToken: string,
   baseUrl: string,
   timeRangeMs: number
-): Promise<{ tasks: unknown[] } | null> {
-  debugLog("[FALLBACK] Attempting to parse runtime logs for apiInstanceId:", apiInstanceId);
+): Promise<{ tasks: unknown[] }> {
+  debugLog("[NO-ENTITLEMENT] Getting broker tasks from runtime logs for apiInstanceId:", apiInstanceId);
 
   try {
     // Step 1: Get list of environments for this org
@@ -98,17 +98,18 @@ async function parseRuntimeLogsFallbackForBroker(
     });
 
     if (!envsRes.ok) {
-      debugLog("[FALLBACK] Failed to fetch environments:", envsRes.status);
+      debugLog("[NO-ENTITLEMENT] Failed to fetch environments:", envsRes.status);
       return { tasks: [] };
     }
 
-    const envsData = (await envsRes.json()) as { data?: Array<{ id: string; name: string }> };
-    const environments = envsData.data || [];
-    debugLog("[FALLBACK] Found", environments.length, "environments");
+    const envsData = (await envsRes.json()) as { data?: Array<{ id: string; name: string; type?: string }> };
+    const allEnvs = envsData.data || [];
+    // Skip Design (deprecated design-time env); only use runtime environments for RM/AMC calls
+    const environments = allEnvs.filter((e) => (e.type || "").toLowerCase() !== "design");
+    debugLog("[NO-ENTITLEMENT] Found", environments.length, "runtime environments (excluded Design)");
 
-    // Step 1.5: Try to get API instance details from Runtime Manager API to find deployment info
-    // This might give us appId, deploymentId, or other useful info
-    let apiInstanceInfo: { appId?: string; deploymentId?: string; targetId?: string; assetId?: string } | null = null;
+    // Step 1.5: Get API instance details from Runtime Manager (deploymentId or deployment.applicationId for Flex)
+    let apiInstanceInfo: { deploymentId?: string; targetEnvId?: string } | null = null;
     for (const env of environments) {
       try {
         const runtimeManagerUrl = `${baseUrl}/apimanager/api/v1/organizations/${orgId}/environments/${env.id}/apis/${apiInstanceId}`;
@@ -120,22 +121,22 @@ async function parseRuntimeLogsFallbackForBroker(
         });
 
         if (rmRes.ok) {
-          apiInstanceInfo = (await rmRes.json()) as { appId?: string; deploymentId?: string; targetId?: string; assetId?: string };
-          debugLog("[FALLBACK] Got API instance info from Runtime Manager:", {
-            appId: apiInstanceInfo.appId,
-            deploymentId: apiInstanceInfo.deploymentId,
-            targetId: apiInstanceInfo.targetId,
-            assetId: apiInstanceInfo.assetId,
-            envId: env.id,
-          });
-          // If we found deploymentId, we can use it directly
-          if (apiInstanceInfo.deploymentId) {
-            debugLog("[FALLBACK] Found deploymentId from Runtime Manager API:", apiInstanceInfo.deploymentId);
+          const rmBody = (await rmRes.json()) as {
+            deploymentId?: string;
+            deployment?: { deploymentId?: string | null; applicationId?: string };
+          };
+          const deploymentId =
+            rmBody.deploymentId ??
+            rmBody.deployment?.deploymentId ??
+            rmBody.deployment?.applicationId;
+          if (deploymentId) {
+            apiInstanceInfo = { deploymentId, targetEnvId: env.id };
+            debugLog("[NO-ENTITLEMENT] Got deployment id from Runtime Manager:", deploymentId, "env:", env.id);
+            break;
           }
-          break; // Found it, no need to check other environments
         }
       } catch (error) {
-        debugLog("[FALLBACK] Error fetching Runtime Manager API for env", env.id, ":", error);
+        debugLog("[NO-ENTITLEMENT] Error fetching Runtime Manager API for env", env.id, ":", error);
         continue;
       }
     }
@@ -159,15 +160,9 @@ async function parseRuntimeLogsFallbackForBroker(
       logCount: number;
     }> = {};
 
-    // If we got deploymentId from Runtime Manager API, try to use it directly
-    if (apiInstanceInfo?.deploymentId) {
-      debugLog("[FALLBACK] Using deploymentId from Runtime Manager API:", apiInstanceInfo.deploymentId);
-      // Find the environment that had the API instance
-      const targetEnv = environments.find((e: { id: string }) => {
-        // We'd need to track which env we found it in, but for now try all
-        return true;
-      });
-      
+    // If we got deploymentId (or applicationId) from Runtime Manager, use that env and get specId + logs
+    if (apiInstanceInfo?.deploymentId && apiInstanceInfo?.targetEnvId) {
+      const targetEnv = environments.find((e: { id: string }) => e.id === apiInstanceInfo!.targetEnvId);
       if (targetEnv) {
         // Try to get deployment details to get specId
         try {
@@ -184,7 +179,7 @@ async function parseRuntimeLogsFallbackForBroker(
             const specId = deployment.desiredVersion || (deployment.replicas && deployment.replicas[0]?.id);
             
             if (specId) {
-              debugLog("[FALLBACK] Got specId:", specId, "for deployment:", apiInstanceInfo.deploymentId);
+              debugLog("[NO-ENTITLEMENT] Got specId:", specId, "for deployment:", apiInstanceInfo.deploymentId);
               // Try to fetch logs directly
               const searchParams = {
                 startTime,
@@ -204,7 +199,7 @@ async function parseRuntimeLogsFallbackForBroker(
 
               if (logsRes.ok) {
                 const logsText = await logsRes.text();
-                debugLog("[FALLBACK] Successfully fetched logs, length:", logsText.length, "chars");
+                debugLog("[NO-ENTITLEMENT] Successfully fetched logs, length:", logsText.length, "chars");
                 
                 // Parse logs (see parsing logic below)
                 const parsedTasks = parseLogsForTasks(logsText, apiInstanceId);
@@ -213,15 +208,32 @@ async function parseRuntimeLogsFallbackForBroker(
                 }
                 
                 if (parsedTasks.length > 0) {
-                  debugLog("[FALLBACK] Found", parsedTasks.length, "tasks using deploymentId from Runtime Manager");
+                  debugLog("[NO-ENTITLEMENT] Found", parsedTasks.length, "tasks using deploymentId from Runtime Manager");
                 }
               } else {
-                debugLog("[FALLBACK] Failed to fetch logs for deployment:", logsRes.status);
+                debugLog("[NO-ENTITLEMENT] Failed to fetch logs for deployment:", logsRes.status);
+              }
+            }
+          } else if (deploymentRes.status === 404) {
+            // Flex Gateway: deployment detail may not exist; try applicationId as both deploymentId and specId
+            const specIdToTry = apiInstanceInfo.deploymentId;
+            const searchParams = { startTime, endTime, length: 10000, descending: true };
+            const searchEncoded = encodeURIComponent(JSON.stringify(searchParams));
+            const logsUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${targetEnv.id}/deployments/${apiInstanceInfo.deploymentId}/specs/${specIdToTry}/logs/file?search=${searchEncoded}`;
+            const logsRes = await loggedFetch(logsUrl, {
+              method: "GET",
+              headers: { Authorization: `Bearer ${accessToken}` },
+            });
+            if (logsRes.ok) {
+              const logsText = await logsRes.text();
+              const parsedTasks = parseLogsForTasks(logsText, apiInstanceId);
+              for (const task of parsedTasks) {
+                allTasks[task.taskId] = task;
               }
             }
           }
         } catch (error) {
-          debugLog("[FALLBACK] Error fetching deployment details:", error);
+          debugLog("[NO-ENTITLEMENT] Error fetching deployment details:", error);
         }
       }
     }
@@ -246,6 +258,7 @@ async function parseRuntimeLogsFallbackForBroker(
             targetId?: string;
             assetId?: string;
             assetVersion?: string;
+            instanceLabel?: string;
             deployment?: {
               applicationId?: string;
               deploymentId?: string | null;
@@ -258,8 +271,9 @@ async function parseRuntimeLogsFallbackForBroker(
           const applicationId = deploymentInfo.applicationId;
           const deploymentIdFromDeployment = deploymentInfo.deploymentId;
           const targetId = deploymentInfo.targetId || apiInfo.targetId;
-          
-          debugLog("[FALLBACK] Runtime Manager API response for apiInstanceId", apiInstanceId, ":", {
+          const brokerName = (apiInfo.instanceLabel || apiInfo.assetId || "").toLowerCase();
+
+          debugLog("[NO-ENTITLEMENT] Runtime Manager API response for apiInstanceId", apiInstanceId, ":", {
             id: apiInfo.id,
             appId: apiInfo.appId,
             deploymentId: apiInfo.deploymentId,
@@ -267,6 +281,7 @@ async function parseRuntimeLogsFallbackForBroker(
             deploymentDeploymentId: deploymentIdFromDeployment,
             targetId: targetId,
             assetId: apiInfo.assetId,
+            instanceLabel: apiInfo.instanceLabel,
             assetVersion: apiInfo.assetVersion,
           });
 
@@ -274,7 +289,7 @@ async function parseRuntimeLogsFallbackForBroker(
           // For Flex Gateway, applicationId might be the actual deployment ID
           const deploymentIdToTry = deploymentIdFromDeployment || applicationId || apiInfo.deploymentId || targetId;
           if (deploymentIdToTry) {
-            debugLog("[FALLBACK] Trying to fetch logs using:", {
+            debugLog("[NO-ENTITLEMENT] Trying to fetch logs using:", {
               deploymentId: deploymentIdToTry,
               source: deploymentIdFromDeployment ? "deployment.deploymentId" : 
                       applicationId ? "deployment.applicationId" :
@@ -283,9 +298,45 @@ async function parseRuntimeLogsFallbackForBroker(
             });
             
             // Try multiple approaches to get logs
-            const approaches = [];
-            
-            // Approach 1: Try to get specs first, then logs
+            const approaches: Array<{ name: string; deploymentId: string; specId?: string; getSpecs: boolean }> = [];
+
+            // Approach 0: Resolve AMC deployment by name (list deployments and match broker name)
+            if (brokerName) {
+              try {
+                const listUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${env.id}/deployments`;
+                const listRes = await loggedFetch(listUrl, {
+                  method: "GET",
+                  headers: { Authorization: `Bearer ${accessToken}` },
+                });
+                if (listRes.ok) {
+                  const listData = (await listRes.json()) as { items?: Array<{ id: string; name: string }> };
+                  const items = listData.items || [];
+                  const normalizedBroker = brokerName.replace(/-/g, "");
+                  for (const item of items) {
+                    const nameNorm = (item.name || "").toLowerCase().replace(/-and-/gi, "-").replace(/-/g, "");
+                    const nameNormWithAnd = (item.name || "").toLowerCase().replace(/-/g, "");
+                    if (
+                      nameNorm === normalizedBroker ||
+                      nameNormWithAnd.includes(normalizedBroker) ||
+                      normalizedBroker.includes(nameNorm) ||
+                      (item.name || "").toLowerCase().replace(/-and-/gi, "-") === brokerName
+                    ) {
+                      approaches.push({
+                        name: "amc-deployment-by-name",
+                        deploymentId: item.id,
+                        getSpecs: true,
+                      });
+                      debugLog("[NO-ENTITLEMENT] Matched AMC deployment by name:", item.name, "->", item.id);
+                      break;
+                    }
+                  }
+                }
+              } catch (_) {
+                // ignore
+              }
+            }
+
+            // Approach 1: Try to get specs first, then logs (using RM deployment id)
             if (applicationId || deploymentIdToTry) {
               approaches.push({
                 name: "specs-then-logs",
@@ -321,20 +372,20 @@ async function parseRuntimeLogsFallbackForBroker(
                   if (specsRes.ok) {
                     const specs = (await specsRes.json()) as Array<{ version?: string; id?: string }>;
                     specId = specs && specs.length > 0 ? (specs[0].version ?? specs[0].id ?? null) : null;
-                    debugLog(`[FALLBACK] Approach "${approach.name}": Got specId:`, specId, "for deployment:", approach.deploymentId);
+                    debugLog(`[NO-ENTITLEMENT] Approach "${approach.name}": Got specId:`, specId, "for deployment:", approach.deploymentId);
                   } else {
-                    debugLog(`[FALLBACK] Approach "${approach.name}": Failed to fetch specs, status:`, specsRes.status);
+                    debugLog(`[NO-ENTITLEMENT] Approach "${approach.name}": Failed to fetch specs, status:`, specsRes.status);
                     if (approach.specId) {
                       // Use provided specId
                       specId = approach.specId;
-                      debugLog(`[FALLBACK] Approach "${approach.name}": Using provided specId:`, specId);
+                      debugLog(`[NO-ENTITLEMENT] Approach "${approach.name}": Using provided specId:`, specId);
                     } else {
                       continue; // Try next approach
                     }
                   }
                 } else if (approach.specId) {
                   specId = approach.specId;
-                  debugLog(`[FALLBACK] Approach "${approach.name}": Using provided specId:`, specId);
+                  debugLog(`[NO-ENTITLEMENT] Approach "${approach.name}": Using provided specId:`, specId);
                 }
                 
                 if (specId) {
@@ -347,7 +398,7 @@ async function parseRuntimeLogsFallbackForBroker(
                   const searchEncoded = encodeURIComponent(JSON.stringify(searchParams));
                   const logsUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${env.id}/deployments/${approach.deploymentId}/specs/${specId}/logs/file?search=${searchEncoded}`;
 
-                  debugLog(`[FALLBACK] Approach "${approach.name}": Fetching logs from:`, logsUrl.replace(/Bearer\s+\S+/, "Bearer [REDACTED]"));
+                  debugLog(`[NO-ENTITLEMENT] Approach "${approach.name}": Fetching logs from:`, logsUrl.replace(/Bearer\s+\S+/, "Bearer [REDACTED]"));
                   const logsRes = await loggedFetch(logsUrl, {
                     method: "GET",
                     headers: {
@@ -357,12 +408,12 @@ async function parseRuntimeLogsFallbackForBroker(
 
                   if (logsRes.ok) {
                     const logsText = await logsRes.text();
-                    debugLog(`[FALLBACK] Approach "${approach.name}": Successfully fetched logs, length:`, logsText.length, "chars");
-                    debugLog(`[FALLBACK] Approach "${approach.name}": First 500 chars:`, logsText.substring(0, 500));
+                    debugLog(`[NO-ENTITLEMENT] Approach "${approach.name}": Successfully fetched logs, length:`, logsText.length, "chars");
+                    debugLog(`[NO-ENTITLEMENT] Approach "${approach.name}": First 500 chars:`, logsText.substring(0, 500));
                     
                     // Parse logs
                     const parsedTasks = parseLogsForTasks(logsText, apiInstanceId);
-                    debugLog(`[FALLBACK] Approach "${approach.name}": Parsed`, parsedTasks.length, "tasks");
+                    debugLog(`[NO-ENTITLEMENT] Approach "${approach.name}": Parsed`, parsedTasks.length, "tasks");
                     
                     for (const task of parsedTasks) {
                       if (!allTasks[task.taskId]) {
@@ -382,139 +433,31 @@ async function parseRuntimeLogsFallbackForBroker(
                     }
                     
                     if (parsedTasks.length > 0) {
-                      debugLog(`[FALLBACK] Approach "${approach.name}": Successfully found`, parsedTasks.length, "tasks");
+                      debugLog(`[NO-ENTITLEMENT] Approach "${approach.name}": Successfully found`, parsedTasks.length, "tasks");
                       break; // Success! No need to try other approaches
                     } else {
-                      debugLog(`[FALLBACK] Approach "${approach.name}": No tasks found in logs (might be wrong deployment)`);
+                      debugLog(`[NO-ENTITLEMENT] Approach "${approach.name}": No tasks found in logs (might be wrong deployment)`);
                     }
                   } else {
-                    debugLog(`[FALLBACK] Approach "${approach.name}": Failed to fetch logs, status:`, logsRes.status);
+                    debugLog(`[NO-ENTITLEMENT] Approach "${approach.name}": Failed to fetch logs, status:`, logsRes.status);
                     const errorText = await logsRes.text().catch(() => "");
-                    debugLog(`[FALLBACK] Approach "${approach.name}": Error response:`, errorText.substring(0, 200));
+                    debugLog(`[NO-ENTITLEMENT] Approach "${approach.name}": Error response:`, errorText.substring(0, 200));
                   }
                 } else {
-                  debugLog(`[FALLBACK] Approach "${approach.name}": No specId available`);
+                  debugLog(`[NO-ENTITLEMENT] Approach "${approach.name}": No specId available`);
                 }
               } catch (error) {
-                debugLog(`[FALLBACK] Approach "${approach.name}": Error:`, error);
+                debugLog(`[NO-ENTITLEMENT] Approach "${approach.name}": Error:`, error);
                 continue; // Try next approach
               }
             }
           } else {
-            debugLog("[FALLBACK] No deploymentId, applicationId, or targetId found in Runtime Manager API response");
+            debugLog("[NO-ENTITLEMENT] No deploymentId, applicationId, or targetId found in Runtime Manager API response");
           }
         }
       } catch (error) {
-        debugLog("[FALLBACK] Error fetching Runtime Manager API for env", env.id, ":", error);
+        debugLog("[NO-ENTITLEMENT] Error fetching Runtime Manager API for env", env.id, ":", error);
         continue;
-      }
-    }
-
-    // Step 2c: Fallback - try to get deployments list (might fail with 403, but worth trying)
-    for (const env of environments) {
-      try {
-        // Get deployments for this environment
-        const deploymentsUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${env.id}/deployments`;
-        const deploymentsRes = await loggedFetch(deploymentsUrl, {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-          },
-        });
-
-        if (!deploymentsRes.ok) {
-          debugLog("[FALLBACK] Deployments API returned", deploymentsRes.status, "for env", env.id);
-          continue; // Try next environment
-        }
-
-        const deploymentsData = (await deploymentsRes.json()) as { items?: Array<{ id: string; name: string }> };
-        const deployments = deploymentsData.items || [];
-        debugLog("[FALLBACK] Found", deployments.length, "deployments in environment", env.id);
-        
-        for (const deployment of deployments) {
-          // Try to get deployment details to get replicas/specs
-          try {
-            const deploymentDetailUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${env.id}/deployments/${deployment.id}`;
-            const deploymentDetailRes = await loggedFetch(deploymentDetailUrl, {
-              method: "GET",
-              headers: {
-                Authorization: `Bearer ${accessToken}`,
-              },
-            });
-
-            if (!deploymentDetailRes.ok) {
-              continue;
-            }
-
-            const deploymentDetail = (await deploymentDetailRes.json()) as { 
-              desiredVersion?: string; 
-              replicas?: Array<{ id: string }>;
-            };
-            
-            const specId = deploymentDetail.desiredVersion || (deploymentDetail.replicas && deploymentDetail.replicas[0]?.id);
-            if (!specId) {
-              continue;
-            }
-
-            try {
-              // Fetch logs file for this deployment
-              const searchParams = {
-                startTime,
-                endTime,
-                length: 10000,
-                descending: true,
-              };
-              const searchEncoded = encodeURIComponent(JSON.stringify(searchParams));
-              const logsUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${env.id}/deployments/${deployment.id}/specs/${specId}/logs/file?search=${searchEncoded}`;
-
-              const logsRes = await loggedFetch(logsUrl, {
-                method: "GET",
-                headers: {
-                  Authorization: `Bearer ${accessToken}`,
-                },
-              });
-
-              if (!logsRes.ok) {
-                continue; // Try next deployment
-              }
-
-              const logsText = await logsRes.text();
-              debugLog("[FALLBACK] Fetched logs for deployment", deployment.id, "length:", logsText.length);
-              
-              // Parse logs
-              const parsedTasks = parseLogsForTasks(logsText, apiInstanceId);
-              for (const task of parsedTasks) {
-                if (!allTasks[task.taskId]) {
-                  allTasks[task.taskId] = task;
-                } else {
-                  // Merge task data
-                  const existing = allTasks[task.taskId];
-                  existing.logCount += task.logCount;
-                  if (task.maxIteration > existing.maxIteration) {
-                    existing.maxIteration = task.maxIteration;
-                  }
-                  task.toolsUsed.forEach((tool: string) => existing.toolsUsed.add(tool));
-                  if (!existing.firstTool && task.firstTool) {
-                    existing.firstTool = task.firstTool;
-                  }
-                }
-              }
-              
-              if (parsedTasks.length > 0) {
-                debugLog("[FALLBACK] Found", parsedTasks.length, "tasks in deployment", deployment.id);
-              }
-            } catch (error) {
-              debugLog("[FALLBACK] Error parsing logs for deployment", deployment.id, ":", error);
-              continue; // Try next deployment
-            }
-          } catch (error) {
-            debugLog("[FALLBACK] Error fetching deployment details for", deployment.id, ":", error);
-            continue;
-          }
-        }
-      } catch (error) {
-        debugLog("[FALLBACK] Error processing environment", env.id, ":", error);
-        continue; // Try next environment
       }
     }
 
@@ -547,22 +490,22 @@ async function parseRuntimeLogsFallbackForBroker(
       }> = {};
 
       const logLines = logsText.split("\n").filter((line: string) => line.trim().length > 0);
-      debugLog("[FALLBACK] Parsing", logLines.length, "log lines");
+      debugLog("[NO-ENTITLEMENT] Parsing", logLines.length, "log lines");
       
       // Debug: Show sample log lines to understand format
       if (logLines.length > 0) {
-        debugLog("[FALLBACK] Sample log lines (first 5):");
+        debugLog("[NO-ENTITLEMENT] Sample log lines (first 5):");
         for (let i = 0; i < Math.min(5, logLines.length); i++) {
-          debugLog(`[FALLBACK]   Line ${i + 1}:`, logLines[i]?.substring(0, 200));
+          debugLog(`[NO-ENTITLEMENT]   Line ${i + 1}:`, logLines[i]?.substring(0, 200));
         }
         
         // Also check if any line contains apiInstanceId
         const linesWithApiInstanceId = logLines.filter((line: string) => 
           line.includes(targetApiInstanceId) || line.toLowerCase().includes("apiinstanceid")
         );
-        debugLog("[FALLBACK] Lines containing apiInstanceId:", linesWithApiInstanceId.length);
+        debugLog("[NO-ENTITLEMENT] Lines containing apiInstanceId:", linesWithApiInstanceId.length);
         if (linesWithApiInstanceId.length > 0) {
-          debugLog("[FALLBACK] Sample line with apiInstanceId:", linesWithApiInstanceId[0]?.substring(0, 300));
+          debugLog("[NO-ENTITLEMENT] Sample line with apiInstanceId:", linesWithApiInstanceId[0]?.substring(0, 300));
         }
       }
       
@@ -694,7 +637,7 @@ async function parseRuntimeLogsFallbackForBroker(
         }
       }
 
-      debugLog("[FALLBACK] Parsing stats:", {
+      debugLog("[NO-ENTITLEMENT] Parsing stats:", {
         totalLines: logLines.length,
         linesWithApiInstance,
         linesWithTaskId,
@@ -706,7 +649,7 @@ async function parseRuntimeLogsFallbackForBroker(
     }
 
     if (Object.keys(allTasks).length === 0) {
-      debugLog("[FALLBACK] No tasks found in runtime logs");
+      debugLog("[NO-ENTITLEMENT] No tasks found in runtime logs");
       return { tasks: [] }; // Return empty array instead of null to indicate fallback succeeded
     }
 
@@ -740,10 +683,10 @@ async function parseRuntimeLogsFallbackForBroker(
 
     tasksList.sort((a, b) => (b.startTime || "").localeCompare(a.startTime || ""));
 
-    debugLog("[FALLBACK] Successfully parsed", tasksList.length, "tasks from runtime logs");
+    debugLog("[NO-ENTITLEMENT] Successfully parsed", tasksList.length, "tasks from runtime logs");
     return { tasks: tasksList };
   } catch (error) {
-    debugError("[FALLBACK] Error in runtime logs fallback:", error);
+    debugError("[NO-ENTITLEMENT] Error in runtime logs:", error);
     // Return empty tasks array instead of null to indicate fallback was attempted
     // This allows the API to return 200 instead of 403
     return { tasks: [] };
@@ -805,64 +748,54 @@ export async function POST(request: NextRequest) {
       baseUrl
     );
 
-    // Check for Monitoring Center Premium entitlement error - return 403
-    const entitlementMessage =
-      "Log Search - Advanced package or a Titanium subscription to Anypoint Platform Required - Elasticsearch log search APIs - Enhanced raw storage (up to 128TB based on configuration) - Advanced logs and traces - LLM reasoning logs (for Agent Broker monitoring)";
+    // No entitlement: use Runtime Manager + Application Manager logs (standard APIs)
     if (allLogsResult.error === "MONITORING_CENTER_PREMIUM_REQUIRED") {
-      return NextResponse.json(
-        {
-          error: "Monitoring Center Premium entitlement required",
-          message: entitlementMessage,
-          code: "MONITORING_CENTER_PREMIUM_REQUIRED",
-        },
-        { status: 403 }
-      );
-    }
-
-    // COMMENTED OUT: Fallback disabled - return 403 to show warning message
-    /*
-    if (allLogsResult.error === "MONITORING_CENTER_PREMIUM_REQUIRED") {
-      debugLog("[FALLBACK] Premium required, attempting runtime logs fallback for broker tasks");
-      
-      // Try fallback: parse runtime logs
-      // Wrap in try-catch to ensure we always return a response
+      debugLog("[NO-ENTITLEMENT] Getting broker tasks via runtime logs (no _msearch)");
       try {
-        const fallbackResult = await parseRuntimeLogsFallbackForBroker(
+        const noEntitlementResult = await getBrokerTasksFromRuntimeLogs(
           orgId,
           apiInstanceId,
           session.accessToken,
           baseUrl,
           timeRange
         );
-
-        // Always return 200 if fallback was attempted (even if no tasks found)
-        // This prevents showing the "Premium Feature Required" error when fallback is available
-        debugLog("[FALLBACK] Fallback completed, returning", fallbackResult?.tasks?.length || 0, "tasks");
+        const tasksList = (noEntitlementResult?.tasks || []) as Array<{
+          taskId: string;
+          contextId: string;
+          broker: string;
+          firstTool: string;
+          startTime: string;
+          endTime: string | null;
+          duration?: string | null;
+          maxIteration: number;
+          toolsUsed: string[];
+          appId: string;
+          apiInstanceId: string;
+          logCount: number;
+        }>;
+        debugLog("[NO-ENTITLEMENT] Returning", tasksList.length, "tasks");
         return NextResponse.json({
-          tasks: fallbackResult?.tasks || [],
-          source: "runtime-logs-fallback",
+          tasks: tasksList,
+          source: "runtime-logs",
           query: luceneQuery,
-          totalTasks: fallbackResult?.tasks?.length || 0,
-          totalLogs: 0, // Unknown from fallback
+          totalTasks: tasksList.length,
+          totalLogs: 0,
           filters: { apiInstanceId },
-          fallback: true, // Indicate this is fallback data
+          mode: "no-entitlement",
         });
-      } catch (fallbackError) {
-        // Fallback threw an error, but still return 200 with empty tasks
-        // This prevents showing the error message to users
-        debugError("[FALLBACK] Fallback threw an error:", fallbackError);
+      } catch (noEntitlementError) {
+        debugError("[NO-ENTITLEMENT] Error getting tasks from runtime logs:", noEntitlementError);
         return NextResponse.json({
           tasks: [],
-          source: "runtime-logs-fallback",
+          source: "runtime-logs",
           query: luceneQuery,
           totalTasks: 0,
           totalLogs: 0,
           filters: { apiInstanceId },
-          fallback: true, // Indicate fallback was attempted
+          mode: "no-entitlement",
         });
       }
     }
-    */
 
     debugLog("Broker tasks result:", { 
       totalLogs: allLogsResult.total, 

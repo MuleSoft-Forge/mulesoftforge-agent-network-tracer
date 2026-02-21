@@ -36,6 +36,7 @@ interface LeftSidebarProps {
   onBrokerChange?: (broker: BrokerInEnvironment | null) => void;
   selectedTaskId?: string | null;
   onTaskSelect?: (taskId: string | null) => void;
+  onBrokerTasksData?: (data: { mode?: string }) => void;
   loadingBrokers?: boolean;
 }
 
@@ -49,6 +50,7 @@ export default function LeftSidebar({
   onBrokerChange,
   selectedTaskId,
   onTaskSelect,
+  onBrokerTasksData,
   loadingBrokers = false,
 }: LeftSidebarProps = {}) {
   const [expanded, setExpanded] = useState(true);
@@ -278,6 +280,7 @@ export default function LeftSidebar({
                       selectedTaskId={selectedTaskId}
                       onTaskSelect={onTaskSelect || (() => {})}
                       activityPeriod={activityPeriodKey}
+                      onBrokerTasksData={onBrokerTasksData}
                     />
                   );
                 }

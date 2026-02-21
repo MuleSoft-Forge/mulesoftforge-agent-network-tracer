@@ -60,10 +60,35 @@ export interface JobCard {
   downstreamAgent?: string; // Agent name that returned this taskId
   // Final response body (extracted from FINAL_RESPONSE log entry)
   finalResponseBody?: unknown;
+  // Object Store data (broker brain state)
+  objectStore?: {
+    available: boolean;
+    llmReasoning?: {
+      steps?: Array<{ step: string; content: string[] }>;
+      rawReasoning?: string[];
+    };
+    toolCallIds?: string[];
+    downstreamContextIds?: Array<{ agent: string; contextId: string; taskId: string }>;
+    errors?: string[];
+  };
+  /** Summary of backend API outcomes for this task (for support / "app not working" diagnosis) */
+  apiStatus?: ApiStatus;
+}
+
+/** Per-API status for task details: what worked and what failed (200 vs 403 entitlement vs 403 unauthorized). */
+export interface ApiStatus {
+  /** Log search (Monitoring _msearch): 200 ok, 403 entitlement (Premium required), or 403/other */
+  logSearch: "ok" | "403_entitlement" | "403_unauthorized" | "error";
+  /** Object Store: ok, 403, no store found, store found but no keys, skipped, or error */
+  objectStore: "ok" | "403_forbidden" | "no_store" | "no_keys" | "skipped" | "error";
+  /** Deployment API (AMC): ok, 403 (e.g. Read Applications scope), not_used, or error */
+  deploymentApi: "ok" | "403_forbidden" | "not_used" | "error";
+  /** Trace spans (Observability spans:search): ok, 403, skipped (no traceId/envId), or error */
+  traceSpans: "ok" | "403" | "skipped" | "error";
 }
 
 export type ViewMode = "tree" | "list";
-export type DetailTab = "message" | "metadata" | "traces" | "raw";
+export type DetailTab = "apiStatus" | "message" | "metadata" | "traces" | "reasoning" | "raw";
 
 export interface SelectedItem {
   type: "task" | "iteration" | "step" | "tool";

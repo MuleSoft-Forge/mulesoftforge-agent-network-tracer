@@ -256,6 +256,9 @@ export default function AgentNetworkCanvas({
   useEffect(() => {
     if (initialPositions.size > 0) {
       setLocalPositions(new Map(initialPositions));
+    } else {
+      // Clear local positions if graph is empty
+      setLocalPositions(new Map());
     }
   }, [initialPositions]);
 
@@ -313,6 +316,7 @@ export default function AgentNetworkCanvas({
 
   // Center view on nodes when graph changes - fit to visible nodes with padding
   // Use filteredNodes.length as dependency to re-center when filters change
+  // Also depend on positions.size to re-center when positions are initialized from existing graph positions
   useEffect(() => {
     if (!graph || filteredNodes.length === 0 || positions.size === 0) {
       return;
@@ -342,7 +346,7 @@ export default function AgentNetworkCanvas({
       width: width + paddingX * 2,
       height: height + paddingY * 2,
     });
-  }, [graph, filteredNodes.length, positions]);
+  }, [graph, filteredNodes.length, positions.size, filteredNodes, positions]);
 
   // Early return after all hooks
   if (!graph || graph.nodes.length === 0) {

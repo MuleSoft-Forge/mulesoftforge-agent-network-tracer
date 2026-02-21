@@ -39,6 +39,7 @@ export default function MainContent() {
     showLLM: true,
   });
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [tasksMode, setTasksMode] = useState<string | null>(null);
   const [canvasHeightPercent, setCanvasHeightPercent] = useState<number>(DEFAULT_CANVAS_HEIGHT);
   const [isResizing, setIsResizing] = useState(false);
   const { openDebugViewer } = useDebugViewer();
@@ -71,10 +72,15 @@ export default function MainContent() {
   const handleBrokerChange = useCallback((broker: BrokerInEnvironment | null) => {
     setSelectedBroker(broker);
     setSelectedTaskId(null); // Clear task selection when broker changes
+    setTasksMode(null); // Clear until tasks load for new broker
   }, []);
 
   const handleTaskSelect = useCallback((taskId: string | null) => {
     setSelectedTaskId(taskId);
+  }, []);
+
+  const handleBrokerTasksData = useCallback((data: { mode?: string }) => {
+    setTasksMode(data.mode ?? null);
   }, []);
 
   // Fetch brokers list
@@ -348,6 +354,7 @@ export default function MainContent() {
         onBrokerChange={handleBrokerChange}
         selectedTaskId={selectedTaskId}
         onTaskSelect={handleTaskSelect}
+        onBrokerTasksData={handleBrokerTasksData}
         loadingBrokers={loading}
       />
       <div ref={containerRef} className="flex flex-1 flex-col overflow-hidden bg-gray-50">
@@ -456,7 +463,7 @@ export default function MainContent() {
                     minHeight: canvasHeightPercent === 0 ? "0" : "200px",
                   }}
                 >
-                  <TaskDetails orgId={orgId} taskId={selectedTaskId} envId={envId} />
+                  <TaskDetails orgId={orgId} taskId={selectedTaskId} envId={envId} apiInstanceId={selectedBroker?.instanceIds?.[0]} skipTraces={tasksMode === "no-entitlement"} />
                 </div>
               </>
             )}
