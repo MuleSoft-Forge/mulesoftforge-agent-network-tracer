@@ -1,4 +1,5 @@
 import type { FabricGraphResponse, FabricNode, FabricEdge } from "@/lib/adapters/visualizer-to-canonical";
+import { debugLog, debugWarn } from "@/lib/api-logger";
 
 /**
  * Common BFS function to find all nodes reachable from starting node IDs.
@@ -104,8 +105,8 @@ export function filterVisualizerByBroker(
   
   // Debug: Log all broker nodes and their assetIds
   const allBrokers = nodes.filter((n: FabricNode) => n.type === "BROKER");
-  console.log("[filterVisualizerByBroker] Looking for broker with assetId:", brokerAssetId);
-  console.log("[filterVisualizerByBroker] Available brokers:", allBrokers.map((b: FabricNode) => ({ id: b.id, assetId: b.assetId, name: b.name })));
+  debugLog("[filterVisualizerByBroker] Looking for broker with assetId:", brokerAssetId);
+  debugLog("[filterVisualizerByBroker] Available brokers:", allBrokers.map((b: FabricNode) => ({ id: b.id, assetId: b.assetId, name: b.name })));
   
   // Find the broker node by assetId
   const brokerNode = nodes.find(
@@ -113,20 +114,20 @@ export function filterVisualizerByBroker(
   );
   
   if (!brokerNode) {
-    console.warn("[filterVisualizerByBroker] Broker not found! Searched for assetId:", brokerAssetId);
-    console.warn("[filterVisualizerByBroker] Available broker assetIds:", allBrokers.map((b: FabricNode) => b.assetId));
+    debugWarn("[filterVisualizerByBroker] Broker not found! Searched for assetId:", brokerAssetId);
+    debugWarn("[filterVisualizerByBroker] Available broker assetIds:", allBrokers.map((b: FabricNode) => b.assetId));
     return { nodes: [], edges: [], prod_instances_map: {}, non_prod_instances_map: {} };
   }
   
-  console.log("[filterVisualizerByBroker] Found broker node:", { id: brokerNode.id, assetId: brokerNode.assetId, name: brokerNode.name });
+  debugLog("[filterVisualizerByBroker] Found broker node:", { id: brokerNode.id, assetId: brokerNode.assetId, name: brokerNode.name });
   
   // Use BFS to find reachable nodes via runtime edges (unidirectional: source → target only)
   // If no edges exist (no runtime traffic), only the broker node will be included
   const reachableNodeIds = findReachableNodes(nodes, edges, [brokerNode.id]);
-  console.log("[filterVisualizerByBroker] Reachable node IDs:", Array.from(reachableNodeIds));
+  debugLog("[filterVisualizerByBroker] Reachable node IDs:", Array.from(reachableNodeIds));
   
   const filtered = filterByReachableNodes(response, reachableNodeIds);
-  console.log("[filterVisualizerByBroker] Filtered result:", { 
+  debugLog("[filterVisualizerByBroker] Filtered result:", { 
     nodes: filtered.nodes?.length ?? 0, 
     edges: filtered.edges?.length ?? 0,
     nodeIds: filtered.nodes?.map((n: FabricNode) => n.id) ?? []

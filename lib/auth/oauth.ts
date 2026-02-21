@@ -3,7 +3,7 @@
  */
 
 import { getOAuthConfig, getAuthorizationEndpoint, getTokenEndpoint } from "./config";
-import { loggedFetch } from "@/lib/api-logger";
+import { loggedFetch, debugLog } from "@/lib/api-logger";
 
 export interface TokenResponse {
   accessToken: string;
@@ -27,13 +27,8 @@ export function getAuthorizationUrl(state: string, redirectUri?: string): string
   });
 
   const authUrl = `${getAuthorizationEndpoint()}?${params.toString()}`;
-  
-  // Debug logging: Log requested scopes (only in development)
-  if (process.env.NODE_ENV !== "production") {
-    console.log("[OAuth] Requesting scopes:", config.scopes);
-    console.log("[OAuth] Authorization URL scopes parameter:", params.get("scope"));
-  }
-
+  debugLog("[OAuth] Requesting scopes:", config.scopes);
+  debugLog("[OAuth] Authorization URL scopes parameter:", params.get("scope"));
   return authUrl;
 }
 

@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, use, Suspense, Component } from "react";
 import type { ReactNode, ErrorInfo } from "react";
 import { ChevronRight, ChevronDown, Clock, CheckCircle2, XCircle, Circle } from "lucide-react";
 import { useDebugViewer } from "@/components/debug/useDebugViewer";
+import { debugError } from "@/lib/api-logger";
 import TaskDetailsPanel from "@/components/task-details/TaskDetailsPanel";
 import TaskDetailsTreeView from "@/components/task-details/TaskDetailsTreeView";
 import TaskDetailsListView from "@/components/task-details/TaskDetailsListView";
@@ -602,7 +603,7 @@ export default function TaskDetails({ orgId, taskId, envId, apiInstanceId, skipT
         return res.json() as Promise<TaskData>;
       })
       .catch((err) => {
-        console.error("Error fetching task call stack:", err);
+        debugError("Error fetching task call stack:", err);
         // Re-throw to be caught by error boundary
         throw err;
       });
@@ -658,7 +659,7 @@ class ErrorBoundary extends Component<
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error("TaskDetails error:", error, errorInfo);
+    debugError("TaskDetails error:", error, errorInfo);
   }
 
   render() {

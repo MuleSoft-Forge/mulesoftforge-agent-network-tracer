@@ -1,4 +1,5 @@
 import type { FabricGraphResponse, FabricEdge } from "@/lib/adapters/visualizer-to-canonical";
+import { debugWarn } from "@/lib/api-logger";
 
 /**
  * Activity period options (in minutes) matching MuleSoft Visualizer UI:
@@ -140,7 +141,7 @@ export async function fetchAndMergeRuntimeEdges(
     });
 
     if (!response.ok) {
-      console.warn(`Failed to fetch runtime edges: ${response.status} ${response.statusText}`);
+      debugWarn(`Failed to fetch runtime edges: ${response.status} ${response.statusText}`);
       return fabricNetworkResponse;
     }
 
@@ -179,7 +180,7 @@ export async function fetchAndMergeRuntimeEdges(
       edges: mergedEdges,
     };
   } catch (err) {
-    console.warn("Error fetching runtime edges, continuing without them:", err);
+    debugWarn("Error fetching runtime edges, continuing without them:", err);
     return fabricNetworkResponse;
   }
 }

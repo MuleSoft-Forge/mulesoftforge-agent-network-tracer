@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { debugError } from "@/lib/api-logger";
 
 export interface DebugViewerData {
   data: unknown;
@@ -49,7 +50,7 @@ export const DebugViewer = ({ open, onClose, data, apiUrl, title }: DebugViewerP
       setCopied(type);
       setTimeout(() => setCopied(null), 2000);
     } catch (err) {
-      console.error("Failed to copy:", err);
+      debugError("Failed to copy:", err);
     }
   };
 

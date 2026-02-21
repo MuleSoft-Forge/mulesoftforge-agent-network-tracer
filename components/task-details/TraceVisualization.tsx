@@ -4,6 +4,7 @@ import { useMemo, useState, useEffect } from "react";
 import type React from "react";
 import { ChevronDown, ChevronUp, ChevronsDown, ChevronsUp } from "lucide-react";
 import type { TraceSpan, LogEntry } from "./types";
+import { debugWarn, debugError } from "@/lib/api-logger";
 
 interface TraceVisualizationProps {
   traceSpans: TraceSpan[];
@@ -286,7 +287,7 @@ export default function TraceVisualization({
   const renderHierarchyView = (spans: TraceSpan[], depth = 0, visited = new Set<string>()): React.ReactNode => {
     // Safety: prevent infinite recursion and excessive depth
     if (depth > 20) {
-      console.warn("[TraceVisualization] Maximum depth reached in hierarchy view");
+      debugWarn("[TraceVisualization] Maximum depth reached in hierarchy view");
       return <div className="pl-4 text-xs text-red-500">Maximum depth reached (20 levels)</div>;
     }
 
@@ -299,7 +300,7 @@ export default function TraceVisualization({
         {spans.map((span: TraceSpan) => {
           // Safety: prevent circular references
           if (visited.has(span.spanId)) {
-            console.warn(`[TraceVisualization] Circular reference detected for span ${span.spanId} at depth ${depth}`);
+            debugWarn(`[TraceVisualization] Circular reference detected for span ${span.spanId} at depth ${depth}`);
             return (
               <div key={`${span.spanId}-circular`} className="pl-4 text-xs text-orange-600">
                 ⚠️ Circular reference: {span.name}
@@ -495,7 +496,7 @@ export default function TraceVisualization({
               }
               return renderHierarchyView(filteredHierarchy);
             } catch (error) {
-              console.error("[TraceVisualization] Error rendering hierarchy:", error);
+              debugError("[TraceVisualization] Error rendering hierarchy:", error);
               return (
                 <div className="p-4 text-sm text-red-600">
                   Error rendering hierarchy view. Please try switching to timeline view or clearing filters.

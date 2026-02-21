@@ -1,4 +1,5 @@
 import type { CanonicalEdge, CanonicalGraph, CanonicalNode } from "@/lib/agent-network-types";
+import { debugWarn } from "@/lib/api-logger";
 
 /**
  * LLM reference from Exchange API metadata
@@ -69,7 +70,7 @@ export async function enrichCanonicalWithLLMs(
       );
 
       if (!response.ok) {
-        console.warn(`Failed to fetch LLM metadata for broker ${broker.id}: ${response.status}`);
+        debugWarn(`Failed to fetch LLM metadata for broker ${broker.id}: ${response.status}`);
         return null;
       }
 
@@ -79,7 +80,7 @@ export async function enrichCanonicalWithLLMs(
         llm: data.llm,
       };
     } catch (error) {
-      console.warn(`Error fetching LLM metadata for broker ${broker.id}:`, error);
+      debugWarn(`Error fetching LLM metadata for broker ${broker.id}:`, error);
       return null;
     }
   });
@@ -140,7 +141,7 @@ export async function enrichCanonicalWithLLMs(
           }
         }
       } catch (error) {
-        console.warn(`Error fetching LLM asset metadata for ${llmNodeId}:`, error);
+        debugWarn(`Error fetching LLM asset metadata for ${llmNodeId}:`, error);
         // Continue without icon if fetch fails
       }
 

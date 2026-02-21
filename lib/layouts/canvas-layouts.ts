@@ -1,4 +1,5 @@
 import type { CanonicalGraph, CanonicalNode } from "@/lib/agent-network-types";
+import { debugWarn } from "@/lib/api-logger";
 
 const NODE_WIDTH = 240;
 const NODE_HEIGHT = 56;
@@ -155,7 +156,7 @@ function placeDescendants(
 ): void {
   if (parentNodes.length === 0 || depth >= MAX_DEPTH) {
     if (depth >= MAX_DEPTH) {
-      console.warn(`[CanvasLayout] Maximum depth ${MAX_DEPTH} reached in placeDescendants - possible cycle detected`);
+      debugWarn(`[CanvasLayout] Maximum depth ${MAX_DEPTH} reached in placeDescendants - possible cycle detected`);
     }
     return;
   }

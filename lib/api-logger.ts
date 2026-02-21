@@ -45,6 +45,17 @@ export function debugError(...args: unknown[]): void {
 }
 
 /**
+ * Debug warn logger that respects ENABLE_API_LOGGING feature flag
+ * Use this for warnings that should only appear when logging is enabled
+ */
+export function debugWarn(...args: unknown[]): void {
+  if (!isLoggingEnabled()) {
+    return;
+  }
+  console.warn(...args);
+}
+
+/**
  * Fields that contain customer data and should be sanitized
  * 
  * NOTE: access_token and refresh_token are NOT redacted - they're needed for debugging/curl recreation

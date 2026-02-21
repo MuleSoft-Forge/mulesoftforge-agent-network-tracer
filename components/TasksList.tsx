@@ -90,7 +90,7 @@ export default function TasksList({
         }
       })
       .catch((err) => {
-        console.error("Error fetching tasks:", err);
+        debugError("Error fetching tasks:", err);
         if (err.message && (err.message.includes("Monitoring Center Premium") || err.message.includes("Log Search - Advanced"))) {
           setError(entitlementMessage);
         } else {

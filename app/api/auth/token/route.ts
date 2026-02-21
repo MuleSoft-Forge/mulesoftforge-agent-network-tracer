@@ -3,7 +3,7 @@ import { sealData } from "iron-session";
 import { cookies } from "next/headers";
 import { getCredentialsForRegion } from "@/lib/regions";
 import type { RegionId } from "@/lib/regions";
-import { loggedFetch } from "@/lib/api-logger";
+import { loggedFetch, debugError } from "@/lib/api-logger";
 import { sessionOptions, type SessionData } from "@/lib/session";
 import { TokenRequestSchema } from "@/lib/schemas";
 
@@ -91,7 +91,7 @@ export async function POST(request: NextRequest) {
     
     return response;
   } catch (error) {
-    console.error("Token exchange error:", error);
+    debugError("Token exchange error:", error);
     return NextResponse.json(
       { message: "Internal server error" },
       { status: 500 }
