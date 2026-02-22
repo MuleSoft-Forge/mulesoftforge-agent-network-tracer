@@ -18,13 +18,15 @@ interface LLMReasoningData {
 interface LLMReasoningPanelProps {
   reasoning: LLMReasoningData;
   source: "objectStore" | "logs";
+  /** When source is objectStore: which partitions contributed (tasks and/or conversations) */
+  sourcesUsed?: ("tasks" | "conversations")[];
 }
 
 /**
  * Component to display LLM reasoning/decision-making process from Object Store
  * Shows step-by-step reasoning that explains why decisions were made
  */
-export default function LLMReasoningPanel({ reasoning, source }: LLMReasoningPanelProps) {
+export default function LLMReasoningPanel({ reasoning, source, sourcesUsed }: LLMReasoningPanelProps) {
   const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set());
 
   const toggleStep = (stepId: string) => {
@@ -80,7 +82,11 @@ export default function LLMReasoningPanel({ reasoning, source }: LLMReasoningPan
     return steps.length > 0 ? steps : [{ step: "Reasoning", content: raw }];
   };
 
-  const steps = reasoning.steps || parseRawReasoning(reasoning.rawReasoning || []);
+  // Use steps when non-empty; otherwise derive from rawReasoning so we never show blank when raw text exists
+  const steps =
+    reasoning.steps && reasoning.steps.length > 0
+      ? reasoning.steps
+      : parseRawReasoning(reasoning.rawReasoning || []);
 
   if (steps.length === 0 && (!reasoning.rawReasoning || reasoning.rawReasoning.length === 0)) {
     return (
@@ -108,7 +114,11 @@ export default function LLMReasoningPanel({ reasoning, source }: LLMReasoningPan
               : "bg-blue-100 text-blue-700 border border-blue-200"
           }`}
         >
-          {source === "objectStore" ? "Object Store" : "Logs"}
+          {source === "objectStore"
+            ? sourcesUsed?.length
+              ? `Object Store (${sourcesUsed.map((s) => s === "tasks" ? "Tasks" : "Conversations").join(" + ")})`
+              : "Object Store"
+            : "Logs"}
         </span>
       </div>
 

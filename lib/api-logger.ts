@@ -269,7 +269,7 @@ export function logApiRequest(
   "${url}"`,
   };
 
-  console.log("[API_REQUEST]", JSON.stringify(logEntry, null, 2));
+  debugLog("[API_REQUEST]", JSON.stringify(logEntry, null, 2));
 }
 
 /**
@@ -301,7 +301,7 @@ export function logApiResponse(
     body: sanitizedBody,
   };
 
-  console.log("[API_RESPONSE]", JSON.stringify(logEntry, null, 2));
+  debugLog("[API_RESPONSE]", JSON.stringify(logEntry, null, 2));
 }
 
 /**
@@ -336,7 +336,7 @@ export function logApiError(
       : undefined,
   };
 
-  console.error("[API_ERROR]", JSON.stringify(logEntry, null, 2));
+  debugError("[API_ERROR]", JSON.stringify(logEntry, null, 2));
 }
 
 /**

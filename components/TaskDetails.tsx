@@ -121,9 +121,18 @@ function TaskDetailsContent({ orgId, taskId, envId, taskResource }: TaskDetailsP
   const { jobCard, entries, traceSpans = [], mode } = data;
   const isNoEntitlement = mode === "no-entitlement";
 
-  // Auto-select task on load
+  // Auto-select task on load; keep task selection in sync with latest jobCard when task data changes
   useEffect(() => {
-    if (jobCard && !selectedItem) {
+    if (!jobCard) return;
+    if (!selectedItem) {
+      setSelectedItem({
+        type: "task",
+        id: "task",
+        data: jobCard,
+      });
+      return;
+    }
+    if (selectedItem.type === "task" && selectedItem.data !== jobCard) {
       setSelectedItem({
         type: "task",
         id: "task",

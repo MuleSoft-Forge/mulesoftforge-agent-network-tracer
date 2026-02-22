@@ -3,6 +3,7 @@
 import type { ApiStatus, JobCard, LogEntry, DetailTab, SelectedItem, TraceSpan } from "./types";
 import TraceVisualization from "./TraceVisualization";
 import LLMReasoningPanel from "./LLMReasoningPanel";
+import DebugLoggingCard from "@/components/DebugLoggingCard";
 
 // Helper function to format JSON strings
 function formatJsonIfPossible(value: unknown): string {
@@ -124,6 +125,7 @@ const API_STATUS_ROW_LABELS: Record<keyof ApiStatus, string> = {
   objectStore: "Object Store",
   deploymentApi: "Deployment API (AMC)",
   traceSpans: "Trace spans (Observability)",
+  monitoringSuggestions: "Monitoring", // not shown in table; see monitoring block below
 };
 
 interface TaskDetailsPanelProps {
@@ -156,7 +158,8 @@ export default function TaskDetailsPanel({
 }: TaskDetailsPanelProps) {
   const renderContent = () => {
     if (selectedItem.type === "task") {
-      const taskData = selectedItem.data as JobCard;
+      // Use jobCard (current API data) so objectStore / reasoning always reflect latest fetch
+      const taskData = jobCard;
       // Find the INBOUND_REQUEST entry to get the raw message
       const inboundEntry = logEntries.find((e) => e.type === "INBOUND_REQUEST");
       const rawMessage = inboundEntry?.raw?.message as string | undefined;
@@ -209,36 +212,96 @@ export default function TaskDetailsPanel({
                 What worked and what did not for this task. Use this when diagnosing &quot;app not working&quot; (often permissions).
               </p>
               {taskData.apiStatus ? (
-                <table className="w-full border-collapse rounded-lg border border-gray-200 text-left text-sm">
-                  <thead>
-                    <tr className="bg-gray-50">
-                      <th className="border-b border-gray-200 px-3 py-2 font-medium text-gray-700">API</th>
-                      <th className="border-b border-gray-200 px-3 py-2 font-medium text-gray-700">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(Object.keys(taskData.apiStatus) as (keyof ApiStatus)[]).map((key) => {
-                      const value = taskData.apiStatus![key];
-                      const { label, ok } = apiStatusLabel(key, value);
-                      return (
-                        <tr key={key} className="border-b border-gray-100 last:border-0">
-                          <td className="px-3 py-2 text-gray-700">{API_STATUS_ROW_LABELS[key]}</td>
-                          <td className="px-3 py-2">
-                            <span
-                              className={
-                                ok
-                                  ? "rounded bg-green-50 px-1.5 py-0.5 text-xs text-green-800"
-                                  : "rounded bg-amber-50 px-1.5 py-0.5 text-xs text-amber-800"
-                              }
-                            >
-                              {label}
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                <>
+                  <table className="w-full border-collapse rounded-lg border border-gray-200 text-left text-sm">
+                    <thead>
+                      <tr className="bg-gray-50">
+                        <th className="border-b border-gray-200 px-3 py-2 font-medium text-gray-700">API</th>
+                        <th className="border-b border-gray-200 px-3 py-2 font-medium text-gray-700">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(Object.keys(taskData.apiStatus) as (keyof ApiStatus)[])
+                        .filter((key) => key !== "monitoringSuggestions")
+                        .map((key) => {
+                          const value = taskData.apiStatus![key];
+                          const { label, ok } = apiStatusLabel(key, value);
+                          return (
+                            <tr key={key} className="border-b border-gray-100 last:border-0">
+                              <td className="px-3 py-2 text-gray-700">{API_STATUS_ROW_LABELS[key]}</td>
+                              <td className="px-3 py-2">
+                                <span
+                                  className={
+                                    ok
+                                      ? "rounded bg-green-50 px-1.5 py-0.5 text-xs text-green-800"
+                                      : "rounded bg-amber-50 px-1.5 py-0.5 text-xs text-amber-800"
+                                  }
+                                >
+                                  {label}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                  </table>
+                  {taskData.apiStatus.monitoringSuggestions && (
+                    <div className="space-y-3">
+                      <table className="w-full border-collapse rounded-lg border border-gray-200 text-left text-sm">
+                        <thead>
+                          <tr className="bg-gray-50">
+                            <th className="border-b border-gray-200 px-3 py-2 font-medium text-gray-700">
+                              Monitoring (Runtime Manager)
+                            </th>
+                            <th className="border-b border-gray-200 px-3 py-2 font-medium text-gray-700 w-24">
+                              Status
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr className="border-b border-gray-100">
+                            <td className="px-3 py-2 font-mono text-xs text-gray-700">
+                              com.mulesoft.modules.agent.broker
+                            </td>
+                            <td className="px-3 py-2">
+                              <span
+                                className={
+                                  taskData.apiStatus.monitoringSuggestions.brokerLogger
+                                    ? "rounded bg-green-50 px-1.5 py-0.5 text-xs text-green-800"
+                                    : "rounded bg-amber-50 px-1.5 py-0.5 text-xs text-amber-800"
+                                }
+                              >
+                                {taskData.apiStatus.monitoringSuggestions.brokerLogger ? "Set" : "Not set"}
+                              </span>
+                            </td>
+                          </tr>
+                          <tr className="border-b border-gray-100 last:border-0">
+                            <td className="px-3 py-2 font-mono text-xs text-gray-700">
+                              INSECURE-LOGGING
+                            </td>
+                            <td className="px-3 py-2">
+                              <span
+                                className={
+                                  taskData.apiStatus.monitoringSuggestions.insecureLogging
+                                    ? "rounded bg-green-50 px-1.5 py-0.5 text-xs text-green-800"
+                                    : "rounded bg-amber-50 px-1.5 py-0.5 text-xs text-amber-800"
+                                }
+                              >
+                                {taskData.apiStatus.monitoringSuggestions.insecureLogging ? "Set" : "Not set"}
+                              </span>
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                      {(!taskData.apiStatus.monitoringSuggestions.brokerLogger ||
+                        !taskData.apiStatus.monitoringSuggestions.insecureLogging) && (
+                        <div className="mt-2">
+                          <DebugLoggingCard />
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
               ) : (
                 <p className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-4 text-sm text-gray-500">
                   No API status for this task. Status is shown after loading task details.
@@ -513,14 +576,111 @@ export default function TaskDetailsPanel({
             </div>
           )}
           {detailTab === "reasoning" && (
-            <div className="space-y-4">
-              {taskData.objectStore?.available &&
-               taskData.objectStore?.llmReasoning &&
-               (taskData.objectStore.llmReasoning.steps?.length || taskData.objectStore.llmReasoning.rawReasoning?.length) ? (
-                <LLMReasoningPanel
-                  reasoning={taskData.objectStore.llmReasoning}
-                  source="objectStore"
-                />
+            <div className="space-y-6">
+              {taskData.objectStore?.debug && (
+                <section className="rounded-lg border border-amber-200 bg-amber-50/50 p-3 text-xs">
+                  <h4 className="font-semibold text-amber-800 mb-2">Partition debug</h4>
+                  <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-amber-900">
+                    <dt className="font-medium">Tasks partition:</dt>
+                    <dd className="min-w-0">
+                      <span className="text-amber-700">{taskData.objectStore.debug.tasks.partition ?? "—"}</span>
+                      {" · "}
+                      {!taskData.objectStore.debug.tasks.keyFound ? (
+                        <span className="font-medium">Key not found</span>
+                      ) : taskData.objectStore.debug.tasks.valueEmpty ? (
+                        <span className="font-medium">Key found, value empty (0 strings)</span>
+                      ) : (
+                        <span>Key found, {taskData.objectStore.debug.tasks.stringCount} strings</span>
+                      )}
+                      {taskData.objectStore.debug.tasks.keyUsed && (
+                        <span className="block truncate mt-0.5 text-amber-600" title={taskData.objectStore.debug.tasks.keyUsed}>
+                          key: {taskData.objectStore.debug.tasks.keyUsed}
+                        </span>
+                      )}
+                    </dd>
+                    <dt className="font-medium">Conversations partition:</dt>
+                    <dd className="min-w-0">
+                      <span className="text-amber-700">{taskData.objectStore.debug.conversations.partition ?? "—"}</span>
+                      {" · "}
+                      {!taskData.objectStore.debug.conversations.keyFound ? (
+                        <span className="font-medium">Key not found</span>
+                      ) : taskData.objectStore.debug.conversations.valueEmpty ? (
+                        <span className="font-medium">Key found, value empty (0 strings)</span>
+                      ) : (
+                        <span>Key found, {taskData.objectStore.debug.conversations.stringCount} strings</span>
+                      )}
+                      {taskData.objectStore.debug.conversations.keyUsed && (
+                        <span className="block truncate mt-0.5 text-amber-600" title={taskData.objectStore.debug.conversations.keyUsed}>
+                          key: {taskData.objectStore.debug.conversations.keyUsed}
+                        </span>
+                      )}
+                    </dd>
+                  </dl>
+                </section>
+              )}
+              {taskData.objectStore?.available ? (
+                <>
+                  <section className="space-y-2">
+                    <h4 className="text-sm font-semibold text-gray-700 border-b border-gray-200 pb-1">
+                      From Tasks partition
+                    </h4>
+                    {taskData.objectStore.fromTasks &&
+                     (taskData.objectStore.fromTasks.steps?.length || taskData.objectStore.fromTasks.rawReasoning?.length) ? (
+                      <LLMReasoningPanel
+                        reasoning={taskData.objectStore.fromTasks}
+                        source="objectStore"
+                        sourcesUsed={["tasks"]}
+                      />
+                    ) : taskData.objectStore.llmReasoning &&
+                      (taskData.objectStore.llmReasoning.steps?.length || taskData.objectStore.llmReasoning.rawReasoning?.length) ? (
+                      <LLMReasoningPanel
+                        reasoning={taskData.objectStore.llmReasoning}
+                        source="objectStore"
+                        sourcesUsed={taskData.objectStore.sourcesUsed ?? ["tasks"]}
+                      />
+                    ) : taskData.objectStore.sourcesUsed?.includes("tasks") ? (
+                      <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-500">
+                        No structured content parsed from Tasks. Check Raw Log for payload.
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-400">
+                        No data from Tasks partition for this task.
+                      </div>
+                    )}
+                  </section>
+                  <section className="space-y-2">
+                    <h4 className="text-sm font-semibold text-gray-700 border-b border-gray-200 pb-1">
+                      From Conversations partition
+                    </h4>
+                    {taskData.objectStore.fromConversations &&
+                     (taskData.objectStore.fromConversations.steps?.length || taskData.objectStore.fromConversations.rawReasoning?.length) ? (
+                      <LLMReasoningPanel
+                        reasoning={taskData.objectStore.fromConversations}
+                        source="objectStore"
+                        sourcesUsed={["conversations"]}
+                      />
+                    ) : taskData.objectStore.sourcesUsed?.includes("conversations") ? (
+                      <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-500">
+                        No structured content parsed from Conversations. Check Raw Log for payload.
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-400">
+                        No data from Conversations partition for this task.
+                      </div>
+                    )}
+                  </section>
+                </>
+              ) : taskData.objectStore?.available === false && taskData.objectStore?.errors?.length ? (
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">
+                  <div className="flex items-center gap-2">
+                    <span>Object Store not available.</span>
+                  </div>
+                  <ul className="mt-2 list-inside list-disc text-xs text-gray-400">
+                    {taskData.objectStore.errors.map((e, i) => (
+                      <li key={i}>{e}</li>
+                    ))}
+                  </ul>
+                </div>
               ) : (
                 <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">
                   <div className="flex items-center gap-2">

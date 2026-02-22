@@ -222,6 +222,61 @@ const CLOUDHUB_REGION_TO_OBJECT_STORE: Record<string, ObjectStoreRegion> = {
   "aps2-c1": "ap-southeast-2",
 };
 
+/** Categories we suggest for Runtime Manager → Monitoring (log forwarding) for full task visibility. */
+const MONITORING_CATEGORY_BROKER = "com.mulesoft.modules.agent.broker";
+const MONITORING_CATEGORY_INSECURE_LOGGING = "INSECURE-LOGGING";
+
+/**
+ * Detect if deployment detail (from AMC GET deployment) includes the recommended log categories.
+ * Uses the same deployment JSON we already fetch for region; no extra API call.
+ * Returns true for each category if it appears anywhere in the deployment config (e.g. monitoring log levels).
+ */
+export function getMonitoringLogCategoriesFromDeployment(deployment: Record<string, unknown>): {
+  brokerLogger: boolean;
+  insecureLogging: boolean;
+} {
+  try {
+    const s = JSON.stringify(deployment);
+    return {
+      brokerLogger: s.includes(MONITORING_CATEGORY_BROKER),
+      insecureLogging: s.includes(MONITORING_CATEGORY_INSECURE_LOGGING),
+    };
+  } catch {
+    return { brokerLogger: false, insecureLogging: false };
+  }
+}
+
+/**
+ * Infer monitoring categories from task log entries. When the deployment API does not include
+ * monitoring config in its response, we can still detect "Set" if the task's own logs show
+ * these loggers (logger name or class contains the category). Used to merge with deployment-based
+ * result so we do not show "Not set" when logs prove the categories are enabled.
+ */
+export function getMonitoringFromLogEntries(entries: unknown[]): {
+  brokerLogger: boolean;
+  insecureLogging: boolean;
+} {
+  let brokerLogger = false;
+  let insecureLogging = false;
+  try {
+    for (const entry of entries) {
+      if (!entry || typeof entry !== "object") continue;
+      const e = entry as Record<string, unknown>;
+      const s =
+        [e.logger, e.raw, (e.raw as Record<string, unknown>)?.logger, (e.raw as Record<string, unknown>)?.class, (e.raw as Record<string, unknown>)?.message]
+          .filter(Boolean)
+          .map((x) => (typeof x === "string" ? x : JSON.stringify(x)))
+          .join(" ");
+      if (s.includes(MONITORING_CATEGORY_BROKER)) brokerLogger = true;
+      if (s.includes(MONITORING_CATEGORY_INSECURE_LOGGING)) insecureLogging = true;
+      if (brokerLogger && insecureLogging) break;
+    }
+  } catch {
+    // ignore
+  }
+  return { brokerLogger, insecureLogging };
+}
+
 /**
  * Extract object store region from deployment detail JSON.
  * Deployment contains URLs like target.deploymentSettings.http.inbound.internalUrl
@@ -255,6 +310,8 @@ export function getObjectStoreRegionFromDeployment(deployment: {
 /**
  * Find Object Store for a deployment by trying different regions.
  * If preferredRegion (or env OBJECT_STORE_REGION) is set and valid, that region is tried first.
+ * When falling back to broker-partition matching, we resolve by task key presence: the definitive
+ * store is the one that actually contains the taskId (not the first store with matching partition names).
  */
 async function findObjectStore(
   orgId: string,
@@ -263,7 +320,8 @@ async function findObjectStore(
   accessToken: string,
   brokerName: string,
   deploymentType?: string,
-  preferredRegion?: string
+  preferredRegion?: string,
+  taskId?: string
 ): Promise<{ storeId: string; region: ObjectStoreRegion } | null> {
   // Try two prefix patterns (Anypoint UI uses shorter prefix: APP_{deploymentId}_)
   const storeIdPrefixFull = `APP_${deploymentId}__defaultPersistentObjectStore`;
@@ -359,10 +417,9 @@ async function findObjectStore(
     throw new Error("403 Forbidden: Insufficient permissions to access Object Store");
   }
 
-  // If no store found by deploymentId, try listing ALL stores and match by broker partition.
-  // Deployment ID from Runtime Manager/AMC can differ from the store's APP_* id (e.g. Runtime Fabric vs CloudHub),
-  // so we match by broker partition to find the correct store and then report "no keys" when appropriate.
-  // OPTIMIZATION: Search all regions in parallel instead of sequentially
+  // If no store found by deploymentId, list ALL stores and match by broker partition.
+  // Definitive resolution: when taskId is provided, return the store that actually contains the task key
+  // (multiple apps can have the same broker partition names; only one has this task).
   if (brokerName && brokerName.trim().length > 0) {
     const fallbackPromises = regionsToTry.map(async (region): Promise<{ storeId: string; region: ObjectStoreRegion } | null> => {
       try {
@@ -377,21 +434,29 @@ async function findObjectStore(
         });
         if (!res.ok) return null;
         const data = (await res.json()) as ObjectStoreStoresResponse;
-        const matchingStores = (data.values || []).filter((s: { storeId: string }) => 
+        const matchingStores = (data.values || []).filter((s: { storeId: string }) =>
           s.storeId.includes("__defaultPersistentObjectStore")
         );
         if (matchingStores.length === 0) return null;
-        debugLog(`[ObjectStore] No store for deploymentId ${deploymentId}; trying ${matchingStores.length} stores in ${region} by broker partition "${brokerName}"...`);
-        // Check partitions sequentially within a region (they're specific to the store)
+        debugLog(`[ObjectStore] No store for deploymentId ${deploymentId}; trying ${matchingStores.length} stores in ${region} by broker partition "${brokerName}" (resolve by task key: ${taskId ? "yes" : "no"})...`);
         for (const store of matchingStores) {
           try {
-            const partitionId = await findPartition(orgId, envId, store.storeId, brokerName, accessToken, region);
-            if (partitionId) {
-              debugLog(`[ObjectStore] Found store by broker partition in region ${region}: ${store.storeId}`);
+            const partitions = await findPartitionsForBroker(orgId, envId, store.storeId, brokerName, accessToken, region);
+            const tasksPartition = partitions.tasksPartition;
+            if (!tasksPartition && !partitions.conversationsPartition) continue;
+            const partitionToCheck = tasksPartition ?? partitions.conversationsPartition!;
+            if (taskId) {
+              const keyWithTaskId = await findKeyContainingTaskId(orgId, envId, store.storeId, partitionToCheck, taskId, accessToken, region);
+              if (!keyWithTaskId) {
+                debugLog(`[ObjectStore] Store ${store.storeId} has broker partitions but no key for taskId ${taskId}, trying next store`);
+                continue;
+              }
+              debugLog(`[ObjectStore] Found definitive store by task key in region ${region}: ${store.storeId}`);
               return { storeId: store.storeId, region };
             }
+            debugLog(`[ObjectStore] Found store by broker partition in region ${region}: ${store.storeId}`);
+            return { storeId: store.storeId, region };
           } catch (error) {
-            // Continue to next store if partition lookup fails
             debugLog(`[ObjectStore] Partition lookup failed for store ${store.storeId}:`, error);
           }
         }
@@ -401,14 +466,13 @@ async function findObjectStore(
       return null;
     });
 
-    // Wait for all fallback searches to complete, return first match found
     const fallbackResults = await Promise.allSettled(fallbackPromises);
     for (const result of fallbackResults) {
       if (result.status === "fulfilled" && result.value) {
         return result.value;
       }
     }
-    debugLog(`[ObjectStore] No store found with deploymentId ${deploymentId} and no store found by broker partition "${brokerName}"`);
+    debugLog(`[ObjectStore] No store found with deploymentId ${deploymentId} and no store found by broker partition "${brokerName}"${taskId ? ` (with taskId ${taskId})` : ""}`);
   } else {
     debugLog(`[ObjectStore] No store found with deploymentId ${deploymentId}; brokerName missing, cannot try partition matching`);
   }
@@ -416,20 +480,29 @@ async function findObjectStore(
   return null;
 }
 
+/** Partitions for one broker: _tasks and _conversations (both used for full task/reasoning) */
+interface BrokerPartitions {
+  tasksPartition: string | null;
+  conversationsPartition: string | null;
+}
+
 /**
- * Find partition for a broker/config name
+ * Find both _tasks and _conversations partitions for a broker.
+ * Agent broker creates two partitions per config; we use both for full task and reasoning.
  */
-async function findPartition(
+async function findPartitionsForBroker(
   orgId: string,
   envId: string,
   storeId: string,
   brokerName: string,
   accessToken: string,
   region: ObjectStoreRegion
-): Promise<string | null> {
+): Promise<BrokerPartitions> {
   const baseUrl = `https://object-store-${region}.anypoint.mulesoft.com`;
   const encodedStoreId = encodeURIComponent(storeId);
   const url = `${baseUrl}/api/v1/organizations/${orgId}/environments/${envId}/stores/${encodedStoreId}/partitions`;
+
+  const result: BrokerPartitions = { tasksPartition: null, conversationsPartition: null };
 
   try {
     const res = await loggedFetch(url, {
@@ -441,24 +514,21 @@ async function findPartition(
     });
 
     if (res.status === 403) {
-      // Capture full error response - API might tell us what scope is needed
       const errorText = await res.text().catch(() => "");
       let errorJson: { message?: string; error?: string; statusMessage?: string } = {};
       try {
         errorJson = JSON.parse(errorText);
       } catch {
-        // Not JSON, use raw text
+        // Not JSON
       }
-      
       const apiErrorMessage = errorJson.message || errorJson.error || errorJson.statusMessage || errorText || "No error details provided";
       const { getOAuthConfig } = await import("@/lib/auth/config");
       const currentScopes = getOAuthConfig().scopes;
-      
       const errorMsg = `Object Store API returned 403 Forbidden when accessing partitions.
 
 API Error: ${apiErrorMessage}
 
-The OAuth token may be missing a required scope for Object Store partition access. We're currently requesting 'manage:store_data', but if this error persists, the API might require a different scope or additional permissions.
+The OAuth token may be missing a required scope for Object Store partition access.
 
 To test different scopes:
 1. Set ANYPOINT_SCOPES environment variable with the scope you want to test, e.g.:
@@ -468,76 +538,58 @@ To test different scopes:
 
 Common Object Store scopes to try: manage:store_data, manage:store, read:store
 Current scopes being requested: ${currentScopes}`;
-      
       debugError(`[ObjectStore] ${errorMsg}`);
       debugLog(`[ObjectStore] 403 response details - orgId: ${orgId}, envId: ${envId}, storeId: ${storeId}, brokerName: ${brokerName}, region: ${region}`);
       throw new Error(errorMsg);
     }
 
-    if (res.ok) {
-      const data = (await res.json()) as ObjectStorePartitionsResponse;
-      // Partition format: _agentBrokerModule_{configName}_tasks
-      // Broker name might have underscores replaced, so try multiple variations
-      const normalizedBrokerName = brokerName.replace(/[^a-zA-Z0-9_]/g, "_");
-      const expectedPartition = `_agentBrokerModule_${normalizedBrokerName}_tasks`;
-      
-      // Try exact match first
-      let partition = data.values?.find(
-        (p: string) => p === expectedPartition
-      );
-      
-      // Try partial match (broker name might be embedded)
-      if (!partition) {
-        partition = data.values?.find(
-          (p: string) => 
-            p.includes(normalizedBrokerName) || 
-            p.includes(brokerName.replace(/[^a-zA-Z0-9]/g, ""))
-        );
-      }
-      
-      if (partition) {
-        debugLog(`[ObjectStore] Found partition: ${partition}`);
-        return partition;
-      }
-      
-      // If exact match not found, return first partition that looks like a task partition (fallback)
-      const taskPartition = data.values?.find(
-        (p: string) => p.includes("_tasks")
-      );
-      if (taskPartition) {
-        debugLog(`[ObjectStore] Using fallback partition: ${taskPartition}`);
-        return taskPartition;
-      }
-      
-      // Last resort: return first partition
-      if (data.values && data.values.length > 0) {
-        debugLog(`[ObjectStore] Using first available partition: ${data.values[0]}`);
-        return data.values[0];
-      }
-    }
+    if (!res.ok) return result;
+
+    const data = (await res.json()) as ObjectStorePartitionsResponse;
+    const allPartitions = data.values ?? [];
+    const normalizedBrokerName = brokerName.replace(/[^a-zA-Z0-9_]/g, "_");
+    const brokerNameNoSpecial = brokerName.replace(/[^a-zA-Z0-9]/g, "_");
+
+    const matchesBroker = (p: string) =>
+      p.includes(normalizedBrokerName) ||
+      p.includes(brokerNameNoSpecial) ||
+      (brokerName.length > 0 && p.includes("_Broker_"));
+
+    result.tasksPartition =
+      allPartitions.find((p: string) => p.includes("_tasks") && matchesBroker(p)) ??
+      allPartitions.find((p: string) => p.includes("_tasks")) ??
+      null;
+    result.conversationsPartition =
+      allPartitions.find((p: string) => p.includes("_conversations") && matchesBroker(p)) ??
+      allPartitions.find((p: string) => p.includes("_conversations")) ??
+      null;
+
+    if (result.tasksPartition) debugLog(`[ObjectStore] Found tasks partition: ${result.tasksPartition}`);
+    if (result.conversationsPartition) debugLog(`[ObjectStore] Found conversations partition: ${result.conversationsPartition}`);
   } catch (error) {
-    debugError("[ObjectStore] Error finding partition:", error);
+    debugError("[ObjectStore] Error finding partitions:", error);
+    throw error;
   }
 
-  return null;
+  return result;
 }
 
 /**
- * Get task value from Object Store
+ * Get value from Object Store by partition and key
  */
-async function getTaskValue(
+async function getPartitionValue(
   orgId: string,
   envId: string,
   storeId: string,
   partitionId: string,
-  taskKey: string,
+  key: string,
   accessToken: string,
   region: ObjectStoreRegion
 ): Promise<ObjectStoreValue | null> {
   const baseUrl = `https://object-store-${region}.anypoint.mulesoft.com`;
   const encodedStoreId = encodeURIComponent(storeId);
   const encodedPartition = encodeURIComponent(partitionId);
-  const encodedKey = encodeURIComponent(taskKey);
+  const encodedKey = encodeURIComponent(key);
   const url = `${baseUrl}/api/v1/organizations/${orgId}/environments/${envId}/stores/${encodedStoreId}/partitions/${encodedPartition}/keys/${encodedKey}`;
 
   try {
@@ -550,28 +602,105 @@ async function getTaskValue(
     });
 
     if (res.status === 403) {
-      debugError(`[ObjectStore] 403 Forbidden accessing task key ${taskKey} - check permissions`);
-      debugLog(`[ObjectStore] 403 response details - orgId: ${orgId}, envId: ${envId}, storeId: ${storeId}, partitionId: ${partitionId}, taskKey: ${taskKey}, region: ${region}`);
+      debugError(`[ObjectStore] 403 Forbidden accessing key ${key} - check permissions`);
       throw new Error("403 Forbidden: Insufficient permissions to access Object Store task value");
     }
 
-    if (res.ok) {
-      return (await res.json()) as ObjectStoreValue;
-    } else if (res.status === 404) {
-      debugLog(`[ObjectStore] Task key not found: ${taskKey}`);
-      return null;
-    } else {
-      debugLog(`[ObjectStore] Error fetching task value: ${res.status}`);
+    if (res.ok) return (await res.json()) as ObjectStoreValue;
+    if (res.status === 404) {
+      debugLog(`[ObjectStore] Key not found: ${key}`);
       return null;
     }
+    debugLog(`[ObjectStore] Error fetching value: ${res.status}`);
+    return null;
   } catch (error) {
-    // Re-throw 403 errors
-    if (error instanceof Error && error.message.includes("403")) {
-      throw error;
-    }
-    debugError("[ObjectStore] Error fetching task value:", error);
+    if (error instanceof Error && error.message.includes("403")) throw error;
+    debugError("[ObjectStore] Error fetching partition value:", error);
     return null;
   }
+}
+
+/**
+ * List keys in a partition and return the key that contains taskId if any
+ */
+async function findKeyContainingTaskId(
+  orgId: string,
+  envId: string,
+  storeId: string,
+  partitionId: string,
+  taskId: string,
+  accessToken: string,
+  region: ObjectStoreRegion
+): Promise<string | null> {
+  const baseUrl = `https://object-store-${region}.anypoint.mulesoft.com`;
+  const encodedStoreId = encodeURIComponent(storeId);
+  const encodedPartition = encodeURIComponent(partitionId);
+  const keysUrl = `${baseUrl}/api/v1/organizations/${orgId}/environments/${envId}/stores/${encodedStoreId}/partitions/${encodedPartition}/keys`;
+
+  const keysRes = await loggedFetch(keysUrl, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (!keysRes.ok) return null;
+  const keysData = (await keysRes.json()) as ObjectStoreKeysResponse;
+  const match = keysData.values?.find((k: { keyId: string }) => k.keyId.includes(taskId));
+  return match ? match.keyId : null;
+}
+
+/** Result of fetching from one partition: value (if key found) and which key was used. */
+type PartitionFetchResult = { value: ObjectStoreValue | null; keyUsed: string | null };
+
+/**
+ * Fetch value from a partition using key variations, then list-keys fallback.
+ * For conversations partition: tries contextId key first (runtime often keys by contextId), then taskId.
+ */
+async function fetchValueFromPartition(
+  orgId: string,
+  envId: string,
+  storeId: string,
+  partitionId: string,
+  taskId: string,
+  brokerName: string,
+  accessToken: string,
+  region: ObjectStoreRegion,
+  partitionLabel: string,
+  contextId?: string | null
+): Promise<PartitionFetchResult> {
+  const normalizedBrokerName = brokerName.replace(/[^a-zA-Z0-9_]/g, "_");
+  const keyVariations: string[] = [];
+  if (partitionLabel === "conversations" && contextId) {
+    keyVariations.push(`[${brokerName}]-${contextId}`, `[${normalizedBrokerName}]-${contextId}`);
+  }
+  keyVariations.push(
+    `[${brokerName}]-${taskId}`,
+    `[${normalizedBrokerName}]-${taskId}`,
+  );
+  if (partitionLabel === "conversations") {
+    keyVariations.push(taskId);
+  }
+
+  for (const key of keyVariations) {
+    const value = await getPartitionValue(orgId, envId, storeId, partitionId, key, accessToken, region);
+    if (value) {
+      debugLog(`[ObjectStore] Found value in ${partitionLabel} with key: ${key}`);
+      return { value, keyUsed: key };
+    }
+  }
+
+  const foundKey = await findKeyContainingTaskId(orgId, envId, storeId, partitionId, taskId, accessToken, region);
+  if (foundKey) {
+    const value = await getPartitionValue(orgId, envId, storeId, partitionId, foundKey, accessToken, region);
+    if (value) {
+      debugLog(`[ObjectStore] Found value in ${partitionLabel} via list-keys: ${foundKey}`);
+      return { value, keyUsed: foundKey };
+    }
+  }
+
+  return { value: null, keyUsed: null };
 }
 
 /**
@@ -585,11 +714,19 @@ export async function fetchObjectStoreData(
   deploymentId: string | null,
   accessToken: string,
   deploymentType?: string,
-  objectStoreRegion?: string
+  objectStoreRegion?: string,
+  contextId?: string | null
 ): Promise<{
   available: boolean;
   /** Status for API status table: ok, 403_forbidden, no_store, no_keys */
   objectStoreStatus?: "ok" | "403_forbidden" | "no_store" | "no_keys";
+  /** Which partitions contributed data (for UI: "Tasks", "Conversations") */
+  sourcesUsed?: ("tasks" | "conversations")[];
+  /** Parsed reasoning from _tasks partition only (for split UI) */
+  fromTasks?: { steps: Array<{ step: string; content: string[] }>; rawReasoning: string[] };
+  /** Parsed reasoning from _conversations partition only (for split UI) */
+  fromConversations?: { steps: Array<{ step: string; content: string[] }>; rawReasoning: string[] };
+  /** Merged reasoning from both (backward compat) */
   llmReasoning?: {
     steps?: Array<{ step: string; content: string[] }>;
     rawReasoning?: string[];
@@ -597,196 +734,181 @@ export async function fetchObjectStoreData(
   toolCallIds?: string[];
   downstreamContextIds?: Array<{ agent: string; contextId: string; taskId: string }>;
   errors?: string[];
+  /** Debug: partition names and per-partition valueFound + stringCount (for UI “are both empty?”) */
+  debug?: {
+    tasks: { partition: string | null; keyFound: boolean; keyUsed: string | null; valueEmpty: boolean; stringCount: number };
+    conversations: { partition: string | null; keyFound: boolean; keyUsed: string | null; valueEmpty: boolean; stringCount: number };
+  };
 }> {
   const errors: string[] = [];
 
-  // Need deployment ID to find store
   if (!deploymentId) {
     errors.push("Deployment ID not available");
     return { available: false, errors };
   }
 
-  // Find Object Store
   let storeInfo: { storeId: string; region: ObjectStoreRegion } | null = null;
   try {
     debugLog(`[ObjectStore] Starting Object Store lookup - orgId: ${orgId}, envId: ${envId}, deploymentId: ${deploymentId}, taskId: ${taskId}, brokerName: ${brokerName}, deploymentType: ${deploymentType || "unknown"}, preferredRegion: ${objectStoreRegion ?? "(none)"}`);
-    storeInfo = await findObjectStore(orgId, envId, deploymentId, accessToken, brokerName, deploymentType, objectStoreRegion);
+    storeInfo = await findObjectStore(orgId, envId, deploymentId, accessToken, brokerName, deploymentType, objectStoreRegion, taskId);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
     debugError(`[ObjectStore] Error finding Object Store: ${errorMessage}`);
     errors.push(errorMessage);
     if (errorMessage.includes("403")) {
-      debugError(`[ObjectStore] 403 error detected during store lookup - returning early`);
       return { available: false, objectStoreStatus: "403_forbidden", errors };
     }
   }
-  
+
   if (!storeInfo) {
     let errorMessage = `Object Store not found for deployment ${deploymentId}. Searched regions: ${OBJECT_STORE_REGIONS.join(", ")}. Store pattern: APP_${deploymentId}__defaultPersistentObjectStore`;
     if (deploymentType === "HY") {
-      errorMessage += `. Note: Hybrid (HY) deployments may not have Object Store provisioned. Object Store is typically available for CloudHub deployments.`;
+      errorMessage += `. Note: Hybrid (HY) deployments may not have Object Store provisioned.`;
     }
     errors.push(errorMessage);
-    debugError(`[ObjectStore] Could not find Object Store - deploymentId: ${deploymentId}, deploymentType: ${deploymentType || "unknown"}, searched regions: ${OBJECT_STORE_REGIONS.join(", ")}`);
     return { available: false, objectStoreStatus: "no_store", errors };
   }
 
-  // Find partition
-  let partitionId: string | null = null;
+  let partitions: BrokerPartitions;
   try {
-    debugLog(`[ObjectStore] Looking for partition - storeId: ${storeInfo.storeId}, brokerName: ${brokerName}, region: ${storeInfo.region}`);
-    partitionId = await findPartition(orgId, envId, storeInfo.storeId, brokerName, accessToken, storeInfo.region);
+    debugLog(`[ObjectStore] Looking for partitions (tasks + conversations) - storeId: ${storeInfo.storeId}, brokerName: ${brokerName}, region: ${storeInfo.region}`);
+    partitions = await findPartitionsForBroker(orgId, envId, storeInfo.storeId, brokerName, accessToken, storeInfo.region);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    debugError(`[ObjectStore] Error finding partition: ${errorMessage}`);
+    debugError(`[ObjectStore] Error finding partitions: ${errorMessage}`);
     errors.push(errorMessage);
     if (errorMessage.includes("403")) {
-      debugError(`[ObjectStore] 403 error detected during partition lookup - returning early`);
+      return { available: false, objectStoreStatus: "403_forbidden", errors };
+    }
+    return { available: false, objectStoreStatus: "no_keys", errors };
+  }
+
+  if (!partitions.tasksPartition && !partitions.conversationsPartition) {
+    errors.push("No _tasks or _conversations partition found for this broker");
+    debugLog(`[ObjectStore] Partitions: tasks=${partitions.tasksPartition ?? "none"}, conversations=${partitions.conversationsPartition ?? "none"}`);
+    return { available: false, objectStoreStatus: "no_keys", errors };
+  }
+
+  const keyVariations = [
+    `[${brokerName}]-${taskId}`,
+    `[${brokerName.replace(/[^a-zA-Z0-9_]/g, "_")}]-${taskId}`,
+  ];
+  debugLog(`[ObjectStore] Fetching from both partitions - key variations: ${keyVariations.join(", ")}`);
+
+  type ReasoningPart = { steps: Array<{ step: string; content: string[] }>; rawReasoning: string[] };
+  const toReasoningPart = (strings: string[]): ReasoningPart => {
+    const { steps, rawReasoning } = parseLLMReasoning(strings);
+    return {
+      steps,
+      rawReasoning: rawReasoning.length > 0 ? rawReasoning : strings,
+    };
+  };
+
+  let tasksResult: PartitionFetchResult = { value: null, keyUsed: null };
+  let conversationsResult: PartitionFetchResult = { value: null, keyUsed: null };
+
+  try {
+    if (partitions.tasksPartition) {
+      tasksResult = await fetchValueFromPartition(
+        orgId, envId, storeInfo!.storeId, partitions.tasksPartition, taskId, brokerName, accessToken, storeInfo!.region, "tasks"
+      );
+    }
+    if (partitions.conversationsPartition) {
+      conversationsResult = await fetchValueFromPartition(
+        orgId, envId, storeInfo!.storeId, partitions.conversationsPartition, taskId, brokerName, accessToken, storeInfo!.region, "conversations",
+        contextId ?? undefined
+      );
+    }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    if (errorMessage.includes("403")) {
+      errors.push(errorMessage);
       return { available: false, objectStoreStatus: "403_forbidden", errors };
     }
   }
-  
-  if (!partitionId) {
-    errors.push("Partition not found");
-    return { available: false, objectStoreStatus: "no_keys", errors };
+
+  const tasksValue = tasksResult.value;
+  const conversationsValue = conversationsResult.value;
+
+  const sourcesUsed: ("tasks" | "conversations")[] = [];
+  if (tasksValue) sourcesUsed.push("tasks");
+  if (conversationsValue) sourcesUsed.push("conversations");
+
+  const tasksStrings = tasksValue ? extractStringsFromBinary(tasksValue.binaryValue) : [];
+  const conversationsStrings = conversationsValue ? extractStringsFromBinary(conversationsValue.binaryValue) : [];
+
+  const partitionDebug = {
+    tasks: {
+      partition: partitions.tasksPartition ?? null,
+      keyFound: tasksValue !== null,
+      keyUsed: tasksResult.keyUsed ?? null,
+      valueEmpty: tasksValue !== null && tasksStrings.length === 0,
+      stringCount: tasksStrings.length,
+    },
+    conversations: {
+      partition: partitions.conversationsPartition ?? null,
+      keyFound: conversationsValue !== null,
+      keyUsed: conversationsResult.keyUsed ?? null,
+      valueEmpty: conversationsValue !== null && conversationsStrings.length === 0,
+      stringCount: conversationsStrings.length,
+    },
+  };
+  const tasksStatus = partitionDebug.tasks.keyFound
+    ? (partitionDebug.tasks.valueEmpty ? "key found, value empty" : `${partitionDebug.tasks.stringCount} strings`)
+    : "key not found";
+  const convStatus = partitionDebug.conversations.keyFound
+    ? (partitionDebug.conversations.valueEmpty ? "key found, value empty" : `${partitionDebug.conversations.stringCount} strings`)
+    : "key not found";
+  debugLog(`[ObjectStore] Partitions result: tasks ${partitionDebug.tasks.partition ?? "none"} → ${tasksStatus}; conversations ${partitionDebug.conversations.partition ?? "none"} → ${convStatus}`);
+
+  if (sourcesUsed.length === 0) {
+    errors.push(`Task value not found in Object Store. Tried keys: ${keyVariations.join(", ")} (and taskId for conversations) in _tasks and _conversations partitions.`);
+    return { available: false, objectStoreStatus: "no_keys", errors, debug: partitionDebug };
   }
 
-  // Construct task key: [configName]-{taskId}
-  // Try multiple variations since broker name might have special characters preserved
-  // The config name in the key should match what's in the partition
-  const normalizedBrokerName = brokerName.replace(/[^a-zA-Z0-9_]/g, "_");
-  const taskKeyVariations = [
-    `[${brokerName}]-${taskId}`, // Try original broker name first (preserves emojis/special chars)
-    `[${normalizedBrokerName}]-${taskId}`, // Try normalized version
-  ];
-  
-  debugLog(`[ObjectStore] Looking for task key - trying variations: ${taskKeyVariations.join(", ")}`);
+  const fromTasks = tasksStrings.length > 0 ? toReasoningPart(tasksStrings) : undefined;
+  const fromConversations =
+    conversationsStrings.length > 0 ? toReasoningPart(conversationsStrings) : undefined;
 
-  // Get task value - try each variation
-  let taskValue: ObjectStoreValue | null = null;
-  let foundTaskKey: string | null = null;
-  
-  for (const taskKey of taskKeyVariations) {
-    try {
-      debugLog(`[ObjectStore] Trying task key: ${taskKey}`);
-      taskValue = await getTaskValue(
-        orgId,
-        envId,
-        storeInfo.storeId,
-        partitionId,
-        taskKey,
-        accessToken,
-        storeInfo.region
-      );
-      if (taskValue) {
-        foundTaskKey = taskKey;
-        debugLog(`[ObjectStore] Found task value with key: ${taskKey}`);
-        break;
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      if (errorMessage.includes("403")) {
-        debugError(`[ObjectStore] 403 error detected during task value fetch - returning early`);
-        errors.push(errorMessage);
-        return { available: false, objectStoreStatus: "403_forbidden", errors };
-      }
-      // Continue to next variation
-      debugLog(`[ObjectStore] Task key ${taskKey} not found, trying next variation...`);
-    }
-  }
-  
-  // If still not found, try listing all keys and finding the one containing taskId
-  if (!taskValue) {
-    try {
-      debugLog(`[ObjectStore] Task key not found with variations, listing all keys to find taskId: ${taskId}`);
-      const baseUrl = `https://object-store-${storeInfo.region}.anypoint.mulesoft.com`;
-      const encodedStoreId = encodeURIComponent(storeInfo.storeId);
-      const encodedPartition = encodeURIComponent(partitionId);
-      const keysUrl = `${baseUrl}/api/v1/organizations/${orgId}/environments/${envId}/stores/${encodedStoreId}/partitions/${encodedPartition}/keys`;
-      
-      const keysRes = await loggedFetch(keysUrl, {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-      });
-      
-      if (keysRes.ok) {
-        const keysData = (await keysRes.json()) as ObjectStoreKeysResponse;
-        const matchingKey = keysData.values?.find(
-          (k: { keyId: string }) => k.keyId.includes(taskId)
-        );
-        
-        if (matchingKey) {
-          foundTaskKey = matchingKey.keyId;
-          debugLog(`[ObjectStore] Found matching key by listing: ${foundTaskKey}`);
-          taskValue = await getTaskValue(
-            orgId,
-            envId,
-            storeInfo.storeId,
-            partitionId,
-            foundTaskKey,
-            accessToken,
-            storeInfo.region
-          );
-        } else {
-          debugLog(`[ObjectStore] No key found containing taskId: ${taskId}`);
-        }
-      }
-    } catch (error) {
-      debugLog(`[ObjectStore] Error listing keys:`, error);
-    }
-  }
-
-  if (!taskValue) {
-    errors.push(`Task value not found in Object Store. Tried keys: ${taskKeyVariations.join(", ")}`);
-    return { available: false, objectStoreStatus: "no_keys", errors };
-  }
-
-  // Extract strings from binary data
-  const strings = extractStringsFromBinary(taskValue.binaryValue);
-  if (strings.length === 0) {
+  const allStrings = [...tasksStrings, ...conversationsStrings];
+  if (allStrings.length === 0) {
     errors.push("No readable strings found in Object Store data");
-    return { available: false, objectStoreStatus: "no_keys", errors };
+    return { available: false, objectStoreStatus: "no_keys", errors, debug: partitionDebug };
   }
 
-  // Parse LLM reasoning
-  const { steps, rawReasoning } = parseLLMReasoning(strings);
+  const { steps, rawReasoning } = parseLLMReasoning(allStrings);
+  const toolCallIds = [...new Set(extractToolCallIds(allStrings))];
+  const downstreamContextIds = mergeDownstreamContexts(
+    extractDownstreamContexts(allStrings)
+  );
 
-  // Extract additional data
-  const toolCallIds = extractToolCallIds(strings);
-  const downstreamContextIds = extractDownstreamContexts(strings);
-
-  // Only include llmReasoning if we actually found reasoning content
-  // Reasoning is considered valid if:
-  // 1. We have structured steps, OR
-  // 2. We have rawReasoning that contains actual reasoning patterns (not just random strings)
-  const hasStructuredSteps = steps.length > 0;
-  const hasValidRawReasoning = rawReasoning.length > 0 && 
-    rawReasoning.some((str: string) => 
-      /(STEP\s+\d+|ISTEP\s+\d+)/i.test(str) ||
-      (str.length > 100 && (
-        str.includes("Analysis") ||
-        str.includes("Decision") ||
-        str.includes("Per rules") ||
-        str.includes("NoDispute") ||
-        str.includes("DisputeFound") ||
-        str.includes("reasoning") ||
-        str.includes("determined") ||
-        str.includes("decided")
-      ))
-    );
+  const hasAnyReasoning = steps.length > 0 || rawReasoning.length > 0;
 
   return {
     available: true,
     objectStoreStatus: "ok",
-    llmReasoning: (hasStructuredSteps || hasValidRawReasoning) ? {
+    sourcesUsed: sourcesUsed.length > 0 ? sourcesUsed : undefined,
+    fromTasks: fromTasks ?? undefined,
+    fromConversations: fromConversations ?? undefined,
+    llmReasoning: hasAnyReasoning ? {
       steps: steps.length > 0 ? steps : undefined,
-      rawReasoning: hasValidRawReasoning ? rawReasoning : undefined,
+      rawReasoning: rawReasoning.length > 0 ? rawReasoning : undefined,
     } : undefined,
     toolCallIds: toolCallIds.length > 0 ? toolCallIds : undefined,
     downstreamContextIds: downstreamContextIds.length > 0 ? downstreamContextIds : undefined,
     errors: errors.length > 0 ? errors : undefined,
+    debug: partitionDebug,
   };
+}
+
+function mergeDownstreamContexts(
+  items: Array<{ agent: string; contextId: string; taskId: string }>
+): Array<{ agent: string; contextId: string; taskId: string }> {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = `${item.agent}:${item.contextId}:${item.taskId}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }

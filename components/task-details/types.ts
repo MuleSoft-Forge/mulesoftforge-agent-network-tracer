@@ -60,9 +60,15 @@ export interface JobCard {
   downstreamAgent?: string; // Agent name that returned this taskId
   // Final response body (extracted from FINAL_RESPONSE log entry)
   finalResponseBody?: unknown;
-  // Object Store data (broker brain state)
+  // Object Store data (broker brain state; from _tasks and/or _conversations partitions)
   objectStore?: {
     available: boolean;
+    /** Which partitions contributed: "tasks", "conversations" */
+    sourcesUsed?: ("tasks" | "conversations")[];
+    /** Parsed content from _tasks partition only (split UI) */
+    fromTasks?: { steps: Array<{ step: string; content: string[] }>; rawReasoning: string[] };
+    /** Parsed content from _conversations partition only (split UI) */
+    fromConversations?: { steps: Array<{ step: string; content: string[] }>; rawReasoning: string[] };
     llmReasoning?: {
       steps?: Array<{ step: string; content: string[] }>;
       rawReasoning?: string[];
@@ -70,6 +76,11 @@ export interface JobCard {
     toolCallIds?: string[];
     downstreamContextIds?: Array<{ agent: string; contextId: string; taskId: string }>;
     errors?: string[];
+    /** Debug: partition lookup result (key found, value empty, string count) */
+    debug?: {
+      tasks: { partition: string | null; keyFound: boolean; keyUsed: string | null; valueEmpty: boolean; stringCount: number };
+      conversations: { partition: string | null; keyFound: boolean; keyUsed: string | null; valueEmpty: boolean; stringCount: number };
+    };
   };
   /** Summary of backend API outcomes for this task (for support / "app not working" diagnosis) */
   apiStatus?: ApiStatus;
@@ -85,6 +96,8 @@ export interface ApiStatus {
   deploymentApi: "ok" | "403_forbidden" | "not_used" | "error";
   /** Trace spans (Observability spans:search): ok, 403, skipped (no traceId/envId), or error */
   traceSpans: "ok" | "403" | "skipped" | "error";
+  /** From deployment detail we already fetch: whether Monitoring log categories are set (no extra call). */
+  monitoringSuggestions?: { brokerLogger: boolean; insecureLogging: boolean };
 }
 
 export type ViewMode = "tree" | "list";

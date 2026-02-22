@@ -7,8 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "reset": "bash scripts/reset.sh",
-    "start:clean": "bash scripts/start-clean.sh"
+    "deploy": "vercel --prod --yes",
+    "reset": "bash reset.sh",
+    "start:clean": "bash start-clean.sh"
   },
   "dependencies": {
     "iron-session": "^8.0.4",

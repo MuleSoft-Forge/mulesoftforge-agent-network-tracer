@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession, isAuthenticated } from "@/lib/session";
 import { loggedFetch, debugError, debugLog } from "@/lib/api-logger";
 import { TaskCallstackRequestSchema } from "@/lib/schemas";
-import { fetchObjectStoreData, getObjectStoreRegionFromDeployment } from "@/lib/object-store/client";
+import { fetchObjectStoreData, getObjectStoreRegionFromDeployment, getMonitoringLogCategoriesFromDeployment } from "@/lib/object-store/client";
 import { getOAuthConfig, AMC_COMMON_SCOPES_TO_TRY } from "@/lib/auth/config";
 import type { ApiStatus } from "@/components/task-details/types";
 
@@ -31,6 +31,114 @@ To test different scopes:
 
 Common scopes to try: ${AMC_COMMON_SCOPES_TO_TRY}
 Current scopes being requested: ${currentScopes}`;
+}
+
+/** Deployment type from Runtime Manager: HY = Hybrid (on-prem/Runtime Fabric), CH = CloudHub, etc. */
+type DeploymentTypeHint = "HY" | "CH" | string | undefined;
+
+/**
+ * Fetch deployment detail via Hybrid (Runtime Manager) API. Used for HY deployments where AMC v2 returns 400 (e.g. ProviderType.RR).
+ * Returns monitoring categories from application config if present; no region (Hybrid is not CloudHub).
+ */
+async function fetchDeploymentDetailViaHybrid(
+  orgId: string,
+  envId: string,
+  applicationId: string,
+  accessToken: string,
+  baseUrl: string
+): Promise<{
+  region?: string;
+  monitoringSuggestions: ApiStatus["monitoringSuggestions"];
+  deploymentApiStatus: "ok" | "403_forbidden";
+}> {
+  const url = `${baseUrl}/hybrid/api/v1/applications`;
+  const res = await loggedFetch(url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "X-ANYPNT-ORG-ID": orgId,
+      "X-ANYPNT-ENV-ID": envId,
+    },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    if (res.status === 403) {
+      throw new Error(
+        `Hybrid API: deployment detail required but forbidden (403). ${text.slice(0, 200)}`
+      );
+    }
+    throw new Error(
+      `Hybrid API: deployment detail failed: ${res.status} ${res.statusText}. ${text.slice(0, 200)}`
+    );
+  }
+  const data = (await res.json()) as { data?: Array<Record<string, unknown>> } | Record<string, unknown>[];
+  const list = Array.isArray(data) ? data : (data?.data ?? []);
+  const app = list.find(
+    (item: Record<string, unknown>) =>
+      String(item.id ?? item.applicationId ?? "").toLowerCase() === applicationId.toLowerCase() ||
+      (item as { applicationId?: string }).applicationId === applicationId
+  ) as Record<string, unknown> | undefined;
+  if (!app) {
+    debugLog("[Hybrid] No application found for applicationId:", applicationId, "list length:", list.length);
+    return {
+      monitoringSuggestions: { brokerLogger: false, insecureLogging: false },
+      deploymentApiStatus: "ok",
+    };
+  }
+  const monitoringSuggestions = getMonitoringLogCategoriesFromDeployment(app);
+  return { region: undefined, monitoringSuggestions, deploymentApiStatus: "ok" };
+}
+
+/**
+ * Fetch deployment detail. Branches by deployment type: Hybrid (HY) uses Hybrid API; CloudHub/AMC uses AMC v2.
+ * On AMC v2 400 with ProviderType.RR (unsupported), falls back to Hybrid API.
+ * Returns object store region hint (AMC only) and monitoring log categories.
+ */
+async function fetchDeploymentDetail(
+  orgId: string,
+  envId: string,
+  deploymentId: string,
+  accessToken: string,
+  baseUrl: string,
+  options?: { deploymentType?: DeploymentTypeHint }
+): Promise<{
+  region?: string;
+  monitoringSuggestions: ApiStatus["monitoringSuggestions"];
+  deploymentApiStatus: "ok" | "403_forbidden";
+}> {
+  const deploymentType = options?.deploymentType;
+
+  if (deploymentType === "HY") {
+    debugLog("[fetchDeploymentDetail] HY detected, using Hybrid API for applicationId:", deploymentId);
+    return fetchDeploymentDetailViaHybrid(orgId, envId, deploymentId, accessToken, baseUrl);
+  }
+
+  const url = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${envId}/deployments/${deploymentId}`;
+  const res = await loggedFetch(url, { method: "GET", headers: { Authorization: `Bearer ${accessToken}` } });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    const is400RR =
+      res.status === 400 &&
+      (text.includes("ProviderType.RR") || text.includes("No enum constant"));
+    if (is400RR) {
+      debugLog("[fetchDeploymentDetail] AMC v2 400 (RR/Hybrid), falling back to Hybrid API");
+      return fetchDeploymentDetailViaHybrid(orgId, envId, deploymentId, accessToken, baseUrl);
+    }
+    if (res.status === 403) {
+      throw new Error(
+        `Deployment detail required but forbidden (403). Ensure the Connected App has Read Applications scope. ${text.slice(0, 200)}`
+      );
+    }
+    throw new Error(
+      `Deployment detail required but failed: ${res.status} ${res.statusText}. ${text.slice(0, 200)}`
+    );
+  }
+  const deployment = (await res.json()) as Record<string, unknown>;
+  const region = getObjectStoreRegionFromDeployment(
+    deployment as Parameters<typeof getObjectStoreRegionFromDeployment>[0]
+  ) ?? undefined;
+  const monitoringSuggestions = getMonitoringLogCategoriesFromDeployment(deployment);
+  return { region, monitoringSuggestions, deploymentApiStatus: "ok" };
 }
 
 async function msearch(
@@ -403,7 +511,7 @@ async function fetchObjectStoreInNoEntitlementMode(
   orgId: string,
   envId: string,
   taskId: string,
-  jobCard: { broker?: string; apiInstanceId?: string; appId?: string },
+  jobCard: { broker?: string; apiInstanceId?: string; appId?: string; contextId?: string },
   apiInstanceIdFromRequest: string | undefined,
   accessToken: string,
   baseUrl: string
@@ -411,18 +519,24 @@ async function fetchObjectStoreInNoEntitlementMode(
   objectStore: {
     available: boolean;
     objectStoreStatus?: "ok" | "403_forbidden" | "no_store" | "no_keys";
+    sourcesUsed?: ("tasks" | "conversations")[];
+    fromTasks?: unknown;
+    fromConversations?: unknown;
     llmReasoning?: unknown;
     toolCallIds?: string[];
     downstreamContextIds?: unknown;
     errors?: string[];
+    debug?: unknown;
   };
   objectStoreApiStatus: ApiStatus["objectStore"];
+  monitoringSuggestions?: ApiStatus["monitoringSuggestions"];
 }> {
   const brokerName = (jobCard.broker ?? "").trim();
   const apiInstanceId = (jobCard.apiInstanceId || apiInstanceIdFromRequest || "").trim();
   const appId = (jobCard.appId ?? "").trim();
 
   let deploymentId: string | null = null;
+  let deploymentType: DeploymentTypeHint = undefined;
   if (appId) {
     const appIdMatch = appId.match(/^APP_([a-f0-9-]+)__/);
     if (appIdMatch) deploymentId = appIdMatch[1];
@@ -436,28 +550,45 @@ async function fetchObjectStoreInNoEntitlementMode(
       );
       if (rmRes.ok) {
         const apiInfo = (await rmRes.json()) as {
-          deployment?: { applicationId?: string; deploymentId?: string | null };
+          deploymentId?: string | number;
+          deployment?: { applicationId?: string; deploymentId?: string | null; type?: string };
+          endpoint?: { deploymentType?: string };
           appId?: string;
         };
         const dep = apiInfo.deployment || {};
-        deploymentId =
-          dep.deploymentId ?? dep.applicationId ?? apiInfo.deployment?.applicationId ?? null;
+        deploymentType = dep.type ?? apiInfo.endpoint?.deploymentType;
+        const rawId =
+          apiInfo.deploymentId ??
+          dep.deploymentId ??
+          dep.applicationId ??
+          apiInfo.deployment?.applicationId ??
+          null;
+        if (rawId != null) deploymentId = String(rawId).trim() || null;
         if (!deploymentId && apiInfo.appId) {
           const m = String(apiInfo.appId).match(/^APP_([a-f0-9-]+)__/);
           if (m) deploymentId = m[1];
         }
+      } else {
+        deploymentType = undefined;
       }
     } catch (e) {
       debugLog("[NO-ENTITLEMENT] Object Store: error resolving deploymentId from Runtime Manager", e);
+      deploymentType = undefined;
     }
+  } else {
+    deploymentType = undefined;
   }
 
   if (!envId || !deploymentId) {
-    return {
-      objectStore: { available: false },
-      objectStoreApiStatus: "skipped",
-    };
+    throw new Error(
+      "Deployment is required but could not be resolved. Ensure the API is deployed and visible in Runtime Manager (or pass apiInstanceId)."
+    );
   }
+
+  const deploymentDetail = await fetchDeploymentDetail(orgId, envId, deploymentId, accessToken, baseUrl, {
+    deploymentType,
+  });
+  const objectStoreRegion = deploymentDetail.region;
 
   try {
     debugLog("[NO-ENTITLEMENT] Attempting Object Store fetch - orgId, envId, taskId, brokerName, deploymentId", orgId, envId, taskId, brokerName, deploymentId);
@@ -469,7 +600,8 @@ async function fetchObjectStoreInNoEntitlementMode(
       deploymentId,
       accessToken,
       undefined,
-      undefined
+      objectStoreRegion,
+      jobCard.contextId
     );
     const status: ApiStatus["objectStore"] =
       objectStoreData.objectStoreStatus ??
@@ -478,12 +610,17 @@ async function fetchObjectStoreInNoEntitlementMode(
       objectStore: {
         available: objectStoreData.available,
         objectStoreStatus: objectStoreData.objectStoreStatus,
+        sourcesUsed: objectStoreData.sourcesUsed,
+        fromTasks: objectStoreData.fromTasks,
+        fromConversations: objectStoreData.fromConversations,
         llmReasoning: objectStoreData.llmReasoning,
         toolCallIds: objectStoreData.toolCallIds,
         downstreamContextIds: objectStoreData.downstreamContextIds,
         errors: objectStoreData.errors,
+        debug: objectStoreData.debug,
       },
       objectStoreApiStatus: status,
+      monitoringSuggestions: deploymentDetail.monitoringSuggestions,
     };
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Unknown error";
@@ -492,6 +629,7 @@ async function fetchObjectStoreInNoEntitlementMode(
     return {
       objectStore: { available: false, errors: [msg] },
       objectStoreApiStatus,
+      monitoringSuggestions: deploymentDetail.monitoringSuggestions,
     };
   }
 }
@@ -783,32 +921,48 @@ export async function GET(request: NextRequest) {
       if (runtimeLogsResult) {
         debugLog("[NO-ENTITLEMENT] Task details from runtime logs");
         const jobCardFromRuntime = runtimeLogsResult.jobCard as Record<string, unknown>;
-        const { objectStore, objectStoreApiStatus } = await fetchObjectStoreInNoEntitlementMode(
-          validatedOrgId,
-          validatedEnvId ?? "",
-          validatedTaskId,
-          {
-            broker: jobCardFromRuntime.broker as string | undefined,
-            apiInstanceId: jobCardFromRuntime.apiInstanceId as string | undefined,
-            appId: jobCardFromRuntime.appId as string | undefined,
-          },
-          validatedApiInstanceId ?? undefined,
-          session.accessToken,
-          baseUrl
-        );
-        const noEntitlementApiStatus: ApiStatus = {
-          logSearch: "403_entitlement",
-          objectStore: objectStoreApiStatus,
-          deploymentApi: "ok",
-          traceSpans: "skipped",
-        };
-        return NextResponse.json({
-          jobCard: { ...jobCardFromRuntime, objectStore, apiStatus: noEntitlementApiStatus },
-          entries: runtimeLogsResult.entries,
-          traceSpans: [],
-          rawQueries: { phase1: phase1Query, phase2: null, traceId: null },
-          mode: "no-entitlement",
-        });
+        try {
+          const { objectStore, objectStoreApiStatus, monitoringSuggestions } =
+            await fetchObjectStoreInNoEntitlementMode(
+              validatedOrgId,
+              validatedEnvId ?? "",
+              validatedTaskId,
+              {
+                broker: jobCardFromRuntime.broker as string | undefined,
+                apiInstanceId: jobCardFromRuntime.apiInstanceId as string | undefined,
+                appId: jobCardFromRuntime.appId as string | undefined,
+                contextId: jobCardFromRuntime.contextId as string | undefined,
+              },
+              validatedApiInstanceId ?? undefined,
+              session.accessToken,
+              baseUrl
+            );
+          const noEntitlementApiStatus: ApiStatus = {
+            logSearch: "403_entitlement",
+            objectStore: objectStoreApiStatus,
+            deploymentApi: "ok",
+            traceSpans: "skipped",
+            monitoringSuggestions,
+          };
+          return NextResponse.json({
+            jobCard: { ...jobCardFromRuntime, objectStore, apiStatus: noEntitlementApiStatus },
+            entries: runtimeLogsResult.entries,
+            traceSpans: [],
+            rawQueries: { phase1: phase1Query, phase2: null, traceId: null },
+            mode: "no-entitlement",
+          });
+        } catch (deploymentError) {
+          const msg = deploymentError instanceof Error ? deploymentError.message : "Deployment required but failed";
+          debugError("[NO-ENTITLEMENT] Deployment required but failed:", msg);
+          return NextResponse.json(
+            {
+              error: "Deployment is required",
+              message: msg,
+              code: "DEPLOYMENT_REQUIRED",
+            },
+            { status: 503 }
+          );
+        }
       }
 
       return NextResponse.json(
@@ -855,42 +1009,54 @@ export async function GET(request: NextRequest) {
       if (runtimeLogsResult) {
         debugLog("[NO-ENTITLEMENT] Task details from runtime logs");
         const jobCardFromRuntime = runtimeLogsResult.jobCard as Record<string, unknown>;
-        const { objectStore, objectStoreApiStatus } = await fetchObjectStoreInNoEntitlementMode(
-          validatedOrgId,
-          validatedEnvId ?? "",
-          validatedTaskId,
-          {
-            broker: jobCardFromRuntime.broker as string | undefined,
-            apiInstanceId: jobCardFromRuntime.apiInstanceId as string | undefined,
-            appId: jobCardFromRuntime.appId as string | undefined,
-          },
-          validatedApiInstanceId ?? undefined,
-          session.accessToken,
-          baseUrl
-        );
-        const noEntitlementApiStatus: ApiStatus = {
-          logSearch: "403_entitlement",
-          objectStore: objectStoreApiStatus,
-          deploymentApi: "ok",
-          traceSpans: "skipped",
-        };
-        return NextResponse.json({
-          jobCard: { ...jobCardFromRuntime, objectStore, apiStatus: noEntitlementApiStatus },
-          entries: runtimeLogsResult.entries,
-          traceSpans: [],
-          rawQueries: { phase1: phase1Query, phase2: phase2Query, traceId },
-          mode: "no-entitlement",
-        });
+        try {
+          const { objectStore, objectStoreApiStatus, monitoringSuggestions } =
+            await fetchObjectStoreInNoEntitlementMode(
+              validatedOrgId,
+              validatedEnvId ?? "",
+              validatedTaskId,
+              {
+                broker: jobCardFromRuntime.broker as string | undefined,
+                apiInstanceId: jobCardFromRuntime.apiInstanceId as string | undefined,
+                appId: jobCardFromRuntime.appId as string | undefined,
+                contextId: jobCardFromRuntime.contextId as string | undefined,
+              },
+              validatedApiInstanceId ?? undefined,
+              session.accessToken,
+              baseUrl
+            );
+          const noEntitlementApiStatus: ApiStatus = {
+            logSearch: "403_entitlement",
+            objectStore: objectStoreApiStatus,
+            deploymentApi: "ok",
+            traceSpans: "skipped",
+            monitoringSuggestions,
+          };
+          return NextResponse.json({
+            jobCard: { ...jobCardFromRuntime, objectStore, apiStatus: noEntitlementApiStatus },
+            entries: runtimeLogsResult.entries,
+            traceSpans: [],
+            rawQueries: { phase1: phase1Query, phase2: phase2Query, traceId },
+            mode: "no-entitlement",
+          });
+        } catch (deploymentError) {
+          const msg = deploymentError instanceof Error ? deploymentError.message : "Deployment required but failed";
+          debugError("[NO-ENTITLEMENT] Deployment required but failed:", msg);
+          return NextResponse.json(
+            { error: "Deployment is required", message: msg, code: "DEPLOYMENT_REQUIRED" },
+            { status: 503 }
+          );
+        }
       }
 
-        return NextResponse.json(
-          {
-            error: "Monitoring Center Premium entitlement required",
-            message: "Log Search - Advanced package or a Titanium subscription to Anypoint Platform Required - Elasticsearch log search APIs - Enhanced raw storage (up to 128TB based on configuration) - Advanced logs and traces - LLM reasoning logs (for Agent Broker monitoring)",
-            code: "MONITORING_CENTER_PREMIUM_REQUIRED",
-          },
-          { status: 403 }
-        );
+      return NextResponse.json(
+        {
+          error: "Monitoring Center Premium entitlement required",
+          message: "Log Search - Advanced package or a Titanium subscription to Anypoint Platform Required - Elasticsearch log search APIs - Enhanced raw storage (up to 128TB based on configuration) - Advanced logs and traces - LLM reasoning logs (for Agent Broker monitoring)",
+          code: "MONITORING_CENTER_PREMIUM_REQUIRED",
+        },
+        { status: 403 }
+      );
       }
 
       allHits = phase2.hits;
@@ -1214,6 +1380,9 @@ export async function GET(request: NextRequest) {
     let objectStoreData: {
       available: boolean;
       objectStoreStatus?: "ok" | "403_forbidden" | "no_store" | "no_keys";
+      sourcesUsed?: ("tasks" | "conversations")[];
+      fromTasks?: { steps: Array<{ step: string; content: string[] }>; rawReasoning: string[] };
+      fromConversations?: { steps: Array<{ step: string; content: string[] }>; rawReasoning: string[] };
       llmReasoning?: {
         steps?: Array<{ step: string; content: string[] }>;
         rawReasoning?: string[];
@@ -1223,29 +1392,30 @@ export async function GET(request: NextRequest) {
       errors?: string[];
     } = { available: false };
 
-    // Prepare Object Store fetch promise
-    const objectStorePromise = (async () => {
+    // Prepare Object Store fetch promise (returns result + optional monitoring from same deployment GET, no extra call)
+    const objectStorePromise = (async (): Promise<{
+      result: typeof objectStoreData;
+      monitoringSuggestions?: ApiStatus["monitoringSuggestions"];
+    }> => {
       if (validatedEnvId && deploymentId && session.accessToken) {
         const accessToken = session.accessToken;
+        let objectStoreRegion: string | undefined;
+        let monitoringSuggestions: ApiStatus["monitoringSuggestions"];
         try {
-          let objectStoreRegion: string | undefined;
-          try {
-            const deploymentDetailRes = await loggedFetch(
-              `${baseUrl}/amc/application-manager/api/v2/organizations/${validatedOrgId}/environments/${validatedEnvId}/deployments/${deploymentId}`,
-              { method: "GET", headers: { Authorization: `Bearer ${accessToken}` } }
-            );
-            if (deploymentDetailRes.ok) {
-              deploymentApiStatus = "ok";
-              const deploymentDetail = (await deploymentDetailRes.json()) as Parameters<typeof getObjectStoreRegionFromDeployment>[0];
-              objectStoreRegion = getObjectStoreRegionFromDeployment(deploymentDetail) ?? undefined;
-              if (objectStoreRegion) debugLog(`[ObjectStore] Resolved region from deployment URLs: ${objectStoreRegion}`);
-            } else if (deploymentDetailRes.status === 403) {
-              deploymentApiStatus = "403_forbidden";
-            }
-          } catch (e) {
-            debugLog(`[ObjectStore] Could not fetch deployment detail for region hint:`, e);
-          }
-          debugLog(`[ObjectStore] Attempting to fetch Object Store data - orgId: ${validatedOrgId}, envId: ${validatedEnvId}, taskId: ${validatedTaskId}, brokerName: ${brokerName}, deploymentId: ${deploymentId}, appId: ${appId}, deploymentType: ${deploymentType || "unknown"}, objectStoreRegion: ${objectStoreRegion ?? "(none)"}`);
+          const deploymentDetail = await fetchDeploymentDetail(
+            validatedOrgId,
+            validatedEnvId,
+            deploymentId,
+            accessToken,
+            baseUrl,
+            { deploymentType }
+          );
+          objectStoreRegion = deploymentDetail.region;
+          monitoringSuggestions = deploymentDetail.monitoringSuggestions;
+          if (deploymentDetail.deploymentApiStatus) deploymentApiStatus = deploymentDetail.deploymentApiStatus;
+          if (objectStoreRegion) debugLog(`[ObjectStore] Resolved region from deployment URLs: ${objectStoreRegion}`);
+          const contextIdForStore = (entries.find((e: typeof entries[0]) => e.fields?.contextId) as typeof entries[0] | undefined)?.fields?.contextId as string | undefined;
+          debugLog(`[ObjectStore] Attempting to fetch Object Store data - orgId: ${validatedOrgId}, envId: ${validatedEnvId}, taskId: ${validatedTaskId}, brokerName: ${brokerName}, deploymentId: ${deploymentId}, appId: ${appId}, deploymentType: ${deploymentType || "unknown"}, objectStoreRegion: ${objectStoreRegion ?? "(none)"}, contextId: ${contextIdForStore ?? "(none)"}`);
           const result = await fetchObjectStoreData(
             validatedOrgId,
             validatedEnvId,
@@ -1254,7 +1424,8 @@ export async function GET(request: NextRequest) {
             deploymentId,
             accessToken,
             deploymentType,
-            objectStoreRegion
+            objectStoreRegion,
+            contextIdForStore
           );
           if (result.available) {
             debugLog("[ObjectStore] Successfully fetched Object Store data");
@@ -1266,9 +1437,16 @@ export async function GET(request: NextRequest) {
               debugLog(`[ObjectStore] Object Store data not available - errors: ${JSON.stringify(result.errors)}`);
             }
           }
-          return result;
+          return { result, monitoringSuggestions };
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : "Unknown error";
+          // Deployment fetch is required; if it failed, fail the whole request (no partial success).
+          if (
+            errorMessage.includes("Deployment detail required") ||
+            errorMessage.includes("Deployment is required")
+          ) {
+            throw error;
+          }
           const is403 = errorMessage.includes("403");
           if (is403) {
             debugError(`[ObjectStore] 403 Forbidden error during fetch: ${errorMessage}`);
@@ -1276,9 +1454,11 @@ export async function GET(request: NextRequest) {
             debugError(`[ObjectStore] Error fetching Object Store data: ${errorMessage}`);
           }
           return {
-            available: false,
-            objectStoreStatus: (is403 ? "403_forbidden" : undefined) as "403_forbidden" | undefined,
-            errors: [errorMessage],
+            result: {
+              available: false,
+              objectStoreStatus: (is403 ? "403_forbidden" : undefined) as "403_forbidden" | undefined,
+              errors: [errorMessage],
+            },
           };
         }
       } else {
@@ -1299,7 +1479,7 @@ export async function GET(request: NextRequest) {
             result.errors.push(`Cannot fetch Object Store: ${skipReason}. appId="${appId}", apiInstanceId="${apiInstanceId}"`);
           }
         }
-        return result;
+        return { result };
       }
     })();
 
@@ -1320,8 +1500,8 @@ export async function GET(request: NextRequest) {
     })();
 
     // Execute both fetches in parallel
-    const [objectStoreResult, traceSpansResult] = await Promise.all([objectStorePromise, traceSpansPromise]);
-    objectStoreData = objectStoreResult;
+    const [objectStorePayload, traceSpansResult] = await Promise.all([objectStorePromise, traceSpansPromise]);
+    objectStoreData = objectStorePayload.result;
     const traceSpans = traceSpansResult.spans;
     const traceSpansStatus = traceSpansResult.status;
 
@@ -1347,11 +1527,18 @@ export async function GET(request: NextRequest) {
               : objectStoreData.errors?.length
                 ? "error"
                 : "skipped");
+    // Use only deployment/config-based suggestions for "Set" so we don't show "Set" when
+    // the app merely emits logs with those logger/class names (e.g. INSECURE-LOGGING, broker Loop).
+    const monitoringSuggestions: ApiStatus["monitoringSuggestions"] = {
+      brokerLogger: objectStorePayload.monitoringSuggestions?.brokerLogger === true,
+      insecureLogging: objectStorePayload.monitoringSuggestions?.insecureLogging === true,
+    };
     const apiStatus: ApiStatus = {
       logSearch: "ok",
       objectStore: objectStoreStatus,
       deploymentApi: deploymentApiStatus,
       traceSpans: traceSpansStatus,
+      monitoringSuggestions,
     };
 
     const jobCard = {
@@ -1386,9 +1573,16 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     debugError("Task callstack API error:", error);
+    const message = error instanceof Error ? error.message : "Failed to fetch task call stack";
+    const isDeploymentRequired =
+      message.includes("Deployment detail required") || message.includes("Deployment is required");
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to fetch task call stack" },
-      { status: 500 }
+      {
+        error: isDeploymentRequired ? "Deployment is required" : "Failed to fetch task call stack",
+        message,
+        ...(isDeploymentRequired ? { code: "DEPLOYMENT_REQUIRED" as const } : {}),
+      },
+      { status: isDeploymentRequired ? 503 : 500 }
     );
   }
 }
