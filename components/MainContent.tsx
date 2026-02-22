@@ -16,10 +16,9 @@ import type { BrokerInEnvironment } from "@/lib/visualizer/brokers-in-environmen
 import type { CanonicalGraph, CanonicalNode } from "@/lib/agent-network-types";
 import type { FabricGraphResponse } from "@/lib/adapters/visualizer-to-canonical";
 import type { EdgeStyle, NodeFilters } from "@/components/CanvasOptionsMenu";
+import { DEFAULT_ACTIVITY_PERIOD_MINUTES } from "@/lib/constants";
 
 const DEFAULT_CANVAS_HEIGHT = 60; // 60% of height by default
-
-const DEFAULT_ACTIVITY_PERIOD_MINUTES = 1440; // 24h
 
 export default function MainContent() {
   const [orgId, setOrgId] = useState<string>("");

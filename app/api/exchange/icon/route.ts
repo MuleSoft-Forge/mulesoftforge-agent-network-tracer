@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSession, isAuthenticated } from "@/lib/session";
 import { loggedFetch, debugError } from "@/lib/api-logger";
 import { ExchangeIconRequestSchema } from "@/lib/schemas";
+import { requireAuth } from "@/lib/api/auth-middleware";
+import { validationError } from "@/lib/api/error-responses";
 
 export const dynamic = "force-dynamic";
-
-const DEFAULT_BASE_URL = "https://anypoint.mulesoft.com";
 
 /**
  * Proxies Exchange icon requests with the user's session so node icons
@@ -13,33 +12,20 @@ const DEFAULT_BASE_URL = "https://anypoint.mulesoft.com";
  */
 export async function GET(request: NextRequest) {
   // Authentication check
-  if (!(await isAuthenticated())) {
-    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  }
+  const authResult = await requireAuth(request);
+  if (authResult instanceof NextResponse) return authResult;
   
-  const session = await getSession();
-  
-  if (session.invalidatedAt || !session.accessToken) {
-    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  }
+  const { baseUrl, accessToken } = authResult;
 
   // Validate query parameters
   const path = request.nextUrl.searchParams.get("path");
   const parseResult = ExchangeIconRequestSchema.safeParse({ path });
   
   if (!parseResult.success) {
-    return NextResponse.json(
-      {
-        error: "Invalid request",
-        details: parseResult.error.format(),
-      },
-      { status: 400 }
-    );
+    return validationError(parseResult.error);
   }
   
   const { path: validatedPath } = parseResult.data;
-
-  const baseUrl = session.baseUrl ?? DEFAULT_BASE_URL;
   const pathNormalized = validatedPath.startsWith("/") ? validatedPath : `/${validatedPath}`;
   const url = `${baseUrl.replace(/\/$/, "")}${pathNormalized}`;
 
@@ -47,7 +33,7 @@ export async function GET(request: NextRequest) {
     const res = await loggedFetch(url, {
       method: "GET",
       headers: {
-        Authorization: `Bearer ${session.accessToken}`,
+        Authorization: `Bearer ${accessToken}`,
       },
     });
 

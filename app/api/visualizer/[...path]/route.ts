@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSession, isAuthenticated } from "@/lib/session";
 import { loggedFetch, debugError } from "@/lib/api-logger";
+import { requireAuth } from "@/lib/api/auth-middleware";
 
 export const dynamic = "force-dynamic";
-
-const DEFAULT_BASE_URL = "https://anypoint.mulesoft.com";
 
 export async function GET(
   request: NextRequest,
@@ -28,23 +26,16 @@ async function proxyRequest(
   method: "GET" | "POST"
 ) {
   // Authentication check
-  if (!(await isAuthenticated())) {
-    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  }
+  const authResult = await requireAuth(request);
+  if (authResult instanceof NextResponse) return authResult;
   
-  const session = await getSession();
-  
-  if (session.invalidatedAt || !session.accessToken) {
-    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  }
-
-  const baseUrl = session.baseUrl ?? DEFAULT_BASE_URL;
+  const { baseUrl, accessToken } = authResult;
   const path = params.path.join("/");
   const url = `${baseUrl}/visualizer/api/${path}`;
 
   try {
     const headers: HeadersInit = {
-      Authorization: `Bearer ${session.accessToken}`,
+      Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
     };
 

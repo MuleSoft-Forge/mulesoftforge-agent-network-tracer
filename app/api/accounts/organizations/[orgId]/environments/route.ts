@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession, isAuthenticated } from "@/lib/session";
 import { loggedFetch, debugError } from "@/lib/api-logger";
-
-const DEFAULT_BASE_URL = "https://anypoint.mulesoft.com";
+import { DEFAULT_BASE_URL } from "@/lib/constants";
 
 export async function GET(
   _request: Request,

@@ -1,14 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSession, isAuthenticated } from "@/lib/session";
 import type { FabricGraphResponse, FabricNode } from "@/lib/adapters/visualizer-to-canonical";
 import type { BrokerInEnvironment } from "@/lib/visualizer/brokers-in-environment-types";
 import { loggedFetch, debugLog, debugError } from "@/lib/api-logger";
 import { BrokersInEnvironmentRequestSchema } from "@/lib/schemas";
+import { requireAuth } from "@/lib/api/auth-middleware";
+import { validationError } from "@/lib/api/error-responses";
+import { DEFAULT_BASE_URL, DEFAULT_ACTIVITY_PERIOD_MINUTES } from "@/lib/constants";
 
 export const dynamic = "force-dynamic";
-
-const DEFAULT_BASE_URL = "https://anypoint.mulesoft.com";
-const DEFAULT_ACTIVITY_PERIOD_MINUTES = 1440; // 24h
 
 /**
  * Check if an API instance exists in the given environment (Runtime Manager API).
@@ -39,15 +38,12 @@ interface AnypointEnv {
 
 export async function GET(request: NextRequest) {
   // Authentication check
-  if (!(await isAuthenticated())) {
+  const authResult = await requireAuth(request);
+  if (authResult instanceof NextResponse) {
     return NextResponse.json({ error: "Not signed in", brokers: [] }, { status: 401 });
   }
   
-  const session = await getSession();
-  
-  if (session.invalidatedAt || !session.accessToken) {
-    return NextResponse.json({ error: "Not signed in", brokers: [] }, { status: 401 });
-  }
+  const { baseUrl, accessToken } = authResult;
 
   // Validate query parameters with Zod
   const orgId = request.nextUrl.searchParams.get("orgId");
@@ -60,10 +56,11 @@ export async function GET(request: NextRequest) {
   });
   
   if (!parseResult.success) {
+    const errorResponse = validationError(parseResult.error);
+    const errorBody = await errorResponse.json();
     return NextResponse.json(
       {
-        error: "Invalid request",
-        details: parseResult.error.format(),
+        ...errorBody,
         brokers: [],
       },
       { status: 400 }
@@ -78,8 +75,7 @@ export async function GET(request: NextRequest) {
     return Math.min(Math.max(n, 1), 10080); // clamp 1–7 days
   })();
 
-  const baseUrl = session.baseUrl ?? DEFAULT_BASE_URL;
-  const authHeader = `Bearer ${session.accessToken}`;
+  const authHeader = `Bearer ${accessToken}`;
 
   try {
     // Resolve isProduction for the selected environment (fabric only has prod vs non-prod).

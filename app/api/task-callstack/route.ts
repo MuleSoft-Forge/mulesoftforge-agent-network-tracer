@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSession, isAuthenticated } from "@/lib/session";
 import { loggedFetch, debugError, debugLog } from "@/lib/api-logger";
 import { TaskCallstackRequestSchema } from "@/lib/schemas";
 import { fetchObjectStoreData, getObjectStoreRegionFromDeployment, getMonitoringLogCategoriesFromDeployment } from "@/lib/object-store/client";
 import { getOAuthConfig, AMC_COMMON_SCOPES_TO_TRY } from "@/lib/auth/config";
 import type { ApiStatus } from "@/components/task-details/types";
+import { requireAuth } from "@/lib/api/auth-middleware";
+import { msearch } from "@/lib/api/msearch";
+import { validationError } from "@/lib/api/error-responses";
 
 export const dynamic = "force-dynamic";
-
-const DEFAULT_BASE_URL = "https://anypoint.mulesoft.com";
 
 /**
  * AMC 403: The token is allowed to list deployments but not to read deployment detail or
@@ -141,68 +141,6 @@ async function fetchDeploymentDetail(
   return { region, monitoringSuggestions, deploymentApiStatus: "ok" };
 }
 
-async function msearch(
-  orgId: string,
-  luceneQuery: string,
-  opts: { size?: number; sortOrder?: "asc" | "desc"; timeRangeMs?: number } = {},
-  accessToken: string,
-  baseUrl: string
-): Promise<{ total: number; hits: unknown[]; raw: unknown; error?: "MONITORING_CENTER_PREMIUM_REQUIRED" }> {
-  const { size = 500, sortOrder = "asc", timeRangeMs = 30 * 24 * 3600 * 1000 } = opts;
-  const now = Date.now();
-  // Anypoint's API doesn't support wildcard patterns in _msearch index field
-  // Use empty array to search all indices, then filter by orgId in the query
-  const ndjson = [
-    JSON.stringify({ index: [], ignore_unavailable: true, preference: now }),
-    JSON.stringify({
-      version: true,
-      size,
-      sort: [{ timestamp: { order: sortOrder, unmapped_type: "boolean" } }],
-      _source: { excludes: [] },
-      stored_fields: ["*"],
-      docvalue_fields: ["timestamp"],
-    }),
-    JSON.stringify({
-      filter: [
-        {
-          range: {
-            timestamp: {
-              gte: now - timeRangeMs,
-              lte: now,
-              format: "epoch_millis",
-            },
-          },
-        },
-      ],
-      query: [{ query: luceneQuery, language: "lucene" }],
-    }),
-  ].join("\n") + "\n";
-
-  const url = `${baseUrl}/monitoring/api/logs/elasticsearch/_msearch`;
-  const res = await loggedFetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/x-ndjson",
-    },
-    body: ndjson,
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    // Check for Monitoring Center Premium entitlement error first
-    if (res.status === 403 && text.includes("Monitoring Center Premium")) {
-      // Don't log this as an error - it's an expected entitlement issue
-      return { total: 0, hits: [], raw: {}, error: "MONITORING_CENTER_PREMIUM_REQUIRED" };
-    }
-    throw new Error(`_msearch ${res.status}: ${text.slice(0, 200)}`);
-  }
-
-  const raw = await res.json();
-  const r = (raw.responses || [])[0] || {};
-  const hits = (r.hits && r.hits.hits) || [];
-  return { total: r.hits ? r.hits.total : 0, hits, raw };
-}
 
 function classifyLog(logger: string, message: string): string {
   if (logger === "http-listener-config") {
@@ -858,17 +796,10 @@ async function getTaskDetailsFromRuntimeLogs(
 
 export async function GET(request: NextRequest) {
   // Authentication check
-  if (!(await isAuthenticated())) {
-    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  }
+  const authResult = await requireAuth(request);
+  if (authResult instanceof NextResponse) return authResult;
   
-  const session = await getSession();
-  
-  if (session.invalidatedAt || !session.accessToken) {
-    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  }
-
-  const baseUrl = session.baseUrl ?? DEFAULT_BASE_URL;
+  const { baseUrl, accessToken } = authResult;
   const { searchParams } = new URL(request.url);
   const orgId = searchParams.get("orgId");
   const taskId = searchParams.get("taskId");
@@ -887,13 +818,7 @@ export async function GET(request: NextRequest) {
   });
   
   if (!parseResult.success) {
-    return NextResponse.json(
-      {
-        error: "Invalid request",
-        details: parseResult.error.format(),
-      },
-      { status: 400 }
-    );
+    return validationError(parseResult.error);
   }
   
   const { orgId: validatedOrgId, taskId: validatedTaskId, apiInstanceId: validatedApiInstanceId, envId: validatedEnvId, skipTraces: skipTracesRequested } = parseResult.data;
@@ -903,7 +828,7 @@ export async function GET(request: NextRequest) {
   try {
     // Phase 1: search by taskId - filter by orgId first since we search all indices
     const phase1Query = `orgId=${validatedOrgId} AND "${validatedTaskId}"`;
-    const phase1 = await msearch(validatedOrgId, phase1Query, { timeRangeMs: timeRange }, session.accessToken, baseUrl);
+    const phase1 = await msearch(validatedOrgId, phase1Query, { timeRangeMs: timeRange }, accessToken, baseUrl);
     
     // No-entitlement mode: get task details from runtime logs
     if (phase1.error === "MONITORING_CENTER_PREMIUM_REQUIRED") {
@@ -912,7 +837,7 @@ export async function GET(request: NextRequest) {
         validatedOrgId,
         validatedTaskId,
         validatedEnvId ?? null,
-        session.accessToken,
+        accessToken,
         baseUrl,
         timeRange,
         validatedApiInstanceId ?? undefined
@@ -934,7 +859,7 @@ export async function GET(request: NextRequest) {
                 contextId: jobCardFromRuntime.contextId as string | undefined,
               },
               validatedApiInstanceId ?? undefined,
-              session.accessToken,
+              accessToken,
               baseUrl
             );
           const noEntitlementApiStatus: ApiStatus = {
@@ -991,7 +916,7 @@ export async function GET(request: NextRequest) {
     let phase2Query: string | null = null;
     if (traceId) {
       phase2Query = `orgId=${validatedOrgId} AND ("${traceId}" OR "${validatedTaskId}")`;
-      const phase2 = await msearch(validatedOrgId, phase2Query, { timeRangeMs: timeRange }, session.accessToken, baseUrl);
+      const phase2 = await msearch(validatedOrgId, phase2Query, { timeRangeMs: timeRange }, accessToken, baseUrl);
       
       // No-entitlement mode: get task details from runtime logs
       if (phase2.error === "MONITORING_CENTER_PREMIUM_REQUIRED") {
@@ -1000,7 +925,7 @@ export async function GET(request: NextRequest) {
           validatedOrgId,
           validatedTaskId,
           validatedEnvId ?? null,
-          session.accessToken,
+          accessToken,
           baseUrl,
           timeRange,
           validatedApiInstanceId ?? undefined
@@ -1022,7 +947,7 @@ export async function GET(request: NextRequest) {
                 contextId: jobCardFromRuntime.contextId as string | undefined,
               },
               validatedApiInstanceId ?? undefined,
-              session.accessToken,
+              accessToken,
               baseUrl
             );
           const noEntitlementApiStatus: ApiStatus = {
@@ -1175,7 +1100,7 @@ export async function GET(request: NextRequest) {
         const rmRes = await loggedFetch(runtimeManagerUrl, {
           method: "GET",
           headers: {
-            Authorization: `Bearer ${session.accessToken}`,
+            Authorization: `Bearer ${accessToken}`,
           },
         });
 
@@ -1229,7 +1154,7 @@ export async function GET(request: NextRequest) {
             const deploymentsRes = await loggedFetch(deploymentsUrl, {
               method: "GET",
               headers: {
-                Authorization: `Bearer ${session.accessToken}`,
+                Authorization: `Bearer ${accessToken}`,
                 "Content-Type": "application/json",
               },
             });
@@ -1277,7 +1202,7 @@ export async function GET(request: NextRequest) {
               const deploymentsRes = await loggedFetch(deploymentsUrl, {
                 method: "GET",
                 headers: {
-                  Authorization: `Bearer ${session.accessToken}`,
+                  Authorization: `Bearer ${accessToken}`,
                   "Content-Type": "application/json",
                 },
               });
@@ -1331,7 +1256,7 @@ export async function GET(request: NextRequest) {
         const deploymentsRes = await loggedFetch(deploymentsUrl, {
           method: "GET",
           headers: {
-            Authorization: `Bearer ${session.accessToken}`,
+            Authorization: `Bearer ${accessToken}`,
             "Content-Type": "application/json",
           },
         });
@@ -1397,8 +1322,7 @@ export async function GET(request: NextRequest) {
       result: typeof objectStoreData;
       monitoringSuggestions?: ApiStatus["monitoringSuggestions"];
     }> => {
-      if (validatedEnvId && deploymentId && session.accessToken) {
-        const accessToken = session.accessToken;
+      if (validatedEnvId && deploymentId && accessToken) {
         let objectStoreRegion: string | undefined;
         let monitoringSuggestions: ApiStatus["monitoringSuggestions"];
         try {
@@ -1462,7 +1386,7 @@ export async function GET(request: NextRequest) {
           };
         }
       } else {
-        const skipReason = !validatedEnvId ? "missing envId" : !deploymentId ? "missing deploymentId" : !session.accessToken ? "missing accessToken" : "unknown";
+        const skipReason = !validatedEnvId ? "missing envId" : !deploymentId ? "missing deploymentId" : !accessToken ? "missing accessToken" : "unknown";
         debugLog(
           `[ObjectStore] Skipping Object Store fetch - reason: ${skipReason}, envId: ${validatedEnvId ? validatedEnvId : "none"}, brokerName: ${brokerName || "none"}, deploymentId: ${deploymentId || "none"}, appId: ${appId || "none"}, apiInstanceId: ${apiInstanceId || "none"}`
         );
@@ -1485,11 +1409,11 @@ export async function GET(request: NextRequest) {
 
     // Prepare trace spans fetch promise
     const traceSpansPromise = (async (): Promise<{ spans: TraceSpanRow[]; status: TraceSpansStatus }> => {
-      if (!skipTracesRequested && traceId && validatedEnvId && validatedEnvId.trim() !== "" && session.accessToken) {
+      if (!skipTracesRequested && traceId && validatedEnvId && validatedEnvId.trim() !== "" && accessToken) {
         return await fetchTraceSpans(
           validatedOrgId,
           traceId,
-          session.accessToken,
+          accessToken,
           baseUrl,
           validatedEnvId,
           firstEntry?.timestamp,

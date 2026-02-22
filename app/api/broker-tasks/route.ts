@@ -1,78 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSession, isAuthenticated } from "@/lib/session";
 import { loggedFetch, debugLog, debugError } from "@/lib/api-logger";
 import { BrokerTasksRequestSchema } from "@/lib/schemas";
+import { requireAuth } from "@/lib/api/auth-middleware";
+import { msearch } from "@/lib/api/msearch";
+import { validationError } from "@/lib/api/error-responses";
 
 export const dynamic = "force-dynamic";
-
-const DEFAULT_BASE_URL = "https://anypoint.mulesoft.com";
-
-async function msearch(
-  orgId: string,
-  luceneQuery: string,
-  opts: { size?: number; sortOrder?: "asc" | "desc"; timeRangeMs?: number } = {},
-  accessToken: string,
-  baseUrl: string
-): Promise<{ total: number; hits: unknown[]; raw: unknown; error?: "MONITORING_CENTER_PREMIUM_REQUIRED" }> {
-  const { size = 500, sortOrder = "asc", timeRangeMs = 30 * 24 * 3600 * 1000 } = opts;
-  const now = Date.now();
-  // Anypoint's API doesn't support wildcard patterns in _msearch index field
-  // Use empty array to search all indices, then filter by orgId in the query
-  const ndjson = [
-    JSON.stringify({ index: [], ignore_unavailable: true, preference: now }),
-    JSON.stringify({
-      version: true,
-      size,
-      sort: [{ timestamp: { order: sortOrder, unmapped_type: "boolean" } }],
-      _source: { excludes: [] },
-      stored_fields: ["*"],
-      docvalue_fields: ["timestamp"],
-    }),
-    JSON.stringify({
-      filter: [
-        {
-          range: {
-            timestamp: {
-              gte: now - timeRangeMs,
-              lte: now,
-              format: "epoch_millis",
-            },
-          },
-        },
-      ],
-      query: [{ query: luceneQuery, language: "lucene" }],
-    }),
-  ].join("\n") + "\n";
-
-  const url = `${baseUrl}/monitoring/api/logs/elasticsearch/_msearch`;
-  const res = await loggedFetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/x-ndjson",
-    },
-    body: ndjson,
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    // Check for Monitoring Center Premium entitlement error first
-    if (res.status === 403 && text.includes("Monitoring Center Premium")) {
-      // Don't log this as an error - it's an expected entitlement issue
-      return { total: 0, hits: [], raw: {}, error: "MONITORING_CENTER_PREMIUM_REQUIRED" };
-    }
-    // Log other errors
-    debugError("Elasticsearch _msearch error response:", text);
-    debugError("Query used:", luceneQuery);
-    debugError("First line of ndjson:", ndjson.split("\n")[0]);
-    throw new Error(`_msearch ${res.status}: ${text.slice(0, 500)}`);
-  }
-
-  const raw = await res.json();
-  const r = (raw.responses || [])[0] || {};
-  const hits = (r.hits && r.hits.hits) || [];
-    return { total: r.hits ? r.hits.total : 0, hits, raw };
-}
 
 /**
  * No-entitlement mode: get broker tasks via Runtime Manager + Application Manager logs/file.
@@ -694,35 +627,18 @@ async function getBrokerTasksFromRuntimeLogs(
 }
 
 export async function POST(request: NextRequest) {
-  // Authentication check using unified session functions
-  if (!(await isAuthenticated())) {
-    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-  }
+  // Authentication check
+  const authResult = await requireAuth(request);
+  if (authResult instanceof NextResponse) return authResult;
   
-  const session = await getSession();
-  
-  if (session.invalidatedAt) {
-    return NextResponse.json({ error: "Session invalidated" }, { status: 401 });
-  }
-
-  if (!session.accessToken) {
-    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  }
-
-  const baseUrl = session.baseUrl ?? DEFAULT_BASE_URL;
+  const { baseUrl, accessToken } = authResult;
   
   // Parse and validate request body with Zod
   const body = await request.json();
   const parseResult = BrokerTasksRequestSchema.safeParse(body);
   
   if (!parseResult.success) {
-    return NextResponse.json(
-      {
-        error: "Invalid request",
-        details: parseResult.error.format(),
-      },
-      { status: 400 }
-    );
+    return validationError(parseResult.error);
   }
   
   const { orgId, apiInstanceId, timeRangeMs = 24 * 3600 * 1000 } = parseResult.data;
@@ -744,7 +660,7 @@ export async function POST(request: NextRequest) {
       orgId,
       luceneQuery,
       { size: 1000, sortOrder: "desc", timeRangeMs: timeRange },
-      session.accessToken,
+      accessToken,
       baseUrl
     );
 
@@ -755,7 +671,7 @@ export async function POST(request: NextRequest) {
         const noEntitlementResult = await getBrokerTasksFromRuntimeLogs(
           orgId,
           apiInstanceId,
-          session.accessToken,
+          accessToken,
           baseUrl,
           timeRange
         );

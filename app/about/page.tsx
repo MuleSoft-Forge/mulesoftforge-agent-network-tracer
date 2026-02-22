@@ -1,6 +1,5 @@
 import Image from "next/image";
 import Link from "next/link";
-import TierRequirementCard from "@/components/TierRequirementCard";
 import DebugLoggingCard from "@/components/DebugLoggingCard";
 
 export default function AboutPage() {
@@ -21,14 +20,8 @@ export default function AboutPage() {
         />
       </section>
       
-      {/* Two cards side by side */}
-      <div className="mb-8 flex flex-col gap-6 sm:flex-row sm:justify-center sm:items-stretch">
-        <div className="flex-1 max-w-sm">
-          <TierRequirementCard />
-        </div>
-        <div className="flex-1 max-w-sm">
-          <DebugLoggingCard />
-        </div>
+      <div className="mb-8 flex justify-center">
+        <DebugLoggingCard />
       </div>
       
       <div className="space-y-6 text-gray-700">

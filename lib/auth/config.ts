@@ -2,7 +2,8 @@
  * OAuth configuration for Anypoint Platform Connected Apps
  */
 
-const DEFAULT_BASE_URL = "https://anypoint.mulesoft.com";
+import { DEFAULT_BASE_URL } from "@/lib/constants";
+
 const DEFAULT_REDIRECT_URI = "http://localhost:3000/auth/callback";
 
 export interface OAuthConfig {

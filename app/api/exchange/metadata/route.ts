@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSession, isAuthenticated } from "@/lib/session";
 import { loggedFetch, debugError } from "@/lib/api-logger";
 import { ExchangeMetadataRequestSchema } from "@/lib/schemas";
+import { requireAuth } from "@/lib/api/auth-middleware";
+import { parseExchangeParams } from "@/lib/api/exchange-params";
+import { validationError } from "@/lib/api/error-responses";
 
 export const dynamic = "force-dynamic";
-
-const DEFAULT_BASE_URL = "https://anypoint.mulesoft.com";
 
 /**
  * Exchange API connection reference structure
@@ -51,78 +51,44 @@ interface AgentMetadataResponse {
  */
 export async function GET(request: NextRequest) {
   // Authentication check
-  if (!(await isAuthenticated())) {
-    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  }
+  const authResult = await requireAuth(request);
+  if (authResult instanceof NextResponse) return authResult;
   
-  const session = await getSession();
-  
-  if (session.invalidatedAt || !session.accessToken) {
-    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  }
+  const { baseUrl, accessToken } = authResult;
 
-  // Validate query parameters - support both formats:
-  // 1. organizationId, assetId, version (used by enrich-with-llms.ts)
-  // 2. path (alternative format)
+  // Validate and parse query parameters
   const { searchParams } = new URL(request.url);
-  // Convert null to undefined for Zod (searchParams.get returns string | null, but Zod expects string | undefined)
-  const organizationIdParam = searchParams.get("organizationId") ?? undefined;
-  const assetIdParam = searchParams.get("assetId") ?? undefined;
-  const versionParam = searchParams.get("version") ?? undefined;
-  const pathParam = searchParams.get("path") ?? undefined;
+  let params: { organizationId: string; assetId: string; version: string };
   
-  const parseResult = ExchangeMetadataRequestSchema.safeParse({
-    organizationId: organizationIdParam,
-    assetId: assetIdParam,
-    version: versionParam,
-    path: pathParam,
-  });
-  
-  if (!parseResult.success) {
-    return NextResponse.json(
-      {
-        error: "Invalid request",
-        details: parseResult.error.format(),
-      },
-      { status: 400 }
-    );
-  }
-  
-  // Extract organizationId, assetId, version from either format
-  let organizationId: string;
-  let assetId: string;
-  let version: string;
-  
-  if (parseResult.data.organizationId && parseResult.data.assetId && parseResult.data.version) {
-    // Format 1: separate query parameters
-    organizationId = parseResult.data.organizationId;
-    assetId = parseResult.data.assetId;
-    version = parseResult.data.version;
-  } else if (parseResult.data.path) {
-    // Format 2: path format (organizationId/assetId/version)
-    const pathParts = parseResult.data.path.split("/");
-    if (pathParts.length < 3) {
-      return NextResponse.json(
-        { error: "Invalid path format. Expected: organizationId/assetId/version" },
-        { status: 400 }
-      );
+  try {
+    params = parseExchangeParams(searchParams, ExchangeMetadataRequestSchema);
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("Invalid request")) {
+      // Parse the error to get Zod error details
+      const parseResult = ExchangeMetadataRequestSchema.safeParse({
+        organizationId: searchParams.get("organizationId") ?? undefined,
+        assetId: searchParams.get("assetId") ?? undefined,
+        version: searchParams.get("version") ?? undefined,
+        path: searchParams.get("path") ?? undefined,
+      });
+      if (!parseResult.success) {
+        return validationError(parseResult.error);
+      }
     }
-    [organizationId, assetId, version] = pathParts;
-  } else {
     return NextResponse.json(
-      { error: "Either provide organizationId, assetId, and version, or provide path" },
+      { error: error instanceof Error ? error.message : "Invalid request" },
       { status: 400 }
     );
   }
 
-  const baseUrl = session.baseUrl ?? DEFAULT_BASE_URL;
+  const { organizationId, assetId, version } = params;
   const url = `${baseUrl}/exchange/api/v2/assets/${encodeURIComponent(organizationId)}/${encodeURIComponent(assetId)}/${encodeURIComponent(version)}/agent/metadata`;
 
   try {
     const res = await loggedFetch(url, {
       method: "GET",
       headers: {
-        Authorization: `Bearer ${session.accessToken}`,
+        Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
     });
