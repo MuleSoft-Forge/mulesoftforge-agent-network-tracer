@@ -1,13 +1,23 @@
 import { loggedFetch, debugLog, debugError } from "@/lib/api-logger";
 
 const OBJECT_STORE_REGIONS = [
-  "us-east-1",
-  "us-east-2",
-  "us-west-2",
-  "eu-central-1",
-  "eu-west-1",
-  "ap-southeast-1",
-  "ap-southeast-2",
+  // North America
+  "us-east-1",      // US East (N. Virginia)
+  "us-east-2",      // US East (Ohio)
+  "us-west-1",      // US West (N. California)
+  "us-west-2",      // US West (Oregon)
+  "ca-central-1",   // Canada (Central)
+  "us-gov-west-1", // US GovCloud (West)
+  // Europe
+  "eu-west-1",      // Ireland
+  "eu-west-2",      // UK (London)
+  "eu-central-1",   // Germany (Frankfurt)
+  // Asia Pacific
+  "ap-southeast-1", // Singapore
+  "ap-southeast-2", // Australia (Sydney)
+  "ap-northeast-1", // Japan (Tokyo)
+  // South America
+  "sa-east-1",      // Brazil (São Paulo)
 ] as const;
 
 type ObjectStoreRegion = (typeof OBJECT_STORE_REGIONS)[number];
@@ -211,17 +221,37 @@ function isObjectStoreRegion(s: string): s is ObjectStoreRegion {
 }
 
 /**
- * CloudHub hostname region codes (e.g. deu-c1 from *.deu-c1.cloudhub.io) to object store region.
+ * CloudHub hostname region codes (e.g. usa-e2 from *.usa-e2.cloudhub.io) to object store region.
  * Anypoint UI uses deployment's internalUrl hostname to pick object-store-{region}.anypoint.mulesoft.com.
  */
 const CLOUDHUB_REGION_TO_OBJECT_STORE: Record<string, ObjectStoreRegion> = {
-  "deu-c1": "eu-central-1",
-  "use-c1": "us-east-1",
-  "usa-e2": "us-east-2",
-  "usw-c1": "us-west-2",
-  "euw-c1": "eu-west-1",
-  "aps-c1": "ap-southeast-1",
-  "aps2-c1": "ap-southeast-2",
+  // North America
+  "usa-e1": "us-east-1",      // US East (N. Virginia)
+  "usa-e2": "us-east-2",      // US East (Ohio)
+  "usa-w1": "us-west-1",      // US West (N. California)
+  "usa-w2": "us-west-2",      // US West (Oregon)
+  "can-c1": "ca-central-1",   // Canada (Central)
+  "usg-w1": "us-gov-west-1",  // US GovCloud (West)
+  
+  // South America
+  "bra-s1": "sa-east-1",      // Brazil (São Paulo)
+  
+  // Europe
+  "irl-e1": "eu-west-1",      // Ireland
+  "deu-c1": "eu-central-1",   // Germany (Frankfurt)
+  "gbr-e1": "eu-west-2",      // UK (London)
+  
+  // Asia Pacific
+  "sgp-s1": "ap-southeast-1", // Singapore
+  "aus-s1": "ap-southeast-2", // Australia (Sydney)
+  "jpn-e1": "ap-northeast-1", // Japan (Tokyo)
+  
+  // Legacy/backward compatibility codes (older CloudHub region naming)
+  "use-c1": "us-east-1",      // Legacy: US East (N. Virginia)
+  "usw-c1": "us-west-2",      // Legacy: US West (Oregon)
+  "euw-c1": "eu-west-1",      // Legacy: Ireland
+  "aps-c1": "ap-southeast-1", // Legacy: Singapore
+  "aps2-c1": "ap-southeast-2", // Legacy: Australia (Sydney)
 };
 
 /** Categories we suggest for Runtime Manager → Monitoring (log forwarding) for full task visibility. */
@@ -330,15 +360,19 @@ async function findObjectStore(
   const storeIdPrefixShort = `APP_${deploymentId}_`;
   const has403Errors = new Set<string>(); // Track 403 errors per region for parallel execution
 
+  // Use translation table to determine region - only search that specific region
   const preferred =
     preferredRegion && isObjectStoreRegion(preferredRegion)
       ? preferredRegion
       : process.env.OBJECT_STORE_REGION && isObjectStoreRegion(process.env.OBJECT_STORE_REGION)
         ? process.env.OBJECT_STORE_REGION
         : null;
+  
+  // Only search the preferred region (from translation table), not all regions
+  // If no preferred region, use a small fallback set of common regions
   const regionsToTry: ObjectStoreRegion[] = preferred
-    ? [preferred, ...OBJECT_STORE_REGIONS.filter((r) => r !== preferred)]
-    : [...OBJECT_STORE_REGIONS];
+    ? [preferred]
+    : ["us-east-1", "us-west-2", "eu-central-1"]; // Fallback: only search common regions if translation fails
 
   // Try shorter prefix first (matches Anypoint UI behavior)
   // OPTIMIZATION: Search all regions in parallel, return immediately when first store is found
@@ -415,7 +449,8 @@ async function findObjectStore(
   // If we got 403 errors in all regions, throw a specific error
   if (has403Errors.size > 0 && has403Errors.size === regionsToTry.length) {
     debugError(`[ObjectStore] All regions returned 403 Forbidden - insufficient permissions to access Object Store`);
-    debugLog(`[ObjectStore] 403 error summary - orgId: ${orgId}, envId: ${envId}, deploymentId: ${deploymentId}, tried regions: ${OBJECT_STORE_REGIONS.join(", ")}`);
+    const regionsSearched = preferred ? [preferred] : ["us-east-1", "us-west-2", "eu-central-1"];
+    debugLog(`[ObjectStore] 403 error summary - orgId: ${orgId}, envId: ${envId}, deploymentId: ${deploymentId}, tried regions: ${regionsSearched.join(", ")}`);
     throw new Error("403 Forbidden: Insufficient permissions to access Object Store");
   }
 
@@ -752,7 +787,11 @@ export async function fetchObjectStoreData(
   }
 
   if (!storeInfo) {
-    let errorMessage = `Object Store not found for deployment ${deploymentId}. Searched regions: ${OBJECT_STORE_REGIONS.join(", ")}. Store pattern: APP_${deploymentId}__defaultPersistentObjectStore`;
+    // Determine which regions were actually searched
+    const searchedRegions = objectStoreRegion 
+      ? [objectStoreRegion] 
+      : ["us-east-1", "us-west-2", "eu-central-1"]; // Fallback regions
+    let errorMessage = `Object Store not found for deployment ${deploymentId}. Searched region(s): ${searchedRegions.join(", ")}. Store pattern: APP_${deploymentId}__defaultPersistentObjectStore`;
     if (deploymentType === "HY") {
       errorMessage += `. Note: Hybrid (HY) deployments may not have Object Store provisioned.`;
     }
