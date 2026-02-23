@@ -457,9 +457,7 @@ async function fetchObjectStoreInNoEntitlementMode(
   objectStore: {
     available: boolean;
     objectStoreStatus?: "ok" | "403_forbidden" | "no_store" | "no_keys";
-    sourcesUsed?: ("tasks" | "conversations")[];
     fromTasks?: unknown;
-    fromConversations?: unknown;
     llmReasoning?: unknown;
     toolCallIds?: string[];
     downstreamContextIds?: unknown;
@@ -539,7 +537,6 @@ async function fetchObjectStoreInNoEntitlementMode(
       accessToken,
       undefined,
       objectStoreRegion,
-      jobCard.contextId,
       jobCard.startTime
     );
     const status: ApiStatus["objectStore"] =
@@ -549,9 +546,7 @@ async function fetchObjectStoreInNoEntitlementMode(
       objectStore: {
         available: objectStoreData.available,
         objectStoreStatus: objectStoreData.objectStoreStatus,
-        sourcesUsed: objectStoreData.sourcesUsed,
         fromTasks: objectStoreData.fromTasks,
-        fromConversations: objectStoreData.fromConversations,
         llmReasoning: objectStoreData.llmReasoning,
         toolCallIds: objectStoreData.toolCallIds,
         downstreamContextIds: objectStoreData.downstreamContextIds,
@@ -1308,9 +1303,7 @@ export async function GET(request: NextRequest) {
     let objectStoreData: {
       available: boolean;
       objectStoreStatus?: "ok" | "403_forbidden" | "no_store" | "no_keys";
-      sourcesUsed?: ("tasks" | "conversations")[];
       fromTasks?: { steps: Array<{ step: string; content: string[] }>; rawReasoning: string[] };
-      fromConversations?: { steps: Array<{ step: string; content: string[] }>; rawReasoning: string[] };
       llmReasoning?: {
         steps?: Array<{ step: string; content: string[] }>;
         rawReasoning?: string[];
@@ -1341,9 +1334,8 @@ export async function GET(request: NextRequest) {
           monitoringSuggestions = deploymentDetail.monitoringSuggestions;
           if (deploymentDetail.deploymentApiStatus) deploymentApiStatus = deploymentDetail.deploymentApiStatus;
           if (objectStoreRegion) debugLog(`[ObjectStore] Resolved region from deployment URLs: ${objectStoreRegion}`);
-          const contextIdForStore = (entries.find((e: typeof entries[0]) => e.fields?.contextId) as typeof entries[0] | undefined)?.fields?.contextId as string | undefined;
           const taskStartTime = firstEntry?.timestamp;
-          debugLog(`[ObjectStore] Attempting to fetch Object Store data - orgId: ${validatedOrgId}, envId: ${validatedEnvId}, taskId: ${validatedTaskId}, brokerName: ${brokerName}, deploymentId: ${deploymentId}, appId: ${appId}, deploymentType: ${deploymentType || "unknown"}, objectStoreRegion: ${objectStoreRegion ?? "(none)"}, contextId: ${contextIdForStore ?? "(none)"}`);
+          debugLog(`[ObjectStore] Attempting to fetch Object Store data - orgId: ${validatedOrgId}, envId: ${validatedEnvId}, taskId: ${validatedTaskId}, brokerName: ${brokerName}, deploymentId: ${deploymentId}, appId: ${appId}, deploymentType: ${deploymentType || "unknown"}, objectStoreRegion: ${objectStoreRegion ?? "(none)"}`);
           const result = await fetchObjectStoreData(
             validatedOrgId,
             validatedEnvId,
@@ -1353,7 +1345,6 @@ export async function GET(request: NextRequest) {
             accessToken,
             deploymentType,
             objectStoreRegion,
-            contextIdForStore,
             taskStartTime
           );
           if (result.available) {

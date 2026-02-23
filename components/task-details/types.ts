@@ -60,15 +60,11 @@ export interface JobCard {
   downstreamAgent?: string; // Agent name that returned this taskId
   // Final response body (extracted from FINAL_RESPONSE log entry)
   finalResponseBody?: unknown;
-  // Object Store data (broker brain state; from _tasks and/or _conversations partitions)
+  // Object Store data (broker brain state; from _tasks partition)
   objectStore?: {
     available: boolean;
-    /** Which partitions contributed: "tasks", "conversations" */
-    sourcesUsed?: ("tasks" | "conversations")[];
-    /** Parsed content from _tasks partition only (split UI) */
+    /** Parsed content from _tasks partition */
     fromTasks?: { steps: Array<{ step: string; content: string[] }>; rawReasoning: string[] };
-    /** Parsed content from _conversations partition only (split UI) */
-    fromConversations?: { steps: Array<{ step: string; content: string[] }>; rawReasoning: string[] };
     llmReasoning?: {
       steps?: Array<{ step: string; content: string[] }>;
       rawReasoning?: string[];
@@ -79,7 +75,6 @@ export interface JobCard {
     /** Debug: partition lookup result (key found, value empty, string count) */
     debug?: {
       tasks: { partition: string | null; keyFound: boolean; keyUsed: string | null; valueEmpty: boolean; stringCount: number };
-      conversations: { partition: string | null; keyFound: boolean; keyUsed: string | null; valueEmpty: boolean; stringCount: number };
     };
   };
   /** Summary of backend API outcomes for this task (for support / "app not working" diagnosis) */

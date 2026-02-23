@@ -598,77 +598,28 @@ export default function TaskDetailsPanel({
                         </span>
                       )}
                     </dd>
-                    <dt className="font-medium">Conversations partition:</dt>
-                    <dd className="min-w-0">
-                      <span className="text-amber-700">{taskData.objectStore.debug.conversations.partition ?? "—"}</span>
-                      {" · "}
-                      {!taskData.objectStore.debug.conversations.keyFound ? (
-                        <span className="font-medium">Key not found</span>
-                      ) : taskData.objectStore.debug.conversations.valueEmpty ? (
-                        <span className="font-medium">Key found, value empty (0 strings)</span>
-                      ) : (
-                        <span>Key found, {taskData.objectStore.debug.conversations.stringCount} strings</span>
-                      )}
-                      {taskData.objectStore.debug.conversations.keyUsed && (
-                        <span className="block truncate mt-0.5 text-amber-600" title={taskData.objectStore.debug.conversations.keyUsed}>
-                          key: {taskData.objectStore.debug.conversations.keyUsed}
-                        </span>
-                      )}
-                    </dd>
                   </dl>
                 </section>
               )}
               {taskData.objectStore?.available ? (
                 <>
-                  <section className="space-y-2">
-                    <h4 className="text-sm font-semibold text-gray-700 border-b border-gray-200 pb-1">
-                      From Tasks partition
-                    </h4>
-                    {taskData.objectStore.fromTasks &&
-                     (taskData.objectStore.fromTasks.steps?.length || taskData.objectStore.fromTasks.rawReasoning?.length) ? (
-                      <LLMReasoningPanel
-                        reasoning={taskData.objectStore.fromTasks}
-                        source="objectStore"
-                        sourcesUsed={["tasks"]}
-                      />
-                    ) : taskData.objectStore.llmReasoning &&
-                      (taskData.objectStore.llmReasoning.steps?.length || taskData.objectStore.llmReasoning.rawReasoning?.length) ? (
-                      <LLMReasoningPanel
-                        reasoning={taskData.objectStore.llmReasoning}
-                        source="objectStore"
-                        sourcesUsed={taskData.objectStore.sourcesUsed ?? ["tasks"]}
-                      />
-                    ) : taskData.objectStore.sourcesUsed?.includes("tasks") ? (
-                      <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-500">
-                        No structured content parsed from Tasks. Check Raw Log for payload.
-                      </div>
-                    ) : (
-                      <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-400">
-                        No data from Tasks partition for this task.
-                      </div>
-                    )}
-                  </section>
-                  <section className="space-y-2">
-                    <h4 className="text-sm font-semibold text-gray-700 border-b border-gray-200 pb-1">
-                      From Conversations partition
-                    </h4>
-                    {taskData.objectStore.fromConversations &&
-                     (taskData.objectStore.fromConversations.steps?.length || taskData.objectStore.fromConversations.rawReasoning?.length) ? (
-                      <LLMReasoningPanel
-                        reasoning={taskData.objectStore.fromConversations}
-                        source="objectStore"
-                        sourcesUsed={["conversations"]}
-                      />
-                    ) : taskData.objectStore.sourcesUsed?.includes("conversations") ? (
-                      <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-500">
-                        No structured content parsed from Conversations. Check Raw Log for payload.
-                      </div>
-                    ) : (
-                      <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-400">
-                        No data from Conversations partition for this task.
-                      </div>
-                    )}
-                  </section>
+                  {taskData.objectStore.fromTasks &&
+                   (taskData.objectStore.fromTasks.steps?.length || taskData.objectStore.fromTasks.rawReasoning?.length) ? (
+                    <LLMReasoningPanel
+                      reasoning={taskData.objectStore.fromTasks}
+                      source="objectStore"
+                    />
+                  ) : taskData.objectStore.llmReasoning &&
+                    (taskData.objectStore.llmReasoning.steps?.length || taskData.objectStore.llmReasoning.rawReasoning?.length) ? (
+                    <LLMReasoningPanel
+                      reasoning={taskData.objectStore.llmReasoning}
+                      source="objectStore"
+                    />
+                  ) : (
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-500">
+                      No structured content parsed from Object Store. Check Raw Log for payload.
+                    </div>
+                  )}
                 </>
               ) : taskData.objectStore?.available === false && taskData.objectStore?.errors?.length ? (
                 <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">
