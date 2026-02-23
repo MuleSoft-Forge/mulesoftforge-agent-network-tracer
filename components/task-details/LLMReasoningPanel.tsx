@@ -11,6 +11,7 @@ interface LLMReasoningStep {
 interface LLMReasoningData {
   steps?: LLMReasoningStep[];
   rawReasoning?: string[];
+  allRawStrings?: string[];
   toolCallIds?: string[];
   downstreamContextIds?: Array<{ agent: string; contextId: string; taskId: string }>;
 }
@@ -243,6 +244,24 @@ export default function LLMReasoningPanel({ reasoning, source }: LLMReasoningPan
           );
         })}
       </div>
+
+      {/* Show Raw - all extracted strings */}
+      {reasoning.allRawStrings && reasoning.allRawStrings.length > 0 && (
+        <details className="mt-4 rounded-lg border border-gray-200 bg-gray-50">
+          <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gray-100">
+            Show Raw ({reasoning.allRawStrings.length} strings)
+          </summary>
+          <div className="border-t border-gray-200 bg-white p-4">
+            <pre className="max-h-96 overflow-auto scrollbar-thin rounded bg-gray-50 p-3 text-xs font-mono text-gray-800 whitespace-pre-wrap break-words">
+              {reasoning.allRawStrings.map((str, idx) => (
+                <div key={idx} className="mb-1">
+                  {str}
+                </div>
+              ))}
+            </pre>
+          </div>
+        </details>
+      )}
 
       {/* Additional metadata */}
       {(reasoning.toolCallIds && reasoning.toolCallIds.length > 0) ||

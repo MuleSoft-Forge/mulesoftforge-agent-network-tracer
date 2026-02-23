@@ -627,35 +627,52 @@ async function getBrokerTasksFromRuntimeLogs(
 }
 
 export async function POST(request: NextRequest) {
+  debugLog("=".repeat(80));
+  debugLog("[BROKER-TASKS] ========== START POST REQUEST ==========");
+  debugLog(`[BROKER-TASKS] Request URL: ${request.url}`);
+  
   // Authentication check
+  debugLog("[BROKER-TASKS] Step 1: Authenticating...");
   const authResult = await requireAuth(request);
-  if (authResult instanceof NextResponse) return authResult;
+  if (authResult instanceof NextResponse) {
+    debugLog(`[BROKER-TASKS] ✗ Authentication failed: ${authResult.status}`);
+    return authResult;
+  }
+  debugLog("[BROKER-TASKS] ✓ Authentication successful");
   
   const { baseUrl, accessToken } = authResult;
+  debugLog(`[BROKER-TASKS] baseUrl: ${baseUrl}`);
   
   // Parse and validate request body with Zod
+  debugLog("[BROKER-TASKS] Step 2: Parsing request body...");
   const body = await request.json();
+  debugLog(`[BROKER-TASKS] Request body: ${JSON.stringify(body)}`);
   const parseResult = BrokerTasksRequestSchema.safeParse(body);
   
   if (!parseResult.success) {
+    debugLog(`[BROKER-TASKS] ✗ Validation failed: ${JSON.stringify(parseResult.error.format())}`);
     return validationError(parseResult.error);
   }
+  debugLog("[BROKER-TASKS] ✓ Validation successful");
   
   const { orgId, apiInstanceId, timeRangeMs = 24 * 3600 * 1000 } = parseResult.data;
+  debugLog(`[BROKER-TASKS] Validated parameters: orgId=${orgId}, apiInstanceId=${apiInstanceId}, timeRangeMs=${timeRangeMs}`);
   
   // Enforce 7-day maximum to match Visualizer API limit
   const maxTimeRangeMs = 7 * 24 * 3600 * 1000; // 7 days
   const timeRange = Math.min(timeRangeMs, maxTimeRangeMs);
+  debugLog(`[BROKER-TASKS] Time range: ${timeRange}ms (max: ${maxTimeRangeMs}ms)`);
 
   try {
     // Build Lucene query - filter by orgId first, then apiInstanceId and taskId
     // Since we're searching all indices, we need to filter by orgId in the query
     // IMPORTANT: apiInstanceId must be quoted if it contains special characters, but for numeric IDs we can use it directly
+    debugLog("[BROKER-TASKS] Step 3: Building Lucene query...");
     const luceneQuery = `orgId=${orgId} AND taskId= AND apiInstanceId=${apiInstanceId}`;
-
-    debugLog("Broker tasks query:", { orgId, apiInstanceId, luceneQuery, timeRange });
+    debugLog(`[BROKER-TASKS] Query: ${luceneQuery}`);
 
     // Search for logs containing taskId= pattern filtered by apiInstanceId
+    debugLog("[BROKER-TASKS] Step 4: Searching logs with msearch...");
     const allLogsResult = await msearch(
       orgId,
       luceneQuery,
@@ -663,9 +680,11 @@ export async function POST(request: NextRequest) {
       accessToken,
       baseUrl
     );
+    debugLog(`[BROKER-TASKS] Search result: ${allLogsResult.hits?.length || 0} hits, total=${allLogsResult.total ?? 0}, error: ${allLogsResult.error || "none"}`);
 
     // No entitlement: use Runtime Manager + Application Manager logs (standard APIs)
     if (allLogsResult.error === "MONITORING_CENTER_PREMIUM_REQUIRED") {
+      debugLog("[BROKER-TASKS] Decision: Premium required, entering no-entitlement mode");
       debugLog("[NO-ENTITLEMENT] Getting broker tasks via runtime logs (no _msearch)");
       try {
         const noEntitlementResult = await getBrokerTasksFromRuntimeLogs(
@@ -877,6 +896,16 @@ export async function POST(request: NextRequest) {
       sampleTaskApiInstanceIds: list.slice(0, 5).map((t) => t.apiInstanceId),
     });
 
+    debugLog(`[BROKER-TASKS] Step 5: Building response with ${list.length} tasks`);
+    debugLog(`[BROKER-TASKS] Task breakdown: ${JSON.stringify(
+      list.reduce((acc: Record<string, number>, task: { broker?: string }) => {
+        const broker = task.broker || "unknown";
+        acc[broker] = (acc[broker] || 0) + 1;
+        return acc;
+      }, {})
+    )}`);
+    debugLog("[BROKER-TASKS] ========== END POST REQUEST (SUCCESS) ==========");
+    debugLog("=".repeat(80));
     return NextResponse.json({ 
       tasks: list, 
       source: "_msearch", 
@@ -886,6 +915,8 @@ export async function POST(request: NextRequest) {
       filters: { apiInstanceId },
     });
   } catch (error) {
+    debugLog("[BROKER-TASKS] ========== END POST REQUEST (ERROR) ==========");
+    debugLog("=".repeat(80));
     debugError("Broker tasks API error:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to fetch broker tasks" },

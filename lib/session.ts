@@ -11,6 +11,8 @@ const SessionDataSchema = z.object({
   baseUrl: z.string().url().optional(),
   oauthState: z.string().optional(),
   invalidatedAt: z.number().optional(),
+  /** Set at login from profile.organization.entitlements.monitoringCenter.productSKU >= 1. Other entitlements can be added later. */
+  monitoringCenterEnabled: z.boolean().optional(),
 });
 
 export type SessionData = z.infer<typeof SessionDataSchema>;
@@ -88,6 +90,7 @@ export async function getSessionStatus() {
       authenticated: isAuth,
       expiresAt: session.expiresAt,
       baseUrl: session.baseUrl,
+      monitoringCenterEnabled: session.monitoringCenterEnabled,
     };
   } catch {
     return { authenticated: false };

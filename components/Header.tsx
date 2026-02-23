@@ -4,7 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
-import { ChevronDown, LogOut } from "lucide-react";
+import { ChevronDown, LogOut, FileJson } from "lucide-react";
 import { REGIONS } from "@/lib/regions";
 import type { RegionOption } from "@/lib/regions";
 import { parseProfile, type Profile } from "@/lib/parsers";
@@ -52,6 +52,7 @@ export default function Header() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [regionLabel, setRegionLabel] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [rawOpen, setRawOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -135,6 +136,7 @@ export default function Header() {
   }
 
   return (
+    <>
     <header className="border-b border-gray-200 bg-white">
       <div className="flex h-14 w-full items-center justify-between gap-4 pl-4 pr-4">
         <div className="flex min-w-0 items-center gap-6">
@@ -212,18 +214,44 @@ export default function Header() {
                 </button>
                 {menuOpen && (
                   <div
-                    className="absolute right-0 top-full z-10 mt-1 min-w-[10rem] rounded-lg border border-gray-200 bg-white py-1 shadow-lg"
+                    className="absolute right-0 top-full z-10 mt-1 w-72 rounded-lg border border-gray-200 bg-white shadow-lg"
                     role="menu"
                   >
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => void handleSignOut()}
-                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 focus:bg-gray-100 focus:outline-none"
-                    >
-                      <LogOut className="h-4 w-4 shrink-0" aria-hidden="true" />
-                      Sign out
-                    </button>
+                    {profile?.organization && (
+                      <div className="space-y-1 border-b border-gray-100 px-3 py-3 text-xs">
+                        <p className="text-gray-500">
+                          <span className="font-medium text-gray-700">Org:</span>{" "}
+                          <span className="text-gray-900">{profile.organization.name}</span>
+                        </p>
+                        <p className="text-gray-500">
+                          <span className="font-medium text-gray-700">Org ID:</span>{" "}
+                          <span className="font-mono text-gray-900">{profile.organization.id}</span>
+                        </p>
+                      </div>
+                    )}
+                    <div className="py-1">
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setMenuOpen(false);
+                          setRawOpen(true);
+                        }}
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 focus:bg-gray-100 focus:outline-none"
+                      >
+                        <FileJson className="h-4 w-4 shrink-0" aria-hidden="true" />
+                        View raw
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => void handleSignOut()}
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 focus:bg-gray-100 focus:outline-none"
+                      >
+                        <LogOut className="h-4 w-4 shrink-0" aria-hidden="true" />
+                        Sign out
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -232,5 +260,34 @@ export default function Header() {
         </div>
       </div>
     </header>
+    {rawOpen && profile && (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+        onClick={() => setRawOpen(false)}
+        aria-modal="true"
+        role="dialog"
+        aria-label="Raw profile"
+      >
+        <div
+          className="max-h-[85vh] w-full max-w-2xl overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between border-b border-gray-200 bg-gray-50 px-3 py-2">
+            <span className="text-sm font-medium text-gray-700">Raw profile</span>
+            <button
+              type="button"
+              onClick={() => setRawOpen(false)}
+              className="rounded px-2 py-1 text-sm text-gray-600 hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-primary"
+            >
+              Close
+            </button>
+          </div>
+          <pre className="max-h-[70vh] overflow-auto p-4 text-xs text-gray-800">
+            <code>{JSON.stringify(profile, null, 2)}</code>
+          </pre>
+        </div>
+      </div>
+    )}
+    </>
   );
 }

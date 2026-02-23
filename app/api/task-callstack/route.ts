@@ -50,8 +50,17 @@ async function fetchDeploymentDetailViaHybrid(
   region?: string;
   monitoringSuggestions: ApiStatus["monitoringSuggestions"];
   deploymentApiStatus: "ok" | "403_forbidden";
-}> {
+} | null> {
+  debugLog("[fetchDeploymentDetailViaHybrid] ========== START ==========");
+  debugLog(`[fetchDeploymentDetailViaHybrid] Input parameters:`);
+  debugLog(`[fetchDeploymentDetailViaHybrid]   - orgId: ${orgId}`);
+  debugLog(`[fetchDeploymentDetailViaHybrid]   - envId: ${envId}`);
+  debugLog(`[fetchDeploymentDetailViaHybrid]   - applicationId: ${applicationId}`);
+  debugLog(`[fetchDeploymentDetailViaHybrid]   - baseUrl: ${baseUrl}`);
+  
   const url = `${baseUrl}/hybrid/api/v1/applications`;
+  debugLog(`[fetchDeploymentDetailViaHybrid] Calling Hybrid API: ${url}`);
+  debugLog(`[fetchDeploymentDetailViaHybrid] Headers: X-ANYPNT-ORG-ID=${orgId}, X-ANYPNT-ENV-ID=${envId}`);
   const res = await loggedFetch(url, {
     method: "GET",
     headers: {
@@ -60,8 +69,10 @@ async function fetchDeploymentDetailViaHybrid(
       "X-ANYPNT-ENV-ID": envId,
     },
   });
+  debugLog(`[fetchDeploymentDetailViaHybrid] Hybrid API response: status=${res.status}, ok=${res.ok}`);
   if (!res.ok) {
     const text = await res.text().catch(() => "");
+    debugLog(`[fetchDeploymentDetailViaHybrid] Hybrid API error: ${text.slice(0, 200)}`);
     if (res.status === 403) {
       throw new Error(
         `Hybrid API: deployment detail required but forbidden (403). ${text.slice(0, 200)}`
@@ -73,19 +84,27 @@ async function fetchDeploymentDetailViaHybrid(
   }
   const data = (await res.json()) as { data?: Array<Record<string, unknown>> } | Record<string, unknown>[];
   const list = Array.isArray(data) ? data : (data?.data ?? []);
+  debugLog(`[fetchDeploymentDetailViaHybrid] Hybrid API returned ${list.length} applications`);
+  debugLog(`[fetchDeploymentDetailViaHybrid] Searching for applicationId: ${applicationId}`);
   const app = list.find(
     (item: Record<string, unknown>) =>
       String(item.id ?? item.applicationId ?? "").toLowerCase() === applicationId.toLowerCase() ||
       (item as { applicationId?: string }).applicationId === applicationId
   ) as Record<string, unknown> | undefined;
   if (!app) {
-    debugLog("[Hybrid] No application found for applicationId:", applicationId, "list length:", list.length);
-    return {
-      monitoringSuggestions: { brokerLogger: false, insecureLogging: false },
-      deploymentApiStatus: "ok",
-    };
+    debugLog(`[fetchDeploymentDetailViaHybrid] ✗ No application found for applicationId: ${applicationId}, list length: ${list.length}`);
+    debugLog(`[fetchDeploymentDetailViaHybrid] Available application IDs: ${list.map((item: Record<string, unknown>) => item.id ?? item.applicationId ?? "unknown").join(", ")}`);
+    debugLog(`[fetchDeploymentDetailViaHybrid] Decision: Hybrid API returned empty, this might be a CloudHub deployment misclassified as HY`);
+    debugLog(`[fetchDeploymentDetailViaHybrid] Returning null to trigger AMC API fallback`);
+    debugLog("[fetchDeploymentDetailViaHybrid] ========== END (NOT FOUND - WILL FALLBACK) ==========");
+    return null;
   }
+  debugLog(`[fetchDeploymentDetailViaHybrid] ✓ Found application: id=${app.id ?? "undefined"}, applicationId=${(app as { applicationId?: string }).applicationId ?? "undefined"}`);
+  debugLog(`[fetchDeploymentDetailViaHybrid] Note: Hybrid deployments do not have CloudHub URLs, so region will be undefined`);
+  debugLog(`[fetchDeploymentDetailViaHybrid] Calling getMonitoringLogCategoriesFromDeployment with Hybrid application object...`);
   const monitoringSuggestions = getMonitoringLogCategoriesFromDeployment(app);
+  debugLog(`[fetchDeploymentDetailViaHybrid] getMonitoringLogCategoriesFromDeployment returned: brokerLogger=${monitoringSuggestions.brokerLogger}, insecureLogging=${monitoringSuggestions.insecureLogging}`);
+  debugLog("[fetchDeploymentDetailViaHybrid] ========== END (SUCCESS) ==========");
   return { region: undefined, monitoringSuggestions, deploymentApiStatus: "ok" };
 }
 
@@ -100,29 +119,84 @@ async function fetchDeploymentDetail(
   deploymentId: string,
   accessToken: string,
   baseUrl: string,
-  options?: { deploymentType?: DeploymentTypeHint }
+  options?: { deploymentType?: DeploymentTypeHint; appNameFromMetadata?: string }
 ): Promise<{
   region?: string;
   monitoringSuggestions: ApiStatus["monitoringSuggestions"];
   deploymentApiStatus: "ok" | "403_forbidden";
 }> {
+  debugLog("[fetchDeploymentDetail] ========== START ==========");
+  debugLog(`[fetchDeploymentDetail] Input parameters:`);
+  debugLog(`[fetchDeploymentDetail]   - orgId: ${orgId}`);
+  debugLog(`[fetchDeploymentDetail]   - envId: ${envId}`);
+  debugLog(`[fetchDeploymentDetail]   - deploymentId: ${deploymentId}`);
+  debugLog(`[fetchDeploymentDetail]   - baseUrl: ${baseUrl}`);
+  debugLog(`[fetchDeploymentDetail]   - deploymentType: ${options?.deploymentType ?? "undefined"}`);
+  
   const deploymentType = options?.deploymentType;
 
   if (deploymentType === "HY") {
-    debugLog("[fetchDeploymentDetail] HY detected, using Hybrid API for applicationId:", deploymentId);
-    return fetchDeploymentDetailViaHybrid(orgId, envId, deploymentId, accessToken, baseUrl);
+    debugLog(`[fetchDeploymentDetail] Decision: deploymentType is HY, trying Hybrid API first`);
+    debugLog(`[fetchDeploymentDetail] Calling fetchDeploymentDetailViaHybrid...`);
+    const hybridResult = await fetchDeploymentDetailViaHybrid(orgId, envId, deploymentId, accessToken, baseUrl);
+    
+    // If Hybrid API returns null (application not found), fallback to AMC API
+    // This handles cases where deployment is misclassified as HY but is actually CloudHub
+    if (hybridResult === null) {
+      debugLog(`[fetchDeploymentDetail] Decision: Hybrid API returned null (application not found), falling back to AMC API`);
+      debugLog(`[fetchDeploymentDetail] This deployment might be CloudHub (MC) misclassified as Hybrid`);
+      // Fall through to AMC API below
+    } else {
+      debugLog(`[fetchDeploymentDetail] Hybrid API found application: region=${hybridResult.region ?? "undefined"}, deploymentApiStatus=${hybridResult.deploymentApiStatus}`);
+      debugLog("[fetchDeploymentDetail] ========== END (HYBRID) ==========");
+      return hybridResult;
+    }
   }
+  
+  debugLog(`[fetchDeploymentDetail] Decision: deploymentType is not HY (or undefined), using AMC API`);
 
   const url = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${envId}/deployments/${deploymentId}`;
+  debugLog(`[fetchDeploymentDetail] Calling AMC API: ${url}`);
   const res = await loggedFetch(url, { method: "GET", headers: { Authorization: `Bearer ${accessToken}` } });
+  debugLog(`[fetchDeploymentDetail] AMC API response: status=${res.status}, ok=${res.ok}`);
   if (!res.ok) {
     const text = await res.text().catch(() => "");
+    debugLog(`[fetchDeploymentDetail] AMC API error response: ${text.slice(0, 200)}`);
     const is400RR =
       res.status === 400 &&
       (text.includes("ProviderType.RR") || text.includes("No enum constant"));
     if (is400RR) {
-      debugLog("[fetchDeploymentDetail] AMC v2 400 (RR/Hybrid), falling back to Hybrid API");
-      return fetchDeploymentDetailViaHybrid(orgId, envId, deploymentId, accessToken, baseUrl);
+      debugLog(`[fetchDeploymentDetail] Decision: 400 with RR/Hybrid error, falling back to Hybrid API`);
+      const result = await fetchDeploymentDetailViaHybrid(orgId, envId, deploymentId, accessToken, baseUrl);
+      if (result === null && options?.appNameFromMetadata) {
+        debugLog(`[fetchDeploymentDetail] Hybrid returned null; trying AMC list by app name then GET by id: name=${options.appNameFromMetadata}`);
+        const listUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${envId}/deployments?name=${encodeURIComponent(options.appNameFromMetadata)}`;
+        const listRes = await loggedFetch(listUrl, { method: "GET", headers: { Authorization: `Bearer ${accessToken}` } });
+        if (listRes.ok) {
+          const listData = (await listRes.json()) as { items?: Array<{ id: string; name: string }> };
+          const items = listData.items ?? [];
+          const match = items.find((d: { name: string }) => d.name === options!.appNameFromMetadata);
+          if (match) {
+            debugLog(`[fetchDeploymentDetail] AMC list by name found deployment id=${match.id}, fetching full detail for region and monitoringSuggestions`);
+            const getUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${envId}/deployments/${match.id}`;
+            const getRes = await loggedFetch(getUrl, { method: "GET", headers: { Authorization: `Bearer ${accessToken}` } });
+            if (getRes.ok) {
+              const deployment = (await getRes.json()) as Record<string, unknown>;
+              const region = getObjectStoreRegionFromDeployment(deployment as Parameters<typeof getObjectStoreRegionFromDeployment>[0]) ?? undefined;
+              const monitoringSuggestions = getMonitoringLogCategoriesFromDeployment(deployment);
+              debugLog(`[fetchDeploymentDetail] AMC GET by id (from name): region=${region ?? "undefined"}, brokerLogger=${monitoringSuggestions.brokerLogger}, insecureLogging=${monitoringSuggestions.insecureLogging}`);
+              return { region, monitoringSuggestions, deploymentApiStatus: "ok" as const };
+            }
+          }
+        }
+      }
+      if (result === null) {
+        debugLog(`[fetchDeploymentDetail] Hybrid API fallback returned null; returning safe object (region undefined) so caller does not read .region on null`);
+        return { region: undefined, monitoringSuggestions: { brokerLogger: false, insecureLogging: false }, deploymentApiStatus: "ok" as const };
+      }
+      debugLog(`[fetchDeploymentDetail] Hybrid API fallback returned: region=${result.region ?? "undefined"}`);
+      debugLog("[fetchDeploymentDetail] ========== END (HYBRID FALLBACK) ==========");
+      return result;
     }
     if (res.status === 403) {
       throw new Error(
@@ -133,11 +207,35 @@ async function fetchDeploymentDetail(
       `Deployment detail required but failed: ${res.status} ${res.statusText}. ${text.slice(0, 200)}`
     );
   }
+  debugLog(`[fetchDeploymentDetail] AMC API succeeded, parsing response...`);
   const deployment = (await res.json()) as Record<string, unknown>;
+  const dep = deployment as { id?: string; name?: string; application?: { configuration?: Record<string, unknown> } };
+  debugLog(`[KEY_FACTS] AMC GET deployment: id=${dep.id ?? "undefined"}, name=${dep.name ?? "undefined"}`);
+  const loggingConfig = dep.application?.configuration?.["mule.agent.logging.service"];
+  debugLog(`[KEY_FACTS] AMC GET deployment: application.configuration["mule.agent.logging.service"]=${loggingConfig ? JSON.stringify(loggingConfig) : "undefined"}`);
+  debugLog(`[fetchDeploymentDetail] Deployment JSON keys: ${Object.keys(deployment).join(", ")}`);
+  debugLog(`[fetchDeploymentDetail] Deployment structure check:`);
+  debugLog(`[fetchDeploymentDetail]   - has target: ${!!(deployment as { target?: unknown }).target}`);
+  debugLog(`[fetchDeploymentDetail]   - has target.deploymentSettings: ${!!((deployment as { target?: { deploymentSettings?: unknown } }).target?.deploymentSettings)}`);
+  debugLog(`[fetchDeploymentDetail]   - has target.deploymentSettings.http: ${!!((deployment as { target?: { deploymentSettings?: { http?: unknown } } }).target?.deploymentSettings?.http)}`);
+  debugLog(`[fetchDeploymentDetail]   - has target.deploymentSettings.http.inbound: ${!!((deployment as { target?: { deploymentSettings?: { http?: { inbound?: unknown } } } }).target?.deploymentSettings?.http?.inbound)}`);
+  const inbound = ((deployment as { target?: { deploymentSettings?: { http?: { inbound?: { internalUrl?: string; endpoints?: Array<{ url?: string }> } } } } }).target?.deploymentSettings?.http?.inbound);
+  debugLog(`[fetchDeploymentDetail]   - inbound.internalUrl: ${inbound?.internalUrl ?? "undefined"}`);
+  debugLog(`[fetchDeploymentDetail]   - inbound.endpoints: ${inbound?.endpoints ? `${inbound.endpoints.length} items` : "undefined"}`);
+  
+  debugLog(`[fetchDeploymentDetail] Calling getObjectStoreRegionFromDeployment...`);
   const region = getObjectStoreRegionFromDeployment(
     deployment as Parameters<typeof getObjectStoreRegionFromDeployment>[0]
   ) ?? undefined;
+  if (region) {
+    debugLog(`[fetchDeploymentDetail] ✓ Region detection successful: ${region}`);
+  } else {
+    debugLog(`[fetchDeploymentDetail] ✗ Region detection failed (returned null/undefined)`);
+  }
+  debugLog(`[fetchDeploymentDetail] Calling getMonitoringLogCategoriesFromDeployment with AMC deployment object...`);
   const monitoringSuggestions = getMonitoringLogCategoriesFromDeployment(deployment);
+  debugLog(`[fetchDeploymentDetail] getMonitoringLogCategoriesFromDeployment returned: brokerLogger=${monitoringSuggestions.brokerLogger}, insecureLogging=${monitoringSuggestions.insecureLogging}`);
+  debugLog("[fetchDeploymentDetail] ========== END (AMC) ==========");
   return { region, monitoringSuggestions, deploymentApiStatus: "ok" };
 }
 
@@ -791,11 +889,24 @@ async function getTaskDetailsFromRuntimeLogs(
 }
 
 export async function GET(request: NextRequest) {
+  debugLog("=".repeat(80));
+  debugLog("[TASK-CALLSTACK] ========== START GET REQUEST ==========");
+  debugLog(`[TASK-CALLSTACK] Request URL: ${request.url}`);
+  debugLog(`[TASK-CALLSTACK] Request method: ${request.method}`);
+  
   // Authentication check
+  debugLog("[TASK-CALLSTACK] Step 1: Authenticating request...");
   const authResult = await requireAuth(request);
-  if (authResult instanceof NextResponse) return authResult;
+  if (authResult instanceof NextResponse) {
+    debugLog(`[TASK-CALLSTACK] Authentication failed: ${authResult.status}`);
+    return authResult;
+  }
+  debugLog("[TASK-CALLSTACK] ✓ Authentication successful");
   
   const { baseUrl, accessToken } = authResult;
+  debugLog(`[TASK-CALLSTACK] baseUrl: ${baseUrl}`);
+  debugLog(`[TASK-CALLSTACK] accessToken: ${accessToken ? "present" : "missing"} (${accessToken?.length || 0} chars)`);
+  
   const { searchParams } = new URL(request.url);
   const orgId = searchParams.get("orgId");
   const taskId = searchParams.get("taskId");
@@ -804,7 +915,15 @@ export async function GET(request: NextRequest) {
   const envId = searchParams.get("envId") || undefined;
   const skipTracesParam = searchParams.get("skipTraces") ?? undefined;
 
+  debugLog("[TASK-CALLSTACK] Step 2: Extracting query parameters...");
+  debugLog(`[TASK-CALLSTACK] Raw orgId: ${orgId ?? "null"}`);
+  debugLog(`[TASK-CALLSTACK] Raw taskId: ${taskId ?? "null"}`);
+  debugLog(`[TASK-CALLSTACK] Raw apiInstanceId: ${apiInstanceId ?? "undefined"}`);
+  debugLog(`[TASK-CALLSTACK] Raw envId: ${envId ?? "undefined"}`);
+  debugLog(`[TASK-CALLSTACK] Raw skipTraces: ${skipTracesParam ?? "undefined"}`);
+
   // Validate query parameters with Zod
+  debugLog("[TASK-CALLSTACK] Step 3: Validating parameters with Zod schema...");
   const parseResult = TaskCallstackRequestSchema.safeParse({
     orgId,
     taskId,
@@ -814,20 +933,40 @@ export async function GET(request: NextRequest) {
   });
   
   if (!parseResult.success) {
+    debugLog(`[TASK-CALLSTACK] ✗ Validation failed: ${JSON.stringify(parseResult.error.format())}`);
     return validationError(parseResult.error);
   }
+  debugLog("[TASK-CALLSTACK] ✓ Validation successful");
   
   const { orgId: validatedOrgId, taskId: validatedTaskId, apiInstanceId: validatedApiInstanceId, envId: validatedEnvId, skipTraces: skipTracesRequested } = parseResult.data;
+  debugLog(`[TASK-CALLSTACK] Validated orgId: ${validatedOrgId}`);
+  debugLog(`[TASK-CALLSTACK] Validated taskId: ${validatedTaskId}`);
+  debugLog(`[TASK-CALLSTACK] Validated apiInstanceId: ${validatedApiInstanceId ?? "undefined"}`);
+  debugLog(`[TASK-CALLSTACK] Validated envId: ${validatedEnvId ?? "undefined"}`);
+  debugLog(`[TASK-CALLSTACK] Validated skipTraces: ${skipTracesRequested ?? false}`);
 
   const timeRange = 30 * 24 * 3600 * 1000;
+  debugLog(`[TASK-CALLSTACK] Time range: ${timeRange}ms (30 days)`);
 
   try {
     // Phase 1: search by taskId - filter by orgId first since we search all indices
+    debugLog("[TASK-CALLSTACK] Step 4: Phase 1 - Searching logs by taskId...");
     const phase1Query = `orgId=${validatedOrgId} AND "${validatedTaskId}"`;
+    debugLog(`[TASK-CALLSTACK] Phase 1 query: ${phase1Query}`);
+    debugLog(`[TASK-CALLSTACK] Phase 1 timeRange: ${timeRange}ms`);
     const phase1 = await msearch(validatedOrgId, phase1Query, { timeRangeMs: timeRange }, accessToken, baseUrl);
+    debugLog(`[TASK-CALLSTACK] Phase 1 result: ${phase1.hits?.length || 0} hits, error: ${phase1.error || "none"}`);
+    if (phase1.hits?.length > 0) {
+      const first = phase1.hits[0] as { _source?: { appId?: string; [key: string]: unknown } };
+      const src = first._source || {};
+      const firstAppId = (src.appId as string) || "undefined";
+      const firstApiInstanceId = (src.apiInstanceId as string) || (typeof src.fields === "object" && src.fields && typeof (src.fields as Record<string, unknown>).apiInstanceId === "string" ? (src.fields as Record<string, unknown>).apiInstanceId : "undefined");
+      debugLog(`[KEY_FACTS] msearch Phase 1: hitCount=${phase1.hits.length}, firstHit.appId=${firstAppId}, firstHit.apiInstanceId=${String(firstApiInstanceId)}`);
+    }
     
     // No-entitlement mode: get task details from runtime logs
     if (phase1.error === "MONITORING_CENTER_PREMIUM_REQUIRED") {
+      debugLog("[TASK-CALLSTACK] Decision: Premium required, entering no-entitlement mode");
       debugLog("[NO-ENTITLEMENT] Premium required, getting task details from runtime logs");
       const runtimeLogsResult = await getTaskDetailsFromRuntimeLogs(
         validatedOrgId,
@@ -898,25 +1037,46 @@ export async function GET(request: NextRequest) {
     }
 
     // Extract trace_id from any entry with traceparent
+    debugLog("[TASK-CALLSTACK] Step 5: Extracting traceId from phase 1 hits...");
     let traceId: string | null = null;
-    for (const h of phase1.hits) {
+    debugLog(`[TASK-CALLSTACK] Phase 1 hits count: ${phase1.hits.length}`);
+    for (let i = 0; i < phase1.hits.length; i++) {
+      const h = phase1.hits[i];
       const hit = h as { _source?: { message?: string } };
-      const m = ((hit._source?.message as string) || "").match(/traceparent: 00-([a-f0-9]{32})/);
+      const message = (hit._source?.message as string) || "";
+      debugLog(`[TASK-CALLSTACK] Hit ${i}: checking for traceparent in message (length: ${message.length})`);
+      const m = message.match(/traceparent: 00-([a-f0-9]{32})/);
       if (m) {
         traceId = m[1];
+        debugLog(`[TASK-CALLSTACK] ✓ Found traceId: ${traceId}`);
         break;
       }
     }
+    if (!traceId) {
+      debugLog(`[TASK-CALLSTACK] ✗ No traceId found in phase 1 hits`);
+    }
 
     // Phase 2: combined search if we found trace_id
+    debugLog("[TASK-CALLSTACK] Step 6: Phase 2 - Combined search...");
     let allHits = phase1.hits;
     let phase2Query: string | null = null;
     if (traceId) {
+      debugLog(`[TASK-CALLSTACK] Decision: traceId found, proceeding with phase 2 search`);
       phase2Query = `orgId=${validatedOrgId} AND ("${traceId}" OR "${validatedTaskId}")`;
+      debugLog(`[TASK-CALLSTACK] Phase 2 query: ${phase2Query}`);
       const phase2 = await msearch(validatedOrgId, phase2Query, { timeRangeMs: timeRange }, accessToken, baseUrl);
+      debugLog(`[TASK-CALLSTACK] Phase 2 result: ${phase2.hits?.length || 0} hits, error: ${phase2.error || "none"}`);
+      if (phase2.hits?.length > 0) {
+        const first2 = phase2.hits[0] as { _source?: { appId?: string; [key: string]: unknown } };
+        const src2 = first2._source || {};
+        const firstAppId2 = (src2.appId as string) || "undefined";
+        const firstApiInstanceId2 = (src2.apiInstanceId as string) || (typeof src2.fields === "object" && src2.fields && typeof (src2.fields as Record<string, unknown>).apiInstanceId === "string" ? (src2.fields as Record<string, unknown>).apiInstanceId : "undefined");
+        debugLog(`[KEY_FACTS] msearch Phase 2: hitCount=${phase2.hits.length}, firstHit.appId=${firstAppId2}, firstHit.apiInstanceId=${String(firstApiInstanceId2)}`);
+      }
       
       // No-entitlement mode: get task details from runtime logs
       if (phase2.error === "MONITORING_CENTER_PREMIUM_REQUIRED") {
+        debugLog("[TASK-CALLSTACK] Decision: Premium required in phase2, entering no-entitlement mode");
         debugLog("[NO-ENTITLEMENT] Premium required in phase2, getting task details from runtime logs");
         const runtimeLogsResult = await getTaskDetailsFromRuntimeLogs(
           validatedOrgId,
@@ -983,9 +1143,13 @@ export async function GET(request: NextRequest) {
       }
 
       allHits = phase2.hits;
+      debugLog(`[TASK-CALLSTACK] Using phase 2 hits: ${allHits.length} total`);
+    } else {
+      debugLog(`[TASK-CALLSTACK] No traceId found, using phase 1 hits only: ${allHits.length} total`);
     }
 
     // Deduplicate by _id
+    debugLog("[TASK-CALLSTACK] Step 7: Deduplicating hits by _id...");
     const seen = new Set<string>();
     const unique: unknown[] = [];
     for (const h of allHits) {
@@ -995,8 +1159,10 @@ export async function GET(request: NextRequest) {
         unique.push(h);
       }
     }
+    debugLog(`[TASK-CALLSTACK] After deduplication: ${unique.length} unique entries (from ${allHits.length} total)`);
 
     // Sort by timestamp (handle numeric string = epoch ms from flex-gateway)
+    debugLog("[TASK-CALLSTACK] Step 8: Sorting entries by timestamp...");
     unique.sort((a: unknown, b: unknown) => {
       const hitA = a as { _source?: { timestamp?: number | string } };
       const hitB = b as { _source?: { timestamp?: number | string } };
@@ -1006,8 +1172,10 @@ export async function GET(request: NextRequest) {
       const tb = typeof nb === "number" ? nb : new Date(nb).getTime();
       return ta - tb;
     });
+    debugLog(`[TASK-CALLSTACK] ✓ Entries sorted`);
 
     // Classify and parse each entry (normalize timestamp: flex-gateway sends epoch ms as string)
+    debugLog("[TASK-CALLSTACK] Step 9: Classifying and parsing entries...");
     const entries = unique.map((h: unknown, i: number) => {
       const hit = h as { _source?: { message?: string; logger?: string; timestamp?: string | number; "log-level"?: string; appId?: string; workerId?: string; [key: string]: unknown }; _id?: string; _index?: string };
       const s = hit._source || {};
@@ -1034,14 +1202,25 @@ export async function GET(request: NextRequest) {
       };
     });
 
+    debugLog(`[TASK-CALLSTACK] ✓ Parsed ${entries.length} entries`);
+    debugLog(`[TASK-CALLSTACK] Entry types breakdown: ${JSON.stringify(
+      entries.reduce((acc: Record<string, number>, e: typeof entries[0]) => {
+        acc[e.type] = (acc[e.type] || 0) + 1;
+        return acc;
+      }, {})
+    )}`);
+
     // Build Job Card from parsed entries
+    debugLog("[TASK-CALLSTACK] Step 10: Building job card from entries...");
     const inbound = entries.find((e: typeof entries[0]) => e.type === "INBOUND_REQUEST");
     const finalResp = entries.find((e: typeof entries[0]) => e.type === "FINAL_RESPONSE");
     const toolSelections = entries.filter((e: typeof entries[0]) => e.type === "LLM_TOOL_SELECTION");
     const toolExecutions = entries.filter((e: typeof entries[0]) => e.type === "TOOL_EXECUTED");
+    debugLog(`[TASK-CALLSTACK] Found: inbound=${!!inbound}, finalResp=${!!finalResp}, toolSelections=${toolSelections.length}, toolExecutions=${toolExecutions.length}`);
 
     const firstEntry = entries[0];
     const lastEntry = entries[entries.length - 1];
+    debugLog(`[TASK-CALLSTACK] First entry timestamp: ${firstEntry?.timestamp ?? "none"}, Last entry timestamp: ${lastEntry?.timestamp ?? "none"}`);
     let duration: string | null = null;
     if (firstEntry && lastEntry) {
       const t1 =
@@ -1058,43 +1237,68 @@ export async function GET(request: NextRequest) {
             : new Date(lastEntry.timestamp).getTime();
       if (!Number.isNaN(t1) && !Number.isNaN(t2)) {
         duration = ((t2 - t1) / 1000).toFixed(1);
+        debugLog(`[TASK-CALLSTACK] Calculated duration: ${duration}s`);
+      } else {
+        debugLog(`[TASK-CALLSTACK] ✗ Could not calculate duration: t1=${t1}, t2=${t2}`);
       }
+    } else {
+      debugLog(`[TASK-CALLSTACK] ✗ Missing first or last entry for duration calculation`);
     }
 
     const maxIter = Math.max(0, ...entries.map((e: typeof entries[0]) => parseInt((e.fields.iteration as string) || "0", 10)));
     const toolStrings = toolSelections.map((e: typeof entries[0]) => e.fields.tool as string).filter((t: string | undefined): t is string => typeof t === "string" && Boolean(t));
     const allTools: string[] = Array.from(new Set(toolStrings));
+    debugLog(`[TASK-CALLSTACK] Max iteration: ${maxIter}, Tools: ${allTools.join(", ") || "none"}`);
 
     const brokerName: string = String((entries.find((e: typeof entries[0]) => e.fields.agent) || {}).fields?.agent ?? "");
     const appId = (entries.find((e: typeof entries[0]) => e.appId && !e.appId.startsWith("_")) || {}).appId || "";
     const apiInstanceId = (entries.find((e: typeof entries[0]) => e.fields.apiInstanceId) || {}).fields?.apiInstanceId || "";
+    debugLog(`[KEY_FACTS] Extracted from log entries: brokerName="${brokerName}", appId="${appId}", apiInstanceId="${apiInstanceId}"`);
+    debugLog(`[TASK-CALLSTACK] Extracted from entries: brokerName="${brokerName}", appId="${appId}", apiInstanceId="${apiInstanceId}"`);
 
     // Extract deployment ID from appId if it's in the format APP_{deploymentId}__...
     // Or try to get it from the appId directly if it's a deployment ID
+    debugLog("[TASK-CALLSTACK] Step 11: Extracting deploymentId from appId...");
     let deploymentId: string | null = null;
     if (appId) {
+      debugLog(`[TASK-CALLSTACK] Checking appId: "${appId}"`);
       const appIdMatch = appId.match(/^APP_([a-f0-9-]+)__/);
       if (appIdMatch) {
         deploymentId = appIdMatch[1];
+        debugLog(`[TASK-CALLSTACK] ✓ Extracted deploymentId from APP_ pattern: ${deploymentId}`);
       } else if (/^[a-f0-9-]{36}$/.test(appId)) {
         // appId might be the deployment ID itself
         deploymentId = appId;
+        debugLog(`[TASK-CALLSTACK] ✓ appId is deploymentId: ${deploymentId}`);
+      } else {
+        debugLog(`[TASK-CALLSTACK] ✗ appId does not match deploymentId patterns`);
       }
+    } else {
+      debugLog(`[TASK-CALLSTACK] ✗ No appId found in entries`);
     }
+    debugLog(`[TASK-CALLSTACK] Current deploymentId: ${deploymentId ?? "null"}`);
 
     // Track deployment type for better error messages
     let deploymentType: string | undefined;
+    /** App name from RM metadata.source (urn:gav:orgId:appName:version) for AMC lookup when GET by deploymentId returns 400 RR */
+    let appNameForDeploymentDetail: string | undefined;
     
     // Track Application Manager API 403 error for UI display
     let applicationManager403Error: string | null = null;
     /** Deployment API (AMC) status for apiStatus table: not_used | ok | 403_forbidden */
     let deploymentApiStatus: "ok" | "403_forbidden" | "not_used" = "not_used";
 
-    // If we don't have deploymentId yet, try to get it from API instance ID via Runtime Manager API
-    if (!deploymentId && apiInstanceId && validatedEnvId) {
+    // If we don't have deploymentId yet, try to get it from API instance ID via Runtime Manager API.
+    // Prefer validatedApiInstanceId (from request = selected broker) over apiInstanceId from log entries,
+    // so we resolve the correct broker's deployment instead of a different app that may appear in msearch hits.
+    const apiInstanceIdForRm = validatedApiInstanceId || apiInstanceId;
+    debugLog("[TASK-CALLSTACK] Step 12: Resolving deploymentId from API instance...");
+    debugLog(`[TASK-CALLSTACK] Decision: deploymentId=${deploymentId ?? "null"}, apiInstanceIdForRm=${apiInstanceIdForRm || "none"} (validated=${validatedApiInstanceId ?? "none"}, fromEntries=${apiInstanceId || "none"}), validatedEnvId=${validatedEnvId ?? "none"}`);
+    if (!deploymentId && apiInstanceIdForRm && validatedEnvId) {
+      debugLog(`[TASK-CALLSTACK] Decision: Attempting Runtime Manager API lookup`);
       try {
-        debugLog(`[ObjectStore] Attempting to get deploymentId from API instance ID: ${apiInstanceId}`);
-        const runtimeManagerUrl = `${baseUrl}/apimanager/api/v1/organizations/${validatedOrgId}/environments/${validatedEnvId}/apis/${apiInstanceId}`;
+        debugLog(`[TASK-CALLSTACK] Calling Runtime Manager API: /apimanager/api/v1/organizations/${validatedOrgId}/environments/${validatedEnvId}/apis/${apiInstanceIdForRm}`);
+        const runtimeManagerUrl = `${baseUrl}/apimanager/api/v1/organizations/${validatedOrgId}/environments/${validatedEnvId}/apis/${apiInstanceIdForRm}`;
         const rmRes = await loggedFetch(runtimeManagerUrl, {
           method: "GET",
           headers: {
@@ -1114,40 +1318,51 @@ export async function GET(request: NextRequest) {
             metadata?: { source?: string };
           };
           
-          // Store deployment type for later use
+          // Store deployment type and app name (for AMC lookup by name when GET by id returns 400 RR)
           deploymentType = apiInstanceInfo.deployment?.type;
-          
-          // Log deployment type for debugging
-          if (deploymentType) {
-            debugLog(`[ObjectStore] Deployment type: ${deploymentType}`);
+          const source = apiInstanceInfo.metadata?.source;
+          if (source && typeof source === "string") {
+            const parts = source.split(":");
+            if (parts.length >= 4) appNameForDeploymentDetail = parts[3];
           }
+          debugLog(`[KEY_FACTS] Runtime Manager GET api (apiInstanceId=${apiInstanceIdForRm}): deploymentId=${apiInstanceInfo.deploymentId ?? "undefined"}, deployment.applicationId=${apiInstanceInfo.deployment?.applicationId ?? "undefined"}, deployment.type=${apiInstanceInfo.deployment?.type ?? "undefined"}, appId=${apiInstanceInfo.appId ?? "undefined"}, metadata.source=${apiInstanceInfo.metadata?.source ?? "undefined"}`);
+          debugLog(`[TASK-CALLSTACK] Runtime Manager API response: deploymentType=${deploymentType ?? "undefined"}, deploymentId=${apiInstanceInfo.deploymentId ?? "undefined"}, deployment.applicationId=${apiInstanceInfo.deployment?.applicationId ?? "undefined"}, appId=${apiInstanceInfo.appId ?? "undefined"}, metadata.source=${apiInstanceInfo.metadata?.source ?? "undefined"}`);
           
-          // For Hybrid deployments, Runtime Manager's applicationId is NOT the Object Store deploymentId
-          // We need to use Application Manager API to get the correct deploymentId
-          // For other deployment types, try Runtime Manager first
-          if (deploymentType === "HY") {
-            debugLog(`[ObjectStore] Hybrid deployment detected - will use Application Manager API for correct deploymentId`);
-            // Fall through to Application Manager API lookup below
+          // For Hybrid (HY), use deployment.applicationId from RM as deployment id for this API instance.
+          // This ensures we use the selected broker's deployment, not a different app's deployment resolved from log appId (e.g. mulesoft-connector-playground-app).
+          if (deploymentType === "HY" && apiInstanceInfo.deployment?.applicationId) {
+            deploymentId = apiInstanceInfo.deployment.applicationId;
+            debugLog(`[TASK-CALLSTACK] ✓ Found deploymentId from Runtime Manager API (HY): ${deploymentId}`);
+          } else if (deploymentType === "HY") {
+            debugLog(`[TASK-CALLSTACK] Decision: Hybrid deployment but no applicationId in RM response - will try AMC/metadata.source fallback`);
           } else if (apiInstanceInfo.deployment?.applicationId) {
             // For non-Hybrid deployments, try Runtime Manager's applicationId first
             deploymentId = apiInstanceInfo.deployment.applicationId;
-            debugLog(`[ObjectStore] Found deploymentId from Runtime Manager API deployment.applicationId: ${deploymentId}`);
+            debugLog(`[TASK-CALLSTACK] ✓ Found deploymentId from Runtime Manager API deployment.applicationId: ${deploymentId}`);
           } else if (apiInstanceInfo.deploymentId) {
             deploymentId = apiInstanceInfo.deploymentId;
-            debugLog(`[ObjectStore] Found deploymentId from Runtime Manager API: ${deploymentId}`);
+            debugLog(`[TASK-CALLSTACK] ✓ Found deploymentId from Runtime Manager API: ${deploymentId}`);
           } else if (apiInstanceInfo.appId) {
             // Try to extract from appId if it's in the format APP_{deploymentId}__...
             const appIdMatch = apiInstanceInfo.appId.match(/^APP_([a-f0-9-]+)__/);
             if (appIdMatch) {
               deploymentId = appIdMatch[1];
-              debugLog(`[ObjectStore] Extracted deploymentId from Runtime Manager appId: ${deploymentId}`);
+              debugLog(`[TASK-CALLSTACK] ✓ Extracted deploymentId from Runtime Manager appId: ${deploymentId}`);
+            } else {
+              debugLog(`[TASK-CALLSTACK] ✗ Runtime Manager appId does not match APP_ pattern: ${apiInstanceInfo.appId}`);
             }
+          } else {
+            debugLog(`[TASK-CALLSTACK] ✗ No deploymentId found in Runtime Manager response`);
           }
           
-          // If we still don't have deploymentId (or it's Hybrid), try Application Manager API
-          // Use appId from logs if available, otherwise try metadata.source
-          if (!deploymentId && appId) {
-            debugLog(`[ObjectStore] Looking up deployment by app name in Application Manager API: ${appId}`);
+          // If we still don't have deploymentId, try Application Manager API.
+          // When validatedApiInstanceId is present (user selected broker), do NOT use appId from log entries —
+          // that appId can be from a different app (e.g. mulesoft-connector-playground-app) when msearch returns org-wide hits.
+          // Use metadata.source from RM response instead, or skip so we don't resolve the wrong deployment.
+          debugLog(`[TASK-CALLSTACK] Decision: deploymentId=${deploymentId ?? "null"}, appId=${appId || "none"}, deploymentType=${deploymentType ?? "undefined"}, skipAppNameLookup=${!!validatedApiInstanceId}`);
+          if (!deploymentId && appId && !validatedApiInstanceId) {
+            debugLog(`[TASK-CALLSTACK] Decision: Attempting Application Manager API lookup by app name (no selected broker in request)`);
+            debugLog(`[TASK-CALLSTACK] Calling Application Manager API: /amc/application-manager/api/v2/organizations/${validatedOrgId}/environments/${validatedEnvId}/deployments?name=${encodeURIComponent(appId)}`);
             const deploymentsUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${validatedOrgId}/environments/${validatedEnvId}/deployments?name=${encodeURIComponent(appId)}`;
             const deploymentsRes = await loggedFetch(deploymentsUrl, {
               method: "GET",
@@ -1159,7 +1374,9 @@ export async function GET(request: NextRequest) {
             
             if (deploymentsRes.ok) {
               const deploymentsData = (await deploymentsRes.json()) as { items?: Array<{ id: string; name: string }> };
-              const matchingDeployment = deploymentsData.items?.find((d: { name: string }) => d.name === appId);
+              const items = deploymentsData.items ?? [];
+              debugLog(`[KEY_FACTS] AMC list deployments?name=${appId}: itemCount=${items.length}, items=${JSON.stringify(items.map((d: { id: string; name: string }) => ({ id: d.id, name: d.name })))}`);
+              const matchingDeployment = items.find((d: { name: string }) => d.name === appId);
               if (matchingDeployment) {
                 deploymentId = matchingDeployment.id;
                 debugLog(`[ObjectStore] Found deploymentId from Application Manager API by app name: ${deploymentId}`);
@@ -1207,7 +1424,9 @@ export async function GET(request: NextRequest) {
               
               if (deploymentsRes.ok) {
                 const deploymentsData = (await deploymentsRes.json()) as { items?: Array<{ id: string; name: string }> };
-                const matchingDeployment = deploymentsData.items?.find((d: { name: string }) => d.name === appName);
+                const itemsSource = deploymentsData.items ?? [];
+                debugLog(`[KEY_FACTS] AMC list deployments?name=${appName}: itemCount=${itemsSource.length}, items=${JSON.stringify(itemsSource.map((d: { id: string; name: string }) => ({ id: d.id, name: d.name })))}`);
+                const matchingDeployment = itemsSource.find((d: { name: string }) => d.name === appName);
                 if (matchingDeployment) {
                   deploymentId = matchingDeployment.id;
                   debugLog(`[ObjectStore] Found deploymentId from Application Manager API by app name: ${deploymentId}`);
@@ -1246,10 +1465,14 @@ export async function GET(request: NextRequest) {
       }
     }
     
-    // If we still don't have deploymentId but have appId from logs, try Application Manager API directly
-    if (!deploymentId && appId && validatedEnvId) {
+    // If we still don't have deploymentId but have appId from logs, try Application Manager API directly.
+    // Skip when validatedApiInstanceId is present — we already preferred RM for the selected broker and must not use log appId (wrong app).
+    debugLog(`[TASK-CALLSTACK] Step 13: Final deploymentId resolution attempt...`);
+    debugLog(`[TASK-CALLSTACK] Current state: deploymentId=${deploymentId ?? "null"}, appId=${appId || "none"}, validatedEnvId=${validatedEnvId ?? "none"}, skipStep13=${!!validatedApiInstanceId}`);
+    if (!deploymentId && appId && validatedEnvId && !validatedApiInstanceId) {
+      debugLog(`[TASK-CALLSTACK] Decision: Attempting Application Manager API lookup directly (no selected broker in request)`);
       try {
-        debugLog(`[ObjectStore] Attempting to get deploymentId from Application Manager API using appId: ${appId}`);
+        debugLog(`[TASK-CALLSTACK] Calling Application Manager API: /amc/application-manager/api/v2/organizations/${validatedOrgId}/environments/${validatedEnvId}/deployments?name=${encodeURIComponent(appId)}`);
         const deploymentsUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${validatedOrgId}/environments/${validatedEnvId}/deployments?name=${encodeURIComponent(appId)}`;
         const deploymentsRes = await loggedFetch(deploymentsUrl, {
           method: "GET",
@@ -1261,7 +1484,9 @@ export async function GET(request: NextRequest) {
         
               if (deploymentsRes.ok) {
                 const deploymentsData = (await deploymentsRes.json()) as { items?: Array<{ id: string; name: string; applicationId?: string | null }> };
-                const matchingDeployment = deploymentsData.items?.find((d: { name: string }) => d.name === appId);
+                const itemsFinal = deploymentsData.items ?? [];
+                debugLog(`[KEY_FACTS] AMC list deployments?name=${appId} (Step 13): itemCount=${itemsFinal.length}, items=${JSON.stringify(itemsFinal.map((d: { id: string; name: string }) => ({ id: d.id, name: d.name })))}`);
+                const matchingDeployment = itemsFinal.find((d: { name: string }) => d.name === appId);
                 if (matchingDeployment) {
                   deploymentId = matchingDeployment.id;
                   debugLog(`[ObjectStore] Found deploymentId from Application Manager API by app name: ${deploymentId}`);
@@ -1299,6 +1524,18 @@ export async function GET(request: NextRequest) {
     }
 
     // OPTIMIZATION: Fetch Object Store and trace spans in parallel since they're independent
+    debugLog(`[TASK-CALLSTACK] Step 14: Preparing Object Store fetch...`);
+    debugLog(`[TASK-CALLSTACK] Final variables before Object Store fetch:`);
+    debugLog(`[TASK-CALLSTACK]   - validatedOrgId: ${validatedOrgId}`);
+    debugLog(`[TASK-CALLSTACK]   - validatedEnvId: ${validatedEnvId ?? "undefined"}`);
+    debugLog(`[TASK-CALLSTACK]   - validatedTaskId: ${validatedTaskId}`);
+    debugLog(`[TASK-CALLSTACK]   - brokerName: ${brokerName || "empty"}`);
+    debugLog(`[TASK-CALLSTACK]   - deploymentId: ${deploymentId ?? "null"}`);
+    debugLog(`[TASK-CALLSTACK]   - appId: ${appId || "empty"}`);
+    debugLog(`[TASK-CALLSTACK]   - apiInstanceId: ${apiInstanceId || "empty"}`);
+    debugLog(`[TASK-CALLSTACK]   - deploymentType: ${deploymentType ?? "undefined"}`);
+    debugLog(`[TASK-CALLSTACK] Decision: ${validatedEnvId && deploymentId ? "Will fetch Object Store" : `Skipping Object Store - missing: ${!validatedEnvId ? "envId " : ""}${!deploymentId ? "deploymentId" : ""}`}`);
+    
     // Fetch Object Store data if we have envId and deployment ID (brokerName can be empty - we'll still get no_store/403/no_keys from client)
     let objectStoreData: {
       available: boolean;
@@ -1319,23 +1556,44 @@ export async function GET(request: NextRequest) {
       monitoringSuggestions?: ApiStatus["monitoringSuggestions"];
     }> => {
       if (validatedEnvId && deploymentId && accessToken) {
+        debugLog(`[TASK-CALLSTACK] Object Store fetch conditions met: envId=${validatedEnvId}, deploymentId=${deploymentId}, accessToken=present`);
         let objectStoreRegion: string | undefined;
         let monitoringSuggestions: ApiStatus["monitoringSuggestions"];
         try {
+          debugLog(`[TASK-CALLSTACK] Calling fetchDeploymentDetail with: orgId=${validatedOrgId}, envId=${validatedEnvId}, deploymentId=${deploymentId}, deploymentType=${deploymentType ?? "undefined"}, appNameFromMetadata=${appNameForDeploymentDetail ?? "undefined"}`);
           const deploymentDetail = await fetchDeploymentDetail(
             validatedOrgId,
             validatedEnvId,
             deploymentId,
             accessToken,
             baseUrl,
-            { deploymentType }
+            { deploymentType, appNameFromMetadata: appNameForDeploymentDetail }
           );
-          objectStoreRegion = deploymentDetail.region;
-          monitoringSuggestions = deploymentDetail.monitoringSuggestions;
-          if (deploymentDetail.deploymentApiStatus) deploymentApiStatus = deploymentDetail.deploymentApiStatus;
-          if (objectStoreRegion) debugLog(`[ObjectStore] Resolved region from deployment URLs: ${objectStoreRegion}`);
+          if (deploymentDetail == null) {
+            debugLog(`[TASK-CALLSTACK] fetchDeploymentDetail returned null; using undefined region and default monitoringSuggestions`);
+            objectStoreRegion = undefined;
+            monitoringSuggestions = { brokerLogger: false, insecureLogging: false };
+          } else {
+            debugLog(`[TASK-CALLSTACK] fetchDeploymentDetail returned: region=${deploymentDetail.region ?? "undefined"}, deploymentApiStatus=${deploymentDetail.deploymentApiStatus ?? "undefined"}`);
+            objectStoreRegion = deploymentDetail.region;
+            monitoringSuggestions = deploymentDetail.monitoringSuggestions;
+          }
+          if (deploymentDetail?.deploymentApiStatus) deploymentApiStatus = deploymentDetail.deploymentApiStatus;
+          if (objectStoreRegion) {
+            debugLog(`[TASK-CALLSTACK] ✓ Region resolved: ${objectStoreRegion}`);
+          } else {
+            debugLog(`[TASK-CALLSTACK] ✗ Region detection returned null/undefined`);
+          }
           const taskStartTime = firstEntry?.timestamp;
-          debugLog(`[ObjectStore] Attempting to fetch Object Store data - orgId: ${validatedOrgId}, envId: ${validatedEnvId}, taskId: ${validatedTaskId}, brokerName: ${brokerName}, deploymentId: ${deploymentId}, appId: ${appId}, deploymentType: ${deploymentType || "unknown"}, objectStoreRegion: ${objectStoreRegion ?? "(none)"}`);
+          debugLog(`[TASK-CALLSTACK] Calling fetchObjectStoreData with:`);
+          debugLog(`[TASK-CALLSTACK]   - orgId: ${validatedOrgId}`);
+          debugLog(`[TASK-CALLSTACK]   - envId: ${validatedEnvId}`);
+          debugLog(`[TASK-CALLSTACK]   - taskId: ${validatedTaskId}`);
+          debugLog(`[TASK-CALLSTACK]   - brokerName: ${brokerName || "empty"}`);
+          debugLog(`[TASK-CALLSTACK]   - deploymentId: ${deploymentId}`);
+          debugLog(`[TASK-CALLSTACK]   - deploymentType: ${deploymentType || "unknown"}`);
+          debugLog(`[TASK-CALLSTACK]   - objectStoreRegion: ${objectStoreRegion ?? "(none)"}`);
+          debugLog(`[TASK-CALLSTACK]   - taskStartTime: ${taskStartTime ?? "undefined"}`);
           const result = await fetchObjectStoreData(
             validatedOrgId,
             validatedEnvId,
@@ -1347,6 +1605,7 @@ export async function GET(request: NextRequest) {
             objectStoreRegion,
             taskStartTime
           );
+          debugLog(`[TASK-CALLSTACK] fetchObjectStoreData returned: available=${result.available}, objectStoreStatus=${result.objectStoreStatus ?? "undefined"}, errors=${result.errors?.length || 0}`);
           if (result.available) {
             debugLog("[ObjectStore] Successfully fetched Object Store data");
           } else {
@@ -1449,10 +1708,15 @@ export async function GET(request: NextRequest) {
                 : "skipped");
     // Use only deployment/config-based suggestions for "Set" so we don't show "Set" when
     // the app merely emits logs with those logger/class names (e.g. INSECURE-LOGGING, broker Loop).
+    debugLog(`[TASK-CALLSTACK] Building monitoringSuggestions from objectStorePayload:`);
+    debugLog(`[TASK-CALLSTACK]   - objectStorePayload.monitoringSuggestions: ${JSON.stringify(objectStorePayload.monitoringSuggestions ?? "undefined")}`);
+    debugLog(`[TASK-CALLSTACK]   - objectStorePayload.monitoringSuggestions?.brokerLogger: ${objectStorePayload.monitoringSuggestions?.brokerLogger ?? "undefined"} (strict === true check: ${objectStorePayload.monitoringSuggestions?.brokerLogger === true})`);
+    debugLog(`[TASK-CALLSTACK]   - objectStorePayload.monitoringSuggestions?.insecureLogging: ${objectStorePayload.monitoringSuggestions?.insecureLogging ?? "undefined"} (strict === true check: ${objectStorePayload.monitoringSuggestions?.insecureLogging === true})`);
     const monitoringSuggestions: ApiStatus["monitoringSuggestions"] = {
       brokerLogger: objectStorePayload.monitoringSuggestions?.brokerLogger === true,
       insecureLogging: objectStorePayload.monitoringSuggestions?.insecureLogging === true,
     };
+    debugLog(`[TASK-CALLSTACK] Final monitoringSuggestions: brokerLogger=${monitoringSuggestions.brokerLogger}, insecureLogging=${monitoringSuggestions.insecureLogging}`);
     const apiStatus: ApiStatus = {
       logSearch: "ok",
       objectStore: objectStoreStatus,
@@ -1485,6 +1749,19 @@ export async function GET(request: NextRequest) {
       apiStatus,
     };
 
+    debugLog("[TASK-CALLSTACK] Step 15: Building final response...");
+    debugLog(`[TASK-CALLSTACK] Final jobCard variables:`);
+    debugLog(`[TASK-CALLSTACK]   - taskId: ${validatedTaskId}`);
+    debugLog(`[TASK-CALLSTACK]   - contextId: ${(entries.find((e: typeof entries[0]) => e.fields.contextId) || {}).fields?.contextId ?? "none"}`);
+    debugLog(`[TASK-CALLSTACK]   - brokerName: ${brokerName || "empty"}`);
+    debugLog(`[TASK-CALLSTACK]   - appId: ${appId || "empty"}`);
+    debugLog(`[TASK-CALLSTACK]   - deploymentId: ${deploymentId ?? "null"}`);
+    debugLog(`[TASK-CALLSTACK]   - objectStore.available: ${objectStoreData.available}`);
+    debugLog(`[TASK-CALLSTACK]   - entries.length: ${entries.length}`);
+    debugLog(`[TASK-CALLSTACK]   - traceSpans.length: ${traceSpans?.length || 0}`);
+    debugLog("[TASK-CALLSTACK] ========== END GET REQUEST (SUCCESS) ==========");
+    debugLog("=".repeat(80));
+    
     return NextResponse.json({
       jobCard,
       entries,
@@ -1492,6 +1769,8 @@ export async function GET(request: NextRequest) {
       rawQueries: { phase1: phase1Query, phase2: phase2Query, traceId },
     });
   } catch (error) {
+    debugLog("[TASK-CALLSTACK] ========== END GET REQUEST (ERROR) ==========");
+    debugLog("=".repeat(80));
     debugError("Task callstack API error:", error);
     const message = error instanceof Error ? error.message : "Failed to fetch task call stack";
     const isDeploymentRequired =

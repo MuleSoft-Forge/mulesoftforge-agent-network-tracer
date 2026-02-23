@@ -22,6 +22,25 @@ export function isLoggingEnabled(): boolean {
   return enabled === "true" || enabled === "1";
 }
 
+/** Max length for full response body when DEBUG_FULL_RESPONSES is set (avoid huge logs). */
+const FULL_RESPONSE_MAX_CHARS = 50000;
+
+/**
+ * When true, request/response bodies are logged in full (truncated to FULL_RESPONSE_MAX_CHARS)
+ * instead of being sanitized. Use only for local/debug; never in production.
+ * Set DEBUG_FULL_RESPONSES=true (or 1) to enable.
+ */
+export function isFullResponseLoggingEnabled(): boolean {
+  const v = process.env.DEBUG_FULL_RESPONSES;
+  return v === "true" || v === "1";
+}
+
+function truncateForLog(body: unknown): unknown {
+  const str = typeof body === "string" ? body : JSON.stringify(body);
+  if (str.length <= FULL_RESPONSE_MAX_CHARS) return body;
+  return str.slice(0, FULL_RESPONSE_MAX_CHARS) + `\n...[TRUNCATED ${str.length - FULL_RESPONSE_MAX_CHARS} more chars]`;
+}
+
 /**
  * Debug logger that respects ENABLE_API_LOGGING feature flag
  * Use this for all internal debug logging (session management, auth flow, etc.)
@@ -98,9 +117,8 @@ function sanitizeHeaders(headers: HeadersInit): Record<string, string> {
   for (const [key, value] of Object.entries(headerObj)) {
     const lowerKey = key.toLowerCase();
     if (lowerKey === "authorization") {
-      // Keep only the token type, mask the actual token
-      const tokenType = typeof value === "string" && value.split(" ")[0];
-      sanitized[key] = `${tokenType || "Bearer"} [REDACTED]`;
+      // Log full value for debugging/curl (do not redact)
+      sanitized[key] = String(value);
     } else if (SENSITIVE_FIELDS.some((field) => lowerKey.includes(field))) {
       sanitized[key] = "[REDACTED]";
     } else {
@@ -254,7 +272,9 @@ export function logApiRequest(
     }
   }
   
-  const body = bodyToLog ? sanitizeBody(bodyToLog) : undefined;
+  const body = bodyToLog
+    ? (isFullResponseLoggingEnabled() ? truncateForLog(bodyToLog) : sanitizeBody(bodyToLog))
+    : undefined;
 
   const logEntry = {
     type: "API_REQUEST",
@@ -288,7 +308,9 @@ export function logApiResponse(
   }
 
   const sanitizedHeaders = sanitizeHeaders(headers);
-  const sanitizedBody = body ? sanitizeBody(body) : undefined;
+  const sanitizedBody = body
+    ? (isFullResponseLoggingEnabled() ? truncateForLog(body) : sanitizeBody(body))
+    : undefined;
 
   const logEntry = {
     type: "API_RESPONSE",
@@ -331,7 +353,9 @@ export function logApiError(
       ? {
           status: response.status,
           statusText: response.statusText,
-          body: response.body ? sanitizeBody(response.body) : undefined,
+          body: response.body
+            ? (isFullResponseLoggingEnabled() ? truncateForLog(response.body) : sanitizeBody(response.body))
+            : undefined,
         }
       : undefined,
   };

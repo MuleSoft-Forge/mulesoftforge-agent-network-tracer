@@ -57,16 +57,36 @@ export async function POST(request: NextRequest) {
     }
     
     const tokenData = await tokenResponse.json();
-    
+    const accessToken = tokenData.access_token as string;
+
+    // Fetch profile to derive entitlements (stable for duration of login)
+    let monitoringCenterEnabled = false;
+    try {
+      const profileRes = await loggedFetch(`${creds.baseUrl}/accounts/api/profile`, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (profileRes.ok) {
+        const profile = (await profileRes.json()) as {
+          organization?: { entitlements?: { monitoringCenter?: { productSKU?: number } } };
+        };
+        const sku = profile?.organization?.entitlements?.monitoringCenter?.productSKU;
+        monitoringCenterEnabled = typeof sku === "number" && sku >= 1;
+      }
+    } catch (profileError) {
+      debugError("Profile fetch after login failed (using monitoringCenterEnabled=false):", profileError);
+    }
+
     // Prepare session data
     const sessionData: SessionData = {
-      accessToken: tokenData.access_token,
+      accessToken,
       refreshToken: tokenData.refresh_token,
       expiresAt: Date.now() + (tokenData.expires_in * 1000),
       baseUrl: creds.baseUrl,
       invalidatedAt: undefined, // Explicitly clear any previous invalidation
+      monitoringCenterEnabled,
     };
-    
+
     const sealed = await sealData(sessionData, sessionOptions);
     
     const cookieOptions = sessionOptions.cookieOptions;

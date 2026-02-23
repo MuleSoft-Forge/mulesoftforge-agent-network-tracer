@@ -267,13 +267,91 @@ export function getMonitoringLogCategoriesFromDeployment(deployment: Record<stri
   brokerLogger: boolean;
   insecureLogging: boolean;
 } {
+  debugLog("[getMonitoringLogCategoriesFromDeployment] ========== START ==========");
+  debugLog(`[getMonitoringLogCategoriesFromDeployment] Searching for categories:`);
+  debugLog(`[getMonitoringLogCategoriesFromDeployment]   - brokerLogger: "${MONITORING_CATEGORY_BROKER}"`);
+  debugLog(`[getMonitoringLogCategoriesFromDeployment]   - insecureLogging: "${MONITORING_CATEGORY_INSECURE_LOGGING}"`);
+  
   try {
+    // Log deployment structure overview
+    debugLog(`[getMonitoringLogCategoriesFromDeployment] Deployment object keys: ${Object.keys(deployment).join(", ")}`);
+    
+    // Check for monitoring-related fields
+    const deploymentAny = deployment as { monitoring?: unknown; target?: { deploymentSettings?: { monitoring?: unknown } } };
+    if (deploymentAny.monitoring) {
+      debugLog(`[getMonitoringLogCategoriesFromDeployment] Found top-level 'monitoring' field: ${JSON.stringify(deploymentAny.monitoring).substring(0, 500)}`);
+    }
+    if (deploymentAny.target?.deploymentSettings?.monitoring) {
+      debugLog(`[getMonitoringLogCategoriesFromDeployment] Found 'target.deploymentSettings.monitoring' field: ${JSON.stringify(deploymentAny.target.deploymentSettings.monitoring).substring(0, 500)}`);
+    }
+    
     const s = JSON.stringify(deployment);
-    return {
-      brokerLogger: s.includes(MONITORING_CATEGORY_BROKER),
-      insecureLogging: s.includes(MONITORING_CATEGORY_INSECURE_LOGGING),
+    debugLog(`[getMonitoringLogCategoriesFromDeployment] Deployment JSON string length: ${s.length} characters`);
+    
+    // Search for brokerLogger
+    const brokerLoggerFound = s.includes(MONITORING_CATEGORY_BROKER);
+    debugLog(`[getMonitoringLogCategoriesFromDeployment] Searching for "${MONITORING_CATEGORY_BROKER}": ${brokerLoggerFound ? "✓ FOUND" : "✗ NOT FOUND"}`);
+    if (!brokerLoggerFound) {
+      // Try to find similar patterns
+      const brokerPatterns = [
+        /com\.mulesoft\.modules\.agent/i,
+        /modules\.agent\.broker/i,
+        /agent\.broker/i,
+        /broker/i,
+      ];
+      for (const pattern of brokerPatterns) {
+        if (pattern.test(s)) {
+          const match = s.match(pattern);
+          debugLog(`[getMonitoringLogCategoriesFromDeployment]   Found similar pattern: "${match?.[0]}"`);
+        }
+      }
+    } else {
+      // Find where it appears
+      const index = s.indexOf(MONITORING_CATEGORY_BROKER);
+      const context = s.substring(Math.max(0, index - 100), Math.min(s.length, index + MONITORING_CATEGORY_BROKER.length + 100));
+      debugLog(`[getMonitoringLogCategoriesFromDeployment]   Found at position ${index}, context: "${context}"`);
+    }
+    
+    // Search for insecureLogging
+    const insecureLoggingFound = s.includes(MONITORING_CATEGORY_INSECURE_LOGGING);
+    debugLog(`[getMonitoringLogCategoriesFromDeployment] Searching for "${MONITORING_CATEGORY_INSECURE_LOGGING}": ${insecureLoggingFound ? "✓ FOUND" : "✗ NOT FOUND"}`);
+    if (!insecureLoggingFound) {
+      // Try to find similar patterns
+      const insecurePatterns = [
+        /INSECURE/i,
+        /INSECURE.*LOG/i,
+        /insecure.*log/i,
+      ];
+      for (const pattern of insecurePatterns) {
+        if (pattern.test(s)) {
+          const match = s.match(pattern);
+          debugLog(`[getMonitoringLogCategoriesFromDeployment]   Found similar pattern: "${match?.[0]}"`);
+        }
+      }
+    } else {
+      // Find where it appears
+      const index = s.indexOf(MONITORING_CATEGORY_INSECURE_LOGGING);
+      const context = s.substring(Math.max(0, index - 100), Math.min(s.length, index + MONITORING_CATEGORY_INSECURE_LOGGING.length + 100));
+      debugLog(`[getMonitoringLogCategoriesFromDeployment]   Found at position ${index}, context: "${context}"`);
+    }
+    
+    // Sample relevant parts of deployment JSON for debugging
+    const sampleSize = 2000;
+    const sample = s.length > sampleSize ? s.substring(0, sampleSize) + "..." : s;
+    debugLog(`[getMonitoringLogCategoriesFromDeployment] Deployment JSON sample (first ${Math.min(sampleSize, s.length)} chars):`);
+    debugLog(`[getMonitoringLogCategoriesFromDeployment] ${sample}`);
+    
+    const result = {
+      brokerLogger: brokerLoggerFound,
+      insecureLogging: insecureLoggingFound,
     };
-  } catch {
+    debugLog(`[getMonitoringLogCategoriesFromDeployment] Result: brokerLogger=${result.brokerLogger}, insecureLogging=${result.insecureLogging}`);
+    debugLog("[getMonitoringLogCategoriesFromDeployment] ========== END ==========");
+    return result;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    debugError(`[getMonitoringLogCategoriesFromDeployment] Error during detection: ${errorMessage}`);
+    debugLog("[getMonitoringLogCategoriesFromDeployment] ========== END (ERROR) ==========");
     return { brokerLogger: false, insecureLogging: false };
   }
 }
@@ -323,19 +401,87 @@ export function getObjectStoreRegionFromDeployment(deployment: {
     };
   };
 }): ObjectStoreRegion | null {
+  debugLog(`[ObjectStore] Starting region detection from deployment detail`);
+  
   const urls: string[] = [];
   const inbound = deployment.target?.deploymentSettings?.http?.inbound;
-  if (inbound?.internalUrl) urls.push(inbound.internalUrl);
-  inbound?.endpoints?.forEach((e) => e.url && urls.push(e.url));
+  
+  // Check if deployment detail API returned internalUrl
+  if (inbound?.internalUrl) {
+    urls.push(inbound.internalUrl);
+    debugLog(`[ObjectStore] Found internalUrl in deployment: ${inbound.internalUrl}`);
+  } else {
+    debugLog(`[ObjectStore] WARNING: Deployment detail API does not contain internalUrl. Path checked: target.deploymentSettings.http.inbound.internalUrl`);
+  }
+  
+  // Check endpoints array
+  if (inbound?.endpoints && inbound.endpoints.length > 0) {
+    inbound.endpoints.forEach((e, idx) => {
+      if (e.url) {
+        urls.push(e.url);
+        debugLog(`[ObjectStore] Found endpoint[${idx}].url: ${e.url}`);
+      }
+    });
+  } else {
+    debugLog(`[ObjectStore] No endpoints array found or endpoints array is empty`);
+  }
+  
+  if (urls.length === 0) {
+    debugLog(`[ObjectStore] ERROR: No URLs found in deployment detail. Cannot detect region.`);
+    debugLog(`[ObjectStore] Deployment structure: ${JSON.stringify({
+      hasTarget: !!deployment.target,
+      hasDeploymentSettings: !!deployment.target?.deploymentSettings,
+      hasHttp: !!deployment.target?.deploymentSettings?.http,
+      hasInbound: !!deployment.target?.deploymentSettings?.http?.inbound,
+      hasInternalUrl: !!deployment.target?.deploymentSettings?.http?.inbound?.internalUrl,
+      hasEndpoints: !!deployment.target?.deploymentSettings?.http?.inbound?.endpoints,
+      endpointsLength: deployment.target?.deploymentSettings?.http?.inbound?.endpoints?.length ?? 0,
+    })}`);
+    return null;
+  }
+  
+  debugLog(`[ObjectStore] Analyzing ${urls.length} URL(s) for region detection`);
+  
   for (const u of urls) {
+    debugLog(`[ObjectStore] Analyzing URL: ${u}`);
+    
+    // Check if URL matches expected pattern
     const match = u.match(/\.([a-z]{3}-[a-z0-9]{2})\.cloudhub\.io/i);
-    if (match) {
-      const code = match[1].toLowerCase();
-      const region = CLOUDHUB_REGION_TO_OBJECT_STORE[code];
-      if (region) return region;
-      if (isObjectStoreRegion(code)) return code;
+    if (!match) {
+      debugLog(`[ObjectStore] URL does not match expected pattern: *.XX-XX.cloudhub.io`);
+      debugLog(`[ObjectStore] URL format check: ${u.includes('.cloudhub.io') ? 'contains .cloudhub.io' : 'does NOT contain .cloudhub.io'}`);
+      // Try to find any cloudhub.io pattern
+      const cloudhubMatch = u.match(/\.([a-z0-9-]+)\.cloudhub\.io/i);
+      if (cloudhubMatch) {
+        debugLog(`[ObjectStore] Found different cloudhub.io pattern: ${cloudhubMatch[1]} (expected format: XXX-XX)`);
+      }
+      continue;
+    }
+    
+    const code = match[1].toLowerCase();
+    debugLog(`[ObjectStore] Extracted CloudHub region code: ${code}`);
+    
+    // Check if code exists in mapping table
+    const region = CLOUDHUB_REGION_TO_OBJECT_STORE[code];
+    if (region) {
+      debugLog(`[ObjectStore] SUCCESS: Mapped CloudHub code "${code}" → Object Store region "${region}"`);
+      return region;
+    } else {
+      debugLog(`[ObjectStore] WARNING: CloudHub region code "${code}" not found in mapping table`);
+      debugLog(`[ObjectStore] Available mappings: ${Object.keys(CLOUDHUB_REGION_TO_OBJECT_STORE).join(", ")}`);
+    }
+    
+    // Check if code is already a valid Object Store region
+    if (isObjectStoreRegion(code)) {
+      debugLog(`[ObjectStore] SUCCESS: CloudHub code "${code}" is already a valid Object Store region`);
+      return code;
+    } else {
+      debugLog(`[ObjectStore] CloudHub code "${code}" is not a valid Object Store region`);
     }
   }
+  
+  debugLog(`[ObjectStore] ERROR: Region detection failed after analyzing all ${urls.length} URL(s)`);
+  debugLog(`[ObjectStore] Summary: Checked URLs: ${urls.join(", ")}`);
   return null;
 }
 
@@ -368,11 +514,21 @@ async function findObjectStore(
         ? process.env.OBJECT_STORE_REGION
         : null;
   
+  if (preferred) {
+    debugLog(`[ObjectStore] Using preferred region from translation table: ${preferred}`);
+  } else {
+    debugLog(`[ObjectStore] WARNING: No preferred region determined. preferredRegion=${preferredRegion ?? "undefined"}, OBJECT_STORE_REGION=${process.env.OBJECT_STORE_REGION ?? "undefined"}`);
+  }
+  
   // Only search the preferred region (from translation table), not all regions
   // If no preferred region, use a small fallback set of common regions
   const regionsToTry: ObjectStoreRegion[] = preferred
     ? [preferred]
     : ["us-east-1", "us-west-2", "eu-central-1"]; // Fallback: only search common regions if translation fails
+  
+  if (!preferred) {
+    debugLog(`[ObjectStore] Using fallback regions: ${regionsToTry.join(", ")}`);
+  }
 
   // Try shorter prefix first (matches Anypoint UI behavior)
   // OPTIMIZATION: Search all regions in parallel, return immediately when first store is found
@@ -729,13 +885,14 @@ export async function fetchObjectStoreData(
   /** Which partitions contributed data (for UI: "Tasks", "Conversations") */
   sourcesUsed?: ("tasks" | "conversations")[];
   /** Parsed reasoning from _tasks partition only (for split UI) */
-  fromTasks?: { steps: Array<{ step: string; content: string[] }>; rawReasoning: string[] };
+  fromTasks?: { steps: Array<{ step: string; content: string[] }>; rawReasoning: string[]; allRawStrings?: string[] };
   /** Parsed reasoning from _conversations partition only (for split UI) */
   fromConversations?: { steps: Array<{ step: string; content: string[] }>; rawReasoning: string[] };
   /** Merged reasoning from both (backward compat) */
   llmReasoning?: {
     steps?: Array<{ step: string; content: string[] }>;
     rawReasoning?: string[];
+    allRawStrings?: string[];
   };
   toolCallIds?: string[];
   downstreamContextIds?: Array<{ agent: string; contextId: string; taskId: string }>;
@@ -821,12 +978,13 @@ export async function fetchObjectStoreData(
 
   debugLog(`[ObjectStore] Fetching from tasks partition - searching for key containing taskId: ${taskId}`);
 
-  type ReasoningPart = { steps: Array<{ step: string; content: string[] }>; rawReasoning: string[] };
+  type ReasoningPart = { steps: Array<{ step: string; content: string[] }>; rawReasoning: string[]; allRawStrings: string[] };
   const toReasoningPart = (strings: string[]): ReasoningPart => {
     const { steps, rawReasoning } = parseLLMReasoning(strings);
     return {
       steps,
       rawReasoning: rawReasoning.length > 0 ? rawReasoning : strings,
+      allRawStrings: strings,
     };
   };
 
@@ -886,10 +1044,11 @@ export async function fetchObjectStoreData(
     available: true,
     objectStoreStatus: "ok",
     sourcesUsed: ["tasks"],
-    fromTasks: fromTasks ?? undefined,
+    fromTasks: fromTasks ? { ...fromTasks, allRawStrings: tasksStrings } : undefined,
     llmReasoning: hasAnyReasoning ? {
       steps: steps.length > 0 ? steps : undefined,
       rawReasoning: rawReasoning.length > 0 ? rawReasoning : undefined,
+      allRawStrings: tasksStrings,
     } : undefined,
     toolCallIds: toolCallIds.length > 0 ? toolCallIds : undefined,
     downstreamContextIds: downstreamContextIds.length > 0 ? downstreamContextIds : undefined,
