@@ -105,7 +105,12 @@ export default function LLMReasoningPanel({ reasoning, source, sourcesUsed }: LL
       <div className="flex items-center justify-between border-b border-gray-200 pb-2">
         <div className="flex items-center gap-2">
           <Brain className="h-5 w-5 text-indigo-600" />
-          <h3 className="font-semibold text-gray-900">LLM Reasoning & Decision Process</h3>
+          <div>
+            <h3 className="font-semibold text-gray-900">LLM Reasoning & Decision Process</h3>
+            <p className="text-xs text-gray-500 mt-0.5">
+              <strong>Reasoning expires after one day</strong>
+            </p>
+          </div>
         </div>
         <span
           className={`rounded px-2 py-0.5 text-xs font-medium ${

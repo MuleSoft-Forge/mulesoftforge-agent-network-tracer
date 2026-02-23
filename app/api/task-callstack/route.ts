@@ -449,7 +449,7 @@ async function fetchObjectStoreInNoEntitlementMode(
   orgId: string,
   envId: string,
   taskId: string,
-  jobCard: { broker?: string; apiInstanceId?: string; appId?: string; contextId?: string },
+  jobCard: { broker?: string; apiInstanceId?: string; appId?: string; contextId?: string; startTime?: string | number },
   apiInstanceIdFromRequest: string | undefined,
   accessToken: string,
   baseUrl: string
@@ -539,7 +539,8 @@ async function fetchObjectStoreInNoEntitlementMode(
       accessToken,
       undefined,
       objectStoreRegion,
-      jobCard.contextId
+      jobCard.contextId,
+      jobCard.startTime
     );
     const status: ApiStatus["objectStore"] =
       objectStoreData.objectStoreStatus ??
@@ -857,6 +858,7 @@ export async function GET(request: NextRequest) {
                 apiInstanceId: jobCardFromRuntime.apiInstanceId as string | undefined,
                 appId: jobCardFromRuntime.appId as string | undefined,
                 contextId: jobCardFromRuntime.contextId as string | undefined,
+                startTime: jobCardFromRuntime.startTime as string | number | undefined,
               },
               validatedApiInstanceId ?? undefined,
               accessToken,
@@ -945,6 +947,7 @@ export async function GET(request: NextRequest) {
                 apiInstanceId: jobCardFromRuntime.apiInstanceId as string | undefined,
                 appId: jobCardFromRuntime.appId as string | undefined,
                 contextId: jobCardFromRuntime.contextId as string | undefined,
+                startTime: jobCardFromRuntime.startTime as string | number | undefined,
               },
               validatedApiInstanceId ?? undefined,
               accessToken,
@@ -1339,6 +1342,7 @@ export async function GET(request: NextRequest) {
           if (deploymentDetail.deploymentApiStatus) deploymentApiStatus = deploymentDetail.deploymentApiStatus;
           if (objectStoreRegion) debugLog(`[ObjectStore] Resolved region from deployment URLs: ${objectStoreRegion}`);
           const contextIdForStore = (entries.find((e: typeof entries[0]) => e.fields?.contextId) as typeof entries[0] | undefined)?.fields?.contextId as string | undefined;
+          const taskStartTime = firstEntry?.timestamp;
           debugLog(`[ObjectStore] Attempting to fetch Object Store data - orgId: ${validatedOrgId}, envId: ${validatedEnvId}, taskId: ${validatedTaskId}, brokerName: ${brokerName}, deploymentId: ${deploymentId}, appId: ${appId}, deploymentType: ${deploymentType || "unknown"}, objectStoreRegion: ${objectStoreRegion ?? "(none)"}, contextId: ${contextIdForStore ?? "(none)"}`);
           const result = await fetchObjectStoreData(
             validatedOrgId,
@@ -1349,7 +1353,8 @@ export async function GET(request: NextRequest) {
             accessToken,
             deploymentType,
             objectStoreRegion,
-            contextIdForStore
+            contextIdForStore,
+            taskStartTime
           );
           if (result.available) {
             debugLog("[ObjectStore] Successfully fetched Object Store data");

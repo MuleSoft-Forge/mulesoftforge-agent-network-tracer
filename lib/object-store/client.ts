@@ -715,7 +715,8 @@ export async function fetchObjectStoreData(
   accessToken: string,
   deploymentType?: string,
   objectStoreRegion?: string,
-  contextId?: string | null
+  contextId?: string | null,
+  taskStartTime?: string | number
 ): Promise<{
   available: boolean;
   /** Status for API status table: ok, 403_forbidden, no_store, no_keys */
@@ -741,6 +742,27 @@ export async function fetchObjectStoreData(
   };
 }> {
   const errors: string[] = [];
+
+  // Check if task is less than 1 day old (Object Store entries expire after 1 day TTL)
+  if (taskStartTime) {
+    const startTimeMs = typeof taskStartTime === "number" 
+      ? taskStartTime 
+      : /^\d+$/.test(String(taskStartTime))
+        ? parseInt(String(taskStartTime), 10)
+        : new Date(taskStartTime).getTime();
+    const taskAgeMs = Date.now() - startTimeMs;
+    const oneDayMs = 24 * 60 * 60 * 1000;
+    
+    if (taskAgeMs > oneDayMs) {
+      const ageHours = Math.round(taskAgeMs / (60 * 60 * 1000));
+      debugLog(`[ObjectStore] Skipping Object Store fetch - task is ${ageHours} hours old (expires after 24 hours)`);
+      return {
+        available: false,
+        objectStoreStatus: "no_keys",
+        errors: [`Task is older than 1 day (${ageHours} hours old). Object Store entries expire after 24 hours.`],
+      };
+    }
+  }
 
   if (!deploymentId) {
     errors.push("Deployment ID not available");
