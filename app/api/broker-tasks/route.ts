@@ -4,6 +4,7 @@ import { BrokerTasksRequestSchema } from "@/lib/schemas";
 import { requireAuth } from "@/lib/api/auth-middleware";
 import { msearch } from "@/lib/api/msearch";
 import { validationError } from "@/lib/api/error-responses";
+import { resolveBrokerContext } from "@/lib/broker-context";
 
 export const dynamic = "force-dynamic";
 
@@ -655,9 +656,22 @@ export async function POST(request: NextRequest) {
   }
   debugLog("[BROKER-TASKS] ✓ Validation successful");
   
-  const { orgId, apiInstanceId, timeRangeMs = 24 * 3600 * 1000 } = parseResult.data;
-  debugLog(`[BROKER-TASKS] Validated parameters: orgId=${orgId}, apiInstanceId=${apiInstanceId}, timeRangeMs=${timeRangeMs}`);
-  
+  const { orgId, apiInstanceId, envId, timeRangeMs = 24 * 3600 * 1000 } = parseResult.data;
+  debugLog(`[BROKER-TASKS] Validated parameters: orgId=${orgId}, apiInstanceId=${apiInstanceId}, envId=${envId ?? "none"}, timeRangeMs=${timeRangeMs}`);
+
+  let brokerAppName: string | undefined;
+  if (envId) {
+    try {
+      const brokerContext = await resolveBrokerContext(orgId, envId, apiInstanceId, accessToken, baseUrl, loggedFetch);
+      brokerAppName = brokerContext?.appName;
+      if (brokerAppName) {
+        debugLog(`[BROKER-TASKS] Resolved broker app name for post-filter: ${brokerAppName}`);
+      }
+    } catch (e) {
+      debugLog(`[BROKER-TASKS] Resolve broker context failed (continuing without app filter):`, e);
+    }
+  }
+
   // Enforce 7-day maximum to match Visualizer API limit
   const maxTimeRangeMs = 7 * 24 * 3600 * 1000; // 7 days
   const timeRange = Math.min(timeRangeMs, maxTimeRangeMs);
@@ -732,18 +746,31 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    debugLog("Broker tasks result:", { 
-      totalLogs: allLogsResult.total, 
+    const hitsToUse =
+      brokerAppName !== undefined
+        ? allLogsResult.hits.filter((h: unknown) => {
+            const src = (h as { _source?: { appId?: string } })._source;
+            const hitAppId = (src?.appId as string) || "";
+            return hitAppId === brokerAppName;
+          })
+        : allLogsResult.hits;
+    if (brokerAppName && hitsToUse.length !== allLogsResult.hits.length) {
+      debugLog(`[BROKER-TASKS] Post-filtered by appId=${brokerAppName}: ${allLogsResult.hits.length} -> ${hitsToUse.length} hits`);
+    }
+
+    debugLog("Broker tasks result:", {
+      totalLogs: allLogsResult.total,
       hitsCount: allLogsResult.hits.length,
-      sampleApiInstanceIds: allLogsResult.hits.slice(0, 5).map((h: unknown) => {
+      hitsAfterFilter: hitsToUse.length,
+      sampleApiInstanceIds: hitsToUse.slice(0, 5).map((h: unknown) => {
         const hit = h as { _source?: { message?: string } };
         const msg = (hit._source?.message as string) || "";
         const match = msg.match(/apiInstanceId=(\d+)/);
         return match ? match[1] : null;
-      })
+      }),
     });
 
-    // Extract unique taskIds from all matching logs
+    // Extract unique taskIds from matching logs
     const tasks: Record<
       string,
       {
@@ -770,8 +797,8 @@ export async function POST(request: NextRequest) {
       apiInstance: /apiInstanceId=(\d+)/,
     };
 
-    // Process all logs to extract unique taskIds and build task metadata
-    for (const h of allLogsResult.hits) {
+    // Process logs to extract unique taskIds and build task metadata
+    for (const h of hitsToUse) {
       const hit = h as { _source?: { message?: string; timestamp?: string; appId?: string } };
       const msg = (hit._source?.message as string) || "";
       const tid = (msg.match(re.task) || [])[1];

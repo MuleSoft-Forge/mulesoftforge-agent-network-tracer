@@ -29,6 +29,7 @@ export const StateValidationSchema = z.object({
 export const BrokerTasksRequestSchema = z.object({
   orgId: z.string().min(1).max(100).regex(/^[a-zA-Z0-9_-]+$/),
   apiInstanceId: z.string().min(1).max(200),
+  envId: z.string().min(1).max(100).optional(),
   timeRangeMs: z.number().int().positive().max(7 * 24 * 3600 * 1000).optional(),
 });
 

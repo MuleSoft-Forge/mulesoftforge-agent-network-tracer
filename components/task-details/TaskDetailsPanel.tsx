@@ -413,10 +413,10 @@ export default function TaskDetailsPanel({
               )}
               <div>
                 <dt className="mb-1 flex items-center gap-2 font-semibold text-gray-600">
-                  App ID
-                  <span className="rounded bg-blue-50 px-1 text-[10px] text-blue-700">Logs</span>
+                  Broker app
+                  <span className="rounded bg-blue-50 px-1 text-[10px] text-blue-700">Resolved</span>
                 </dt>
-                <dd className="text-gray-900">{taskData.appId}</dd>
+                <dd className="text-gray-900">{taskData.appId || "—"}</dd>
               </div>
               <div>
                 <dt className="mb-1 flex items-center gap-2 font-semibold text-gray-600">
@@ -877,9 +877,15 @@ export default function TaskDetailsPanel({
                   <dd className="text-gray-900">{entry.level}</dd>
                 </div>
                 <div>
-                  <dt className="font-semibold text-gray-600">App ID</dt>
-                  <dd className="text-gray-900">{entry.appId}</dd>
+                  <dt className="font-semibold text-gray-600">Log source app</dt>
+                  <dd className="text-gray-900">{entry.appId || "—"}</dd>
                 </div>
+                {jobCard.appId && jobCard.appId !== entry.appId && (
+                  <div>
+                    <dt className="font-semibold text-gray-600">Task broker app</dt>
+                    <dd className="text-gray-900">{jobCard.appId}</dd>
+                  </div>
+                )}
                 {entry.fields.iteration != null && entry.fields.iteration !== "" && (
                   <div>
                     <dt className="font-semibold text-gray-600">Iteration</dt>

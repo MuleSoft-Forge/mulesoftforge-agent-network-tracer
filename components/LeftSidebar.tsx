@@ -277,6 +277,7 @@ export default function LeftSidebar({
                       key={`${selection.value}-${apiInstanceId}`}
                       orgId={selection.value}
                       apiInstanceId={apiInstanceId}
+                      envId={selectedEnvironmentId || undefined}
                       selectedTaskId={selectedTaskId}
                       onTaskSelect={onTaskSelect || (() => {})}
                       activityPeriod={activityPeriodKey}

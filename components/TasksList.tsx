@@ -22,6 +22,7 @@ export interface Task {
 interface TasksListProps {
   orgId: string;
   apiInstanceId: string | null;
+  envId?: string | null;
   selectedTaskId?: string | null;
   onTaskSelect: (taskId: string | null) => void;
   activityPeriod?: ActivityPeriod;
@@ -32,6 +33,7 @@ interface TasksListProps {
 export default function TasksList({
   orgId,
   apiInstanceId,
+  envId,
   selectedTaskId: externalSelectedTaskId,
   onTaskSelect,
   activityPeriod = "24h",
@@ -57,15 +59,17 @@ export default function TasksList({
     const entitlementMessage =
       "Log Search - Advanced package or a Titanium subscription to Anypoint Platform Required - Elasticsearch log search APIs - Enhanced raw storage (up to 128TB based on configuration) - Advanced logs and traces - LLM reasoning logs (for Agent Broker monitoring)";
 
-    const timeRangeMs = ACTIVITY_PERIODS[activityPeriod] * 60 * 1000; 
+    const timeRangeMs = ACTIVITY_PERIODS[activityPeriod] * 60 * 1000;
+    const body: { orgId: string; apiInstanceId: string; envId?: string; timeRangeMs: number } = {
+      orgId,
+      apiInstanceId,
+      timeRangeMs,
+    };
+    if (envId) body.envId = envId;
     fetch("/api/broker-tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ 
-        orgId, 
-        apiInstanceId, 
-        timeRangeMs 
-      }),
+      body: JSON.stringify(body),
     })
       .then(async (res) => {
         const statusCode = res.status;
@@ -98,7 +102,7 @@ export default function TasksList({
         }
       })
       .finally(() => setLoading(false));
-  }, [orgId, apiInstanceId, activityPeriod, onBrokerTasksData]);
+  }, [orgId, apiInstanceId, envId, activityPeriod, onBrokerTasksData]);
 
   useEffect(() => {
     fetchTasks();
