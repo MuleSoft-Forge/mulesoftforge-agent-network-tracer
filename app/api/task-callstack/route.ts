@@ -1744,7 +1744,8 @@ export async function GET(request: NextRequest) {
       iterations: maxIter,
       toolsUsed: allTools.map((t: string) => t.replace(/^[a-zA-Z0-9]+_/, "")),
       totalEntries: entries.length,
-      appId,
+      // When we resolved the selected broker from RM (appNameForDeploymentDetail), show that app name in Metadata instead of log appId (e.g. avoid showing mulesoft-connector-playground-app from org-wide log hits).
+      appId: appNameForDeploymentDetail ?? appId,
       objectStore: objectStoreData,
       apiStatus,
     };

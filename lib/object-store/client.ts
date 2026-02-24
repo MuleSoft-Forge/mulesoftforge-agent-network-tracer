@@ -82,9 +82,56 @@ function extractStringsFromBinary(base64Data: string): string[] {
   }
 }
 
+/** Step header pattern: "STEP 1:", "ISTEP 1:", or "Step 1:" (broker may use title case) */
+const STEP_HEADER_REGEX = /^((?:I)?STEP\s+\d+):\s*(.+)$/i;
+
+/** Exclude Java/serialization noise and short tokens from reasoning display */
+function isLikelyNoise(s: string): boolean {
+  if (s.length < 10) return true;
+  if (/^com\.mulesoft|^java\.|^[a-z]+\.[a-z]+\.[a-z]+/.test(s)) return true;
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)) return true;
+  if (/^call_[A-Za-z0-9_-]+$/.test(s)) return true;
+  if (/^[a-zA-Z0-9_-]{20,}$/.test(s) && !s.includes(" ") && !s.includes('"')) return true; // long token with no spaces/quotes
+  if (/^container\/app\//.test(s) && s.length < 80) return true; // plugin path
+  return false;
+}
+
+/** Include strings that look like agent/tool reasoning (workflow, status, artifacts, prompts, summaries) */
+function isReasoningLike(s: string): boolean {
+  if (isLikelyNoise(s)) return false;
+  if (s.length >= 80) return true; // long readable content
+  if (s.length >= 30 && (/workflow|Followed|retrieved|must now|confirm|Personal Information|Financial Goals|movements|Investment Plan/i.test(s) || /"message"|"status"|"text"|messageParts|artifacts/i.test(s))) return true;
+  if (s.length >= 20 && (/Contacting|Retrieving|status":|updateStatus|_:agentforce|_:gcpbanking/i.test(s) || (s.startsWith('"') && s.includes(" ")))) return true;
+  return false;
+}
+
+/**
+ * Split a single string that contains multiple "Step N:" blocks into step parts.
+ * Example: "Step 2: Analysis... Step 3: Decision..." -> [{ label: "Step 2:", text: "Analysis..." }, ...]
+ */
+function splitSingleStringIntoSteps(s: string): Array<{ label: string; text: string }> {
+  const re = /((?:I)?STEP\s+\d+):\s*/gi;
+  const matches: Array<{ index: number; label: string; end: number }> = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(s)) !== null) {
+    matches.push({
+      index: m.index,
+      label: m[1] + ":",
+      end: m.index + m[0].length,
+    });
+  }
+  if (matches.length === 0) return [];
+  return matches.map((match, i) => {
+    const textStart = match.end;
+    const textEnd = i + 1 < matches.length ? matches[i + 1].index : s.length;
+    const text = s.slice(textStart, textEnd).trim();
+    return { label: match.label, text };
+  });
+}
+
 /**
  * Parse LLM reasoning from extracted strings
- * Looks for STEP patterns and groups content
+ * Looks for STEP/Step patterns and groups content
  */
 function parseLLMReasoning(strings: string[]): {
   steps: Array<{ step: string; content: string[] }>;
@@ -95,18 +142,10 @@ function parseLLMReasoning(strings: string[]): {
   let currentStep: { step: string; content: string[] } | null = null;
 
   for (const str of strings) {
-    // Check if this is a step header (e.g., "STEP 1:", "ISTEP 1:", "STEP 3: ANALYSIS")
-    // Match patterns like:
-    // - "STEP 1: TITLE"
-    // - "ISTEP 1: TITLE"
-    // - "STEP 2: FACTS ORCHESTRATION (PARALLEL EXECUTION)"
-    const stepMatch = str.match(/^((?:I)?STEP\s+\d+):\s*(.+)$/i);
+    // Check if this is a step header (e.g., "STEP 1:", "ISTEP 1:", "Step 2: ANALYSIS")
+    const stepMatch = str.match(STEP_HEADER_REGEX);
     if (stepMatch) {
-      // Save previous step if exists
-      if (currentStep) {
-        steps.push(currentStep);
-      }
-      // Start new step
+      if (currentStep) steps.push(currentStep);
       const stepTitle = stepMatch[2]?.trim() || stepMatch[1].trim();
       currentStep = {
         step: `${stepMatch[1].trim()}: ${stepTitle}`,
@@ -114,19 +153,28 @@ function parseLLMReasoning(strings: string[]): {
       };
       rawReasoning.push(str);
     } else if (currentStep) {
-      // Add content to current step (unless it's clearly not reasoning content)
-      // Skip very short strings or Java class names
       if (str.length >= 10 && !str.match(/^com\.mulesoft|^java\.|^[a-z]+\.[a-z]+\./)) {
+        // If this single string contains multiple "Step N:" blocks, split and push as separate steps
+        const splitSteps = splitSingleStringIntoSteps(str);
+        if (splitSteps.length > 1) {
+          for (const { label, text } of splitSteps) {
+            if (currentStep) steps.push(currentStep);
+            currentStep = {
+              step: label,
+              content: text ? [text] : [],
+            };
+          }
+          rawReasoning.push(str);
+          continue;
+        }
         currentStep.content.push(str);
         rawReasoning.push(str);
       }
     } else {
-      // Check if this looks like reasoning content (long strings with reasoning keywords)
-      // More strict: must be reasonably long and contain reasoning indicators
-      const isReasoningContent = 
+      const isReasoningContent =
         str.length > 50 &&
         (
-          /(?:^|[\s:])(STEP|ISTEP)\s+\d+/i.test(str) ||
+          /(?:^|[\s:])(STEP|ISTEP|Step)\s+\d+/i.test(str) ||
           str.includes("Analysis") ||
           str.includes("Decision") ||
           str.includes("Per rules") ||
@@ -139,15 +187,21 @@ function parseLLMReasoning(strings: string[]): {
           (str.includes("tool") && str.length > 100) ||
           (str.includes("agent") && str.length > 100)
         ) &&
-        // Exclude Java serialization artifacts
         !str.match(/^com\.mulesoft|^java\.|^[a-z]+\.[a-z]+\.[a-z]+/) &&
-        // Exclude UUIDs and short identifiers
         !str.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
-      
+
       if (isReasoningContent) {
         rawReasoning.push(str);
-        // Try to create a step from this if it contains a step header
-        if (!currentStep) {
+        const splitSteps = splitSingleStringIntoSteps(str);
+        if (splitSteps.length > 1) {
+          for (const { label, text } of splitSteps) {
+            if (currentStep) steps.push(currentStep);
+            currentStep = {
+              step: label,
+              content: text ? [text] : [],
+            };
+          }
+        } else {
           const inferredStepMatch = str.match(/((?:I)?STEP\s+\d+):\s*(.+)/i);
           if (inferredStepMatch) {
             currentStep = {
@@ -160,15 +214,29 @@ function parseLLMReasoning(strings: string[]): {
     }
   }
 
-  // Add last step
-  if (currentStep) {
-    steps.push(currentStep);
+  if (currentStep) steps.push(currentStep);
+
+  // Include all reasoning-like strings from the full list so the Reasoning tab shows workflow summaries,
+  // agent responses, status updates, and tool prompts—not just the first two that passed the strict filter.
+  const reasoningLike = strings.filter((s) => isReasoningLike(s));
+  const seen = new Set<string>();
+  const merged: string[] = [];
+  for (const s of rawReasoning) {
+    if (!seen.has(s)) {
+      seen.add(s);
+      merged.push(s);
+    }
+  }
+  for (const s of reasoningLike) {
+    if (!seen.has(s)) {
+      seen.add(s);
+      merged.push(s);
+    }
   }
 
-  // Only return rawReasoning if we found actual reasoning, not all strings
-  return { 
-    steps, 
-    rawReasoning: rawReasoning.length > 0 ? rawReasoning : [] 
+  return {
+    steps,
+    rawReasoning: merged.length > 0 ? merged : rawReasoning.length > 0 ? rawReasoning : [],
   };
 }
 

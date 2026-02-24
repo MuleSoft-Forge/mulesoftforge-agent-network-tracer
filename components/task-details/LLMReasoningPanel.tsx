@@ -38,46 +38,68 @@ export default function LLMReasoningPanel({ reasoning, source }: LLMReasoningPan
     setExpandedSteps(newExpanded);
   };
 
-  // Parse raw reasoning into structured steps if needed
+  // Step header pattern: "STEP 1:", "ISTEP 1:", or "Step 1:" at line start or mid-string
+  const STEP_HEADER = /^(?:STEP\s+\d+:|ISTEP\s+\d+:|Step\s+\d+:)\s*(.+)$/i;
+  const STEP_HEADER_MID = /((?:I)?STEP\s+\d+):\s*/gi;
+
+  /** Split one long line that contains multiple "Step N:" blocks into step parts */
+  const splitLineIntoSteps = (line: string): Array<{ step: string; content: string[] }> | null => {
+    const re = new RegExp(STEP_HEADER_MID.source, "gi");
+    const matches: Array<{ label: string; start: number; end: number }> = [];
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(line)) !== null) {
+      matches.push({ label: m[1] + ":", start: m.index, end: m.index + m[0].length });
+    }
+    if (matches.length <= 1) return null;
+    return matches.map((match, i) => {
+      const textStart = match.end;
+      const textEnd = i + 1 < matches.length ? matches[i + 1].start : line.length;
+      const text = line.slice(textStart, textEnd).trim();
+      return {
+        step: match.label,
+        content: text ? [text] : [],
+      };
+    });
+  };
+
   const parseRawReasoning = (raw: string[]): LLMReasoningStep[] => {
     const steps: LLMReasoningStep[] = [];
     let currentStep: LLMReasoningStep | null = null;
 
     for (const line of raw) {
-      // Check if this is a step header (e.g., "STEP 1:", "STEP 2:", etc.)
-      const stepMatch = line.match(/^(STEP\s+\d+:|ISTEP\s+\d+:)\s*(.+)$/i);
+      const stepMatch = line.match(STEP_HEADER);
       if (stepMatch) {
-        // Save previous step if exists
-        if (currentStep) {
-          steps.push(currentStep);
-        }
-        // Start new step
+        if (currentStep) steps.push(currentStep);
         currentStep = {
-          step: stepMatch[2].trim() || stepMatch[1].trim(),
+          step: stepMatch[0].trim(),
           content: [],
         };
       } else if (currentStep) {
-        // Add content to current step
-        currentStep.content.push(line);
-      } else {
-        // No current step, create a default one
-        if (steps.length === 0) {
-          currentStep = {
-            step: "Reasoning",
-            content: [],
-          };
-        }
-        if (currentStep) {
+        // If this line contains multiple "Step N:" blocks (e.g. one paragraph), split into steps
+        const splitSteps = splitLineIntoSteps(line);
+        if (splitSteps && splitSteps.length > 1) {
+          for (const s of splitSteps) {
+            if (currentStep) steps.push(currentStep);
+            currentStep = s;
+          }
+        } else {
           currentStep.content.push(line);
+        }
+      } else {
+        const splitSteps = splitLineIntoSteps(line);
+        if (splitSteps && splitSteps.length > 1) {
+          for (let i = 0; i < splitSteps.length; i++) {
+            if (currentStep) steps.push(currentStep);
+            currentStep = splitSteps[i];
+          }
+        } else {
+          if (steps.length === 0) currentStep = { step: "Reasoning", content: [] };
+          if (currentStep) currentStep.content.push(line);
         }
       }
     }
 
-    // Add last step
-    if (currentStep) {
-      steps.push(currentStep);
-    }
-
+    if (currentStep) steps.push(currentStep);
     return steps.length > 0 ? steps : [{ step: "Reasoning", content: raw }];
   };
 
@@ -127,8 +149,8 @@ export default function LLMReasoningPanel({ reasoning, source }: LLMReasoningPan
         {steps.map((stepData, idx) => {
           const stepId = `step-${idx}`;
           const isExpanded = expandedSteps.has(stepId);
-          const stepNumber = stepData.step.match(/STEP\s+(\d+)/i)?.[1] || String(idx + 1);
-          const stepTitle = stepData.step.replace(/^(STEP\s+\d+:|ISTEP\s+\d+:)\s*/i, "").trim() || `Step ${stepNumber}`;
+          const stepNumber = stepData.step.match(/(?:STEP|ISTEP|Step)\s+(\d+)/i)?.[1] || String(idx + 1);
+          const stepTitle = stepData.step.replace(/^(?:STEP\s+\d+:|ISTEP\s+\d+:|Step\s+\d+:)\s*/i, "").trim() || `Step ${stepNumber}`;
 
           // Detect step type for icon
           let stepIcon = <Lightbulb className="h-4 w-4 text-indigo-500" />;
@@ -183,23 +205,29 @@ export default function LLMReasoningPanel({ reasoning, source }: LLMReasoningPan
           return (
             <div
               key={stepId}
-              className={`rounded-lg border ${borderColorClass} transition-colors`}
+              className={`rounded-lg border ${borderColorClass} transition-colors overflow-hidden`}
             >
               <button
                 type="button"
                 onClick={() => toggleStep(stepId)}
-                className="w-full flex items-center gap-3 px-4 py-3 text-left"
+                className="w-full flex items-center gap-3 px-4 py-3 text-left min-h-[52px] border-0"
               >
                 <div className={`flex-shrink-0 ${chevronColorClass}`}>
                   {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                 </div>
                 <div className="flex-shrink-0">{stepIcon}</div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className={`font-semibold ${titleColorClass}`}>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span
+                      className="inline-flex items-center rounded bg-gray-200/80 px-1.5 py-0.5 text-[10px] font-medium text-gray-600 tabular-nums"
+                      aria-hidden
+                    >
+                      {stepNumber}
+                    </span>
+                    <span className={`font-semibold ${titleColorClass} break-words`}>
                       {stepTitle}
                     </span>
-                    <span className="text-xs text-gray-500">({stepData.content.length} items)</span>
+                    <span className="text-xs text-gray-500 shrink-0">({stepData.content.length} items)</span>
                   </div>
                 </div>
               </button>
