@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useEffect } from "react";
 import type React from "react";
-import { ChevronDown, ChevronUp, ChevronsDown, ChevronsUp } from "lucide-react";
+import { ChevronDown, ChevronUp, ChevronsDown, ChevronsUp, Info } from "lucide-react";
 import type { TraceSpan, LogEntry } from "./types";
 import { debugWarn, debugError } from "@/lib/api-logger";
 
@@ -25,22 +25,9 @@ export default function TraceVisualization({
   onSpanClick,
   onLogEntryClick,
 }: TraceVisualizationProps) {
-  const [viewMode, setViewMode] = useState<"timeline" | "hierarchy">("timeline");
+  const [viewMode, setViewMode] = useState<"timeline" | "hierarchy">("hierarchy");
   const [filters, setFilters] = useState<SpanFilter>({});
   const [expandedSpans, setExpandedSpans] = useState<Set<string>>(new Set());
-
-  // Reset expanded spans when traceSpans change significantly or when switching to hierarchy view
-  useEffect(() => {
-    if (viewMode === "hierarchy") {
-      // Only reset if we're switching to hierarchy view
-      setExpandedSpans(new Set());
-    }
-  }, [viewMode]);
-
-  // Reset expanded spans when traceSpans change (new trace loaded)
-  useEffect(() => {
-    setExpandedSpans(new Set());
-  }, [traceSpans.length]);
 
   // Calculate start times and build hierarchy
   const processedSpans = useMemo(() => {
@@ -139,6 +126,15 @@ export default function TraceVisualization({
     return filtered;
   }, [processedSpans, filters]);
 
+  // Expand all spans by default when switching to hierarchy view or when traceSpans change
+  useEffect(() => {
+    if (viewMode === "hierarchy" && processedSpans.flat.length > 0) {
+      // Expand all spans by default in hierarchy view
+      const allSpanIds = new Set(processedSpans.flat.map((span: TraceSpan) => span.spanId));
+      setExpandedSpans(allSpanIds);
+    }
+  }, [viewMode, processedSpans.flat.length]);
+
   // Build filtered hierarchy (only show filtered spans and their ancestors/descendants)
   const filteredHierarchy = useMemo(() => {
     if (!filters.kind && !filters.statusCode && !filters.entityType) {
@@ -235,6 +231,21 @@ export default function TraceVisualization({
     return `${(ms / 1000).toFixed(2)}s`;
   };
 
+  /**
+   * Detect likely agent card fetches based on duration heuristic.
+   * Very short HTTP spans (< 100ms) with SPAN_KIND_SERVER are likely agent card discovery calls.
+   * This is a suggestion, not definitive - we can't tell from trace data alone.
+   */
+  const isLikelyAgentCardFetch = (span: TraceSpan): boolean => {
+    const durationMs = span.duration / 1000000; // Convert nanoseconds to milliseconds
+    return (
+      durationMs < 100 && // Very short duration
+      span.kind === "SPAN_KIND_SERVER" && // HTTP server span
+      span.httpStatusCode !== undefined && // Has HTTP status code
+      span.name.includes("[Agent]") // Agent-related span
+    );
+  };
+
   const getSpanPosition = (span: TraceSpan): { left: number; width: number } => {
     if (timelineBounds.total === 0) return { left: 0, width: 0 };
     const left = ((span.startTime ?? 0) - timelineBounds.min) / timelineBounds.total * 100;
@@ -261,8 +272,16 @@ export default function TraceVisualization({
               onClick={() => onSpanClick?.(span)}
               title="Click to view related log entries"
             >
-              <div className="w-32 shrink-0 text-xs text-gray-600 truncate" title={span.name}>
+              <div className="w-32 shrink-0 text-xs text-gray-600 truncate flex items-center gap-1" title={span.name}>
                 {span.name.length > 20 ? `${span.name.slice(0, 20)}...` : span.name}
+                {isLikelyAgentCardFetch(span) && (
+                  <span
+                    className="text-base shrink-0 cursor-help"
+                    title="This is probably agent card retrieval"
+                  >
+                    🌐 ➡️ 🪪
+                  </span>
+                )}
               </div>
               <div className="flex-1 relative h-6 bg-gray-100 rounded overflow-hidden">
                 <div
@@ -319,7 +338,7 @@ export default function TraceVisualization({
           return (
             <div key={`${span.spanId}-${depth}`} className="pl-4">
               <div
-                className={`flex items-center gap-2 py-1 px-2 rounded cursor-pointer hover:bg-gray-50 ${isError ? "bg-red-50" : ""}`}
+                className={`flex items-center gap-2 py-1 px-2 rounded cursor-pointer hover:bg-gray-50 ${isError ? "bg-red-50" : ""} min-w-0`}
                 onClick={(e) => {
                   e.stopPropagation();
                   // Only toggle expansion, don't trigger span click navigation
@@ -343,11 +362,19 @@ export default function TraceVisualization({
                   </span>
                 )}
                 {!hasChildren && <span className="w-4" />}
-                <div className={`w-3 h-3 rounded ${getSpanColor(span)}`} />
-                <div className="flex-1 text-xs truncate">
-                  <span className="font-medium">{span.name}</span>
+                <div className={`w-3 h-3 rounded ${getSpanColor(span)} shrink-0`} />
+                <div className="flex-1 text-xs flex items-center gap-1 min-w-0">
+                  <span className="font-medium break-words">{span.name}</span>
+                  {isLikelyAgentCardFetch(span) && (
+                    <span
+                      className="text-base shrink-0 cursor-help"
+                      title="This is probably agent card retrieval"
+                    >
+                      🌐 ➡️ 🪪
+                    </span>
+                  )}
                   {span.entityName && (
-                    <span className="ml-2 text-gray-500">
+                    <span className="ml-2 text-gray-500 shrink-0">
                       ({span.entityType}: {span.entityName})
                     </span>
                   )}
@@ -390,17 +417,6 @@ export default function TraceVisualization({
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => setViewMode("timeline")}
-            className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
-              viewMode === "timeline"
-                ? "bg-indigo-100 text-indigo-700"
-                : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-            }`}
-          >
-            Timeline
-          </button>
-          <button
-            type="button"
             onClick={() => setViewMode("hierarchy")}
             className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
               viewMode === "hierarchy"
@@ -409,6 +425,17 @@ export default function TraceVisualization({
             }`}
           >
             Hierarchy
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode("timeline")}
+            className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+              viewMode === "timeline"
+                ? "bg-indigo-100 text-indigo-700"
+                : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+            }`}
+          >
+            Timeline
           </button>
           {viewMode === "hierarchy" && spansWithChildren.size > 0 && (
             <button

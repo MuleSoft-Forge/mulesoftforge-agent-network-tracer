@@ -343,11 +343,27 @@ function summarizeLine(type: string, message: string, fields: Record<string, unk
       return `LLM selected: ${((fields.tool as string) || "?").replace(/^[a-zA-Z0-9]+_/, "")}`;
     case "TOOL_INPUT":
       return fields.toolInputJson
-        ? `Input: ${JSON.stringify(fields.toolInputJson).slice(0, 80)}`
+        ? `Input: ${JSON.stringify(fields.toolInputJson).slice(0, 200)}${JSON.stringify(fields.toolInputJson).length > 200 ? "..." : ""}`
         : "Tool input";
     case "A2A_MESSAGE_SENT": {
       const agentMatch = message.match(/to agent (\S+)/);
-      return `A2A message to ${agentMatch ? agentMatch[1].replace(/^[a-zA-Z0-9]+_/, "") : "?"}`;
+      const agentName = agentMatch ? agentMatch[1].replace(/^[a-zA-Z0-9]+_/, "") : "?";
+      // Extract message content after "to agent X:" - look for JSON or text content
+      const afterAgent = message.split(/to agent \S+/i)[1] || "";
+      // Try to find JSON in the message (common in A2A messages)
+      const jsonMatch = afterAgent.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          const parsed = JSON.parse(jsonMatch[0]);
+          const jsonStr = JSON.stringify(parsed);
+          return `A2A message to ${agentName}: ${jsonStr.slice(0, 200)}${jsonStr.length > 200 ? "..." : ""}`;
+        } catch {
+          // Not valid JSON, use raw text
+        }
+      }
+      // Fallback: show text content after agent name
+      const textPreview = afterAgent.trim().slice(0, 200);
+      return `A2A message to ${agentName}${textPreview ? `: ${textPreview}${afterAgent.trim().length > 200 ? "..." : ""}` : ""}`;
     }
     case "DOWNSTREAM_REQUEST": {
       const urlMatch = message.match(/POST\s+(\S+)/);
@@ -361,7 +377,7 @@ function summarizeLine(type: string, message: string, fields: Record<string, unk
       return `Executed: ${((fields.tool as string) || "?").replace(/^[a-zA-Z0-9]+_/, "")}`;
     case "TOOL_OUTPUT":
       return fields.toolOutputJson
-        ? `Output: ${JSON.stringify(fields.toolOutputJson).slice(0, 80)}`
+        ? `Output: ${JSON.stringify(fields.toolOutputJson).slice(0, 200)}${JSON.stringify(fields.toolOutputJson).length > 200 ? "..." : ""}`
         : "Tool output";
     case "FINAL_RESPONSE":
       return fields.resultStatus ? `Task ${fields.resultStatus}` : "Final response";
@@ -376,7 +392,9 @@ function summarizeLine(type: string, message: string, fields: Record<string, unk
     case "LLM_NO_TOOL":
       return "LLM reasoning (no tool selected)";
     default:
-      return message.split("\n")[0].slice(0, 80);
+      // For INSECURE-LOGGING entries that don't match specific patterns, preserve logger name in summary
+      const defaultSummary = message.split("\n")[0].slice(0, 200);
+      return defaultSummary;
   }
 }
 
@@ -414,7 +432,8 @@ async function fetchTraceSpans(
   baseUrl: string,
   envId: string,
   traceStartTime?: string | number,
-  traceEndTime?: string | number
+  traceEndTime?: string | number,
+  entityName?: string
 ): Promise<{ spans: TraceSpanRow[]; status: TraceSpansStatus }> {
   if (!traceId || traceId.trim() === "" || !orgId || !envId || envId.trim() === "") {
     return { spans: [], status: "skipped" };
@@ -435,7 +454,15 @@ async function fetchTraceSpans(
       endTimeMs = now;
     }
 
-    const query = `SELECT "span_id" AS spanId, name, kind, "trace_id" AS traceId, "status_code" AS statusCode, "http.status_code" AS httpStatusCode, duration, "end_time_nano" AS endTime, "entity.id" AS entityId, "entity.name" AS entityName, "entity.type" AS entityType, "env.id" AS envId, "sub_org.id" AS orgId, "sub_org.name" AS orgName, "env.name" AS envName WHERE "sub_org.id" = '${orgId}' AND "env.id" = '${envId}' AND "trace_id" = '${traceId}' AND timestamp BETWEEN ${startTimeMs} AND ${endTimeMs} ORDER BY timestamp ASC LIMIT 500`;
+    // Build WHERE clause: always filter by orgId, envId, traceId, and time range
+    // Optionally filter by entityName (appId) if provided to restrict to broker app spans
+    let whereClause = `"sub_org.id" = '${orgId}' AND "env.id" = '${envId}' AND "trace_id" = '${traceId}' AND timestamp BETWEEN ${startTimeMs} AND ${endTimeMs}`;
+    if (entityName && entityName.trim() !== "") {
+      whereClause += ` AND "entity.name" = '${entityName.trim()}'`;
+      debugLog(`[fetchTraceSpans] Filtering by entityName (appId): ${entityName}`);
+    }
+    
+    const query = `SELECT "span_id" AS spanId, name, kind, "trace_id" AS traceId, "status_code" AS statusCode, "http.status_code" AS httpStatusCode, duration, "end_time_nano" AS endTime, "entity.id" AS entityId, "entity.name" AS entityName, "entity.type" AS entityType, "env.id" AS envId, "sub_org.id" AS orgId, "sub_org.name" AS orgName, "env.name" AS envName WHERE ${whereClause} ORDER BY timestamp ASC LIMIT 500`;
 
     const url = `${baseUrl}/observability/api/v1/spans:search`;
     const res = await loggedFetch(url, {
@@ -455,12 +482,176 @@ async function fetchTraceSpans(
 
     const data = (await res.json()) as { data?: TraceSpanRow[] };
     const spans = (data.data ?? []).filter((span: TraceSpanRow): span is TraceSpanRow & { traceId: string; spanId: string } => Boolean(span.traceId && span.spanId));
+    debugLog(`[fetchTraceSpans] Fetched ${spans.length} spans${entityName ? ` (filtered by entityName: ${entityName})` : ""}`);
     return { spans, status: "ok" };
   } catch (err) {
     debugLog("[fetchTraceSpans] error:", err);
     return { spans: [], status: "error" };
   }
 }
+
+/**
+
+ * Search for traceId by correlationId in Observability API.
+ * Returns the first traceId found, or null if none.
+ */
+async function searchTraceIdByCorrelationId(
+  orgId: string,
+  envId: string,
+  correlationId: string,
+  accessToken: string,
+  baseUrl: string,
+  startTime?: string | number,
+  endTime?: string | number
+): Promise<string | null> {
+  if (!correlationId || correlationId.trim() === "" || !orgId || !envId || envId.trim() === "") {
+    return null;
+  }
+
+  try {
+    let startTimeMs: number;
+    let endTimeMs: number;
+    if (startTime != null && endTime != null) {
+      const start = typeof startTime === "number" ? startTime : new Date(startTime).getTime();
+      const end = typeof endTime === "number" ? endTime : new Date(endTime).getTime();
+      const padding = 30 * 60 * 1000; // 30 minutes
+      startTimeMs = Math.max(0, start - padding);
+      endTimeMs = end + padding;
+    } else {
+      const now = Date.now();
+      startTimeMs = now - 30 * 24 * 3600 * 1000; // 30 days
+      endTimeMs = now;
+    }
+
+    // Search for traces by correlationId
+    const whereClause = `"sub_org.id" = '${orgId}' AND "env.id" = '${envId}' AND "correlation.id" = '${correlationId.trim()}' AND timestamp BETWEEN ${startTimeMs} AND ${endTimeMs}`;
+    const query = `SELECT "trace_id" AS traceId WHERE ${whereClause} ORDER BY timestamp ASC LIMIT 1`;
+    
+    const url = `${baseUrl}/observability/api/v1/spans:search`;
+    const res = await loggedFetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ query }),
+    });
+
+    if (!res.ok) {
+      debugLog(`[searchTraceIdByCorrelationId] spans:search failed: ${res.status}`);
+      return null;
+    }
+
+    const data = (await res.json()) as { data?: Array<{ traceId?: string }> };
+    const spans = data.data ?? [];
+    if (spans.length > 0 && spans[0].traceId) {
+      const foundTraceId = spans[0].traceId;
+      debugLog(`[searchTraceIdByCorrelationId] ✓ Found traceId: ${foundTraceId} for correlationId: ${correlationId}`);
+      return foundTraceId;
+    }
+    
+    debugLog(`[searchTraceIdByCorrelationId] ✗ No traceId found for correlationId: ${correlationId}`);
+    return null;
+  } catch (err) {
+    debugLog(`[searchTraceIdByCorrelationId] error:`, err);
+    return null;
+  }
+}
+
+/**
+ * Search for trace spans by entity.name (broker app), envId, and time period.
+ * Then scope to the ONE trace that matches this task's time window (so we don't mix multiple broker calls).
+ */
+async function searchTracesByEntityAndTime(
+  orgId: string,
+  envId: string,
+  entityName: string,
+  accessToken: string,
+  baseUrl: string,
+  startTime: string | number,
+  endTime: string | number,
+  /** Task's exact time window (ms) - we pick the trace that overlaps this the most */
+  taskStartMs: number,
+  taskEndMs: number
+): Promise<{ spans: TraceSpanRow[]; status: TraceSpansStatus; traceId: string | null }> {
+  if (!entityName || entityName.trim() === "" || !orgId || !envId || envId.trim() === "") {
+    return { spans: [], status: "skipped", traceId: null };
+  }
+
+  try {
+    const start = typeof startTime === "number" ? startTime : new Date(startTime).getTime();
+    const end = typeof endTime === "number" ? endTime : new Date(endTime).getTime();
+    const padding = 30 * 60 * 1000; // 30 minutes
+    const startTimeMs = Math.max(0, start - padding);
+    const endTimeMs = end + padding;
+
+    // Search for traces by entity.name (broker app), envId, and time period
+    const whereClause = `"sub_org.id" = '${orgId}' AND "env.id" = '${envId}' AND "entity.name" = '${entityName.trim()}' AND timestamp BETWEEN ${startTimeMs} AND ${endTimeMs}`;
+    const query = `SELECT "span_id" AS spanId, name, kind, "trace_id" AS traceId, "status_code" AS statusCode, "http.status_code" AS httpStatusCode, duration, "end_time_nano" AS endTime, "entity.id" AS entityId, "entity.name" AS entityName, "entity.type" AS entityType, "env.id" AS envId, "sub_org.id" AS orgId, "sub_org.name" AS orgName, "env.name" AS envName WHERE ${whereClause} ORDER BY timestamp ASC LIMIT 500`;
+    
+    debugLog(`[searchTracesByEntityAndTime] Searching for traces: entityName="${entityName}", envId="${envId}", timeRange=${startTimeMs}-${endTimeMs}`);
+    
+    const url = `${baseUrl}/observability/api/v1/spans:search`;
+    const res = await loggedFetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ query }),
+    });
+
+    if (!res.ok) {
+      debugLog(`[searchTracesByEntityAndTime] spans:search failed: ${res.status}`);
+      const status: TraceSpansStatus = res.status === 403 ? "403" : "error";
+      return { spans: [], status, traceId: null };
+    }
+
+    const data = (await res.json()) as { data?: TraceSpanRow[] };
+    const allSpans = (data.data ?? []).filter((span: TraceSpanRow): span is TraceSpanRow & { traceId: string; spanId: string } => Boolean(span.traceId && span.spanId));
+    
+    const uniqueTraceIds = new Set(allSpans.map(s => s.traceId));
+    debugLog(`[searchTracesByEntityAndTime] ✓ Found ${allSpans.length} spans across ${uniqueTraceIds.size} unique traces for entityName="${entityName}"`);
+
+    if (allSpans.length === 0) {
+      return { spans: [], status: "ok", traceId: null };
+    }
+
+    // Pick the ONE trace that best matches this task's time window (avoid mixing multiple broker calls)
+    // endTime is in nanoseconds; duration is in nanoseconds
+    const overlapByTrace = new Map<string, number>();
+    for (const span of allSpans) {
+      const spanEndMs = span.endTime / 1e6;
+      const spanStartMs = spanEndMs - (span.duration || 0) / 1e6;
+      const overlapStart = Math.max(spanStartMs, taskStartMs);
+      const overlapEnd = Math.min(spanEndMs, taskEndMs);
+      const overlapMs = Math.max(0, overlapEnd - overlapStart);
+      const tid = span.traceId;
+      overlapByTrace.set(tid, (overlapByTrace.get(tid) || 0) + overlapMs);
+    }
+
+    let bestTraceId: string | null = null;
+    let bestOverlap = 0;
+    for (const [tid, overlap] of overlapByTrace) {
+      if (overlap > bestOverlap) {
+        bestOverlap = overlap;
+        bestTraceId = tid;
+      }
+    }
+
+    if (!bestTraceId) {
+      return { spans: [], status: "ok", traceId: null };
+    }
+
+    const spansForTask = allSpans.filter(s => s.traceId === bestTraceId);
+    debugLog(`[searchTracesByEntityAndTime] Scoped to single trace traceId="${bestTraceId}" (overlap=${bestOverlap}ms), ${spansForTask.length} spans`);
+    return { spans: spansForTask, status: "ok", traceId: bestTraceId };
+  } catch (err) {
+    debugLog(`[searchTracesByEntityAndTime] error:`, err);
+    return { spans: [], status: "error", traceId: null };
+  }
+}
+
 
 /**
  * Parse runtime logs text for a given taskId and return entries + jobCard, or null if none.
@@ -507,6 +698,16 @@ function parseRuntimeLogsToEntriesAndJobCard(
   const finalResp = entries.find((e: unknown) => (e as { type?: string }).type === "FINAL_RESPONSE");
   const toolSelections = entries.filter((e: unknown) => (e as { type?: string }).type === "LLM_TOOL_SELECTION");
   const toolExecutions = entries.filter((e: unknown) => (e as { type?: string }).type === "TOOL_EXECUTED");
+  // Derive max iteration from parsed log fields (iteration=N in log messages)
+  const maxIter = Math.max(
+    1,
+    ...(entries as Array<{ fields?: { iteration?: string } }>)
+      .map((e) => {
+        const iterStr = e.fields?.iteration;
+        return iterStr ? parseInt(iterStr, 10) : 0;
+      })
+      .filter((n: number) => !isNaN(n) && n > 0)
+  );
   const firstEntry = entries[0] as { timestamp?: string | number };
   const lastEntry = entries[entries.length - 1] as { timestamp?: string | number };
   let duration: string | null = null;
@@ -515,7 +716,7 @@ function parseRuntimeLogsToEntriesAndJobCard(
     const t2 = typeof lastEntry.timestamp === "number" ? lastEntry.timestamp : new Date(lastEntry.timestamp || "").getTime();
     duration = ((t2 - t1) / 1000).toFixed(1);
   }
-  const maxIter = Math.max(0, ...entries.map((e: unknown) => parseInt(String((e as { fields?: { iteration?: string } }).fields?.iteration || "0"), 10)));
+  // maxIter already calculated above from parsed log fields
   const toolStrings = toolSelections
     .map((e: unknown) => (e as { fields?: { tool?: string } }).fields?.tool as string)
     .filter((t: string | undefined): t is string => typeof t === "string" && Boolean(t));
@@ -1100,6 +1301,51 @@ export async function GET(request: NextRequest) {
     }
     if (!traceId) {
       debugLog(`[TASK-CALLSTACK] ✗ No traceId found in phase 1 hits`);
+      // Fallback: Try to find traceId by correlationId from phase1 hits
+      debugLog("[TASK-CALLSTACK] Fallback: Searching for traceId by correlationId...");
+      let correlationId: string | null = null;
+      let firstTimestamp: string | number | undefined;
+      let lastTimestamp: string | number | undefined;
+      
+      // Extract correlationId from phase1 hits
+      for (let i = 0; i < phase1.hits.length; i++) {
+        const h = phase1.hits[i];
+        const hit = h as { _source?: { message?: string; timestamp?: string | number } };
+        const message = (hit._source?.message as string) || "";
+        const timestamp = hit._source?.timestamp;
+        
+        // Extract correlationId from message
+        const corrMatch = message.match(/[Xx]-[Cc]orrelation-[Ii]d: ([a-f0-9-]+)/);
+        if (corrMatch) {
+          correlationId = corrMatch[1];
+          debugLog(`[TASK-CALLSTACK] Found correlationId in hit ${i}: ${correlationId}`);
+          break;
+        }
+        
+        // Track timestamps for time range
+        if (timestamp) {
+          if (!firstTimestamp) firstTimestamp = timestamp;
+          lastTimestamp = timestamp;
+        }
+      }
+      
+      if (correlationId && validatedEnvId && accessToken) {
+        const foundTraceId = await searchTraceIdByCorrelationId(
+          validatedOrgId,
+          validatedEnvId,
+          correlationId,
+          accessToken,
+          baseUrl,
+          firstTimestamp,
+          lastTimestamp
+        );
+        if (foundTraceId) {
+          traceId = foundTraceId;
+          debugLog(`[TASK-CALLSTACK] ✓ Found traceId via correlationId fallback: ${traceId}`);
+        }
+      } else {
+        debugLog(`[TASK-CALLSTACK] ✗ No correlationId found in phase1 hits for fallback`);
+      }
     }
 
     // Phase 2: combined search if we found trace_id
@@ -1301,6 +1547,18 @@ export async function GET(request: NextRequest) {
       }, {})
     )}`);
 
+    // Derive max iteration from parsed log fields (iteration=N in log messages)
+    const maxIter = Math.max(
+      1,
+      ...entries
+        .map((e: typeof entries[0]) => {
+          const iterStr = e.fields?.iteration as string | undefined;
+          return iterStr ? parseInt(iterStr, 10) : 0;
+        })
+        .filter((n: number) => !isNaN(n) && n > 0)
+    );
+    debugLog(`[TASK-CALLSTACK] Max iteration from parsed logs: ${maxIter}`);
+
     // Build Job Card from parsed entries
     debugLog("[TASK-CALLSTACK] Step 10: Building job card from entries...");
     const inbound = entries.find((e: typeof entries[0]) => e.type === "INBOUND_REQUEST");
@@ -1336,7 +1594,7 @@ export async function GET(request: NextRequest) {
       debugLog(`[TASK-CALLSTACK] ✗ Missing first or last entry for duration calculation`);
     }
 
-    const maxIter = Math.max(0, ...entries.map((e: typeof entries[0]) => parseInt((e.fields.iteration as string) || "0", 10)));
+    // maxIter already calculated above from parsed log fields
     const toolStrings = toolSelections.map((e: typeof entries[0]) => e.fields.tool as string).filter((t: string | undefined): t is string => typeof t === "string" && Boolean(t));
     const allTools: string[] = Array.from(new Set(toolStrings));
     debugLog(`[TASK-CALLSTACK] Max iteration: ${maxIter}, Tools: ${allTools.join(", ") || "none"}`);
@@ -1542,19 +1800,41 @@ export async function GET(request: NextRequest) {
     })();
 
     // Prepare trace spans fetch promise
-    const traceSpansPromise = (async (): Promise<{ spans: TraceSpanRow[]; status: TraceSpansStatus }> => {
-      if (!skipTracesRequested && traceId && validatedEnvId && validatedEnvId.trim() !== "" && accessToken) {
-        return await fetchTraceSpans(
-          validatedOrgId,
-          traceId,
-          accessToken,
-          baseUrl,
-          validatedEnvId,
-          firstEntry?.timestamp,
-          lastEntry?.timestamp
-        );
+    // Search directly by entity.name (broker app), envId, and time period - no need for traceId from logs
+    const traceSpansPromise = (async (): Promise<{ spans: TraceSpanRow[]; status: TraceSpansStatus; traceId: string | null }> => {
+      if (!skipTracesRequested && validatedEnvId && validatedEnvId.trim() !== "" && accessToken && firstEntry && lastEntry) {
+        // Use resolved broker app name for entityName
+        const entityNameForSearch = appNameForDeploymentDetail || finalAppId;
+        if (entityNameForSearch && entityNameForSearch.trim() !== "") {
+          const taskStartMs =
+            typeof firstEntry.timestamp === "number"
+              ? firstEntry.timestamp
+              : /^\d+$/.test(String(firstEntry.timestamp))
+                ? parseInt(String(firstEntry.timestamp), 10)
+                : new Date(firstEntry.timestamp).getTime();
+          const taskEndMs =
+            typeof lastEntry.timestamp === "number"
+              ? lastEntry.timestamp
+              : /^\d+$/.test(String(lastEntry.timestamp))
+                ? parseInt(String(lastEntry.timestamp), 10)
+                : new Date(lastEntry.timestamp).getTime();
+          debugLog(`[TASK-CALLSTACK] Searching for traces by entityName="${entityNameForSearch}", envId="${validatedEnvId}", timeRange=${firstEntry.timestamp}-${lastEntry.timestamp}`);
+          return await searchTracesByEntityAndTime(
+            validatedOrgId,
+            validatedEnvId,
+            entityNameForSearch,
+            accessToken,
+            baseUrl,
+            firstEntry.timestamp,
+            lastEntry.timestamp,
+            taskStartMs,
+            taskEndMs
+          );
+        } else {
+          debugLog(`[TASK-CALLSTACK] ✗ Cannot search traces: entityName is empty`);
+        }
       }
-      return { spans: [], status: "skipped" };
+      return { spans: [], status: "skipped" as TraceSpansStatus, traceId: null };
     })();
 
     // Execute both fetches in parallel
@@ -1564,6 +1844,26 @@ export async function GET(request: NextRequest) {
     // This preserves 403 from Resolver 3 while allowing fetchDeploymentDetail to update if needed
     const finalDeploymentApiStatus: ApiStatus["deploymentApi"] = objectStorePayload.deploymentApiStatus ?? deploymentApiStatus;
     let traceSpans = traceSpansResult.spans;
+    // Resolved traceId: from logs (traceparent), correlationId fallback, or entity+time selection
+    const resolvedTraceId: string | null = (traceId || (traceSpansResult as { traceId?: string | null }).traceId) ?? null;
+    // When we got a traceId from entity+time search, re-fetch the FULL trace by trace_id (no entity filter)
+    // so we get root [Agent] EmployeeAgent, mule:flow, [BROKER], and child agents — matching Monitoring UI scope
+    if ((traceSpansResult as { traceId?: string | null }).traceId && accessToken && validatedEnvId && firstEntry && lastEntry) {
+      const fullTrace = await fetchTraceSpans(
+        validatedOrgId,
+        (traceSpansResult as { traceId: string }).traceId,
+        accessToken,
+        baseUrl,
+        validatedEnvId,
+        firstEntry.timestamp,
+        lastEntry.timestamp
+        // no entityName: get all spans for this trace so hierarchy shows root + broker + child agents
+      );
+      if (fullTrace.status === "ok" && fullTrace.spans.length > 0) {
+        traceSpans = fullTrace.spans;
+        debugLog(`[TASK-CALLSTACK] Fetched full trace by traceId: ${(traceSpansResult as { traceId: string }).traceId}, ${traceSpans.length} spans (root + broker + child agents)`);
+      }
+    }
     // DISABLED: Trace filtering by entityName was too aggressive and removed child spans
     // (routers, agents, LLMs) that don't have the broker name as their entityName.
     // This prevented showing the full trace hierarchy. Users can filter spans using
@@ -1632,7 +1932,7 @@ export async function GET(request: NextRequest) {
     const jobCard = {
       taskId,
       contextId: (entries.find((e: typeof entries[0]) => e.fields.contextId) || {}).fields?.contextId || "",
-      traceId: traceId || "",
+      traceId: resolvedTraceId ?? "",
       broker: brokerName,
       apiInstanceId: (entries.find((e: typeof entries[0]) => e.fields.apiInstanceId) || {}).fields?.apiInstanceId || "",
       userMessage: inbound ? ((inbound.fields.userMessage as string) || "") : "",

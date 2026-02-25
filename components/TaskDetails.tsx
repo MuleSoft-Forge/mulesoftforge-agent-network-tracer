@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, use, Suspense, Component } from "react";
+import { useState, useEffect, useMemo, use, Suspense, Component, useRef } from "react";
 import type { ReactNode, ErrorInfo } from "react";
 import { ChevronRight, ChevronDown, Clock, CheckCircle2, XCircle, Circle } from "lucide-react";
 import { useDebugViewer } from "@/components/debug/useDebugViewer";
@@ -9,6 +9,7 @@ import TaskDetailsPanel from "@/components/task-details/TaskDetailsPanel";
 import TaskDetailsTreeView from "@/components/task-details/TaskDetailsTreeView";
 import TaskDetailsListView from "@/components/task-details/TaskDetailsListView";
 import type { JobCard, LogEntry, TreeStructure, ViewMode, DetailTab, SelectedItem, TraceSpan } from "@/components/task-details/types";
+import Spinner from "@/components/Spinner";
 
 interface TaskDetailsProps {
   orgId: string;
@@ -113,6 +114,9 @@ function TaskDetailsContent({ orgId, taskId, envId, taskResource }: TaskDetailsP
   const [expandedEntries, setExpandedEntries] = useState<Set<number>>(new Set());
   const [selectedItem, setSelectedItem] = useState<SelectedItem | null>(null);
   const [detailTab, setDetailTab] = useState<DetailTab>("apiStatus");
+  const [leftPaneWidth, setLeftPaneWidth] = useState<number>(50); // Percentage
+  const [isResizing, setIsResizing] = useState<boolean>(false);
+  const containerRef = useRef<HTMLDivElement>(null);
   const { openDebugViewer } = useDebugViewer();
 
   // Use React 19's use() hook - this will suspend if the promise is pending
@@ -454,6 +458,41 @@ function TaskDetailsContent({ orgId, taskId, envId, taskResource }: TaskDetailsP
     });
   };
 
+  // Handle resizing the split pane
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizing(true);
+  };
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizing || !containerRef.current) return;
+      const containerRect = containerRef.current.getBoundingClientRect();
+      const newLeftWidth = ((e.clientX - containerRect.left) / containerRect.width) * 100;
+      // Constrain between 20% and 80%
+      const constrainedWidth = Math.max(20, Math.min(80, newLeftWidth));
+      setLeftPaneWidth(constrainedWidth);
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+    };
+
+    if (isResizing) {
+      document.addEventListener("mousemove", handleMouseMove);
+      document.addEventListener("mouseup", handleMouseUp);
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+    }
+
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+  }, [isResizing]);
+
   if (!treeStructure) {
     return null;
   }
@@ -512,9 +551,12 @@ function TaskDetailsContent({ orgId, taskId, envId, taskResource }: TaskDetailsP
       </div>
 
       {/* Two-pane layout */}
-      <div className="flex flex-1 overflow-hidden">
+      <div ref={containerRef} className="flex flex-1 overflow-hidden relative">
         {/* Left Pane: Tree/List View */}
-        <div className={`${viewMode === "tree" ? "w-1/2" : "w-full"} overflow-y-auto scrollbar-thin border-r border-gray-200`}>
+        <div
+          className={`${viewMode === "tree" ? "" : "w-full"} overflow-y-auto scrollbar-thin ${viewMode === "tree" ? "border-r border-gray-200" : ""}`}
+          style={viewMode === "tree" ? { width: `${leftPaneWidth}%` } : {}}
+        >
           {viewMode === "tree" ? (
             <TaskDetailsTreeView
               jobCard={jobCard}
@@ -540,9 +582,24 @@ function TaskDetailsContent({ orgId, taskId, envId, taskResource }: TaskDetailsP
           )}
         </div>
 
+        {/* Resizable divider (only in tree view) */}
+        {viewMode === "tree" && (
+          <div
+            onMouseDown={handleMouseDown}
+            className={`absolute top-0 bottom-0 w-1 cursor-col-resize bg-gray-200 hover:bg-indigo-400 transition-colors z-10 ${
+              isResizing ? "bg-indigo-500" : ""
+            }`}
+            style={{ left: `${leftPaneWidth}%`, transform: "translateX(-50%)" }}
+            title="Drag to resize"
+          />
+        )}
+
         {/* Right Pane: Details (only in tree view) */}
         {viewMode === "tree" && (
-          <div className="w-1/2 overflow-y-auto scrollbar-thin bg-gray-50">
+          <div
+            className="overflow-y-auto scrollbar-thin bg-gray-50"
+            style={{ width: `${100 - leftPaneWidth}%` }}
+          >
             {selectedItem != null ? (
               <TaskDetailsPanel
                 selectedItem={selectedItem}
@@ -639,8 +696,8 @@ export default function TaskDetails({ orgId, taskId, envId, apiInstanceId, skipT
     >
       <Suspense
         fallback={
-          <div className="flex h-full items-center justify-center text-sm text-gray-500">
-            Loading call stack...
+          <div className="flex h-full items-center justify-center">
+            <Spinner size="m" className="border-t-[#00A2FF] border-l-transparent border-r-transparent border-b-transparent" />
           </div>
         }
       >
