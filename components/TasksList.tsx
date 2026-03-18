@@ -153,8 +153,9 @@ export default function TasksList({
       {apiInstanceId && (
         <ul className="flex-1 space-y-0 overflow-y-auto max-h-[420px] scrollbar-thin pr-1">
           {tasks.map((task) => {
-            const toolNames = task.toolsUsed
-              .map((t) => t.replace(/^[a-zA-Z0-9]+_/, ""))
+            const tools = Array.isArray(task.toolsUsed) ? task.toolsUsed : [];
+            const toolNames = tools
+              .map((t) => (typeof t === "string" ? t.replace(/^[a-zA-Z0-9]+_/, "") : String(t)))
               .join(", ");
             const startTimeStr = task.startTime
               ? new Date(task.startTime).toLocaleString()

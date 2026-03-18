@@ -248,21 +248,27 @@ function classifyLog(logger: string, message: string): string {
     if (message.includes("HTTP/1.1 200") || message.includes("HTTP/1.1 2"))
       return "FINAL_RESPONSE";
   }
-  if (logger === "Loop") {
+  if (logger === "Loop" || !logger) {
     if (message.includes("LLM selected tool")) return "LLM_TOOL_SELECTION";
     if (message.includes("Executed tool")) return "TOOL_EXECUTED";
     if (message.includes("No tool selected")) return "LLM_NO_TOOL";
   }
-  if (logger === "INSECURE-LOGGING") {
-    if (message.startsWith("Tool Input:")) return "TOOL_INPUT";
-    if (message.startsWith("Sending A2A")) return "A2A_MESSAGE_SENT";
-    if (message.startsWith("Output was:")) return "TOOL_OUTPUT";
+  if (logger === "INSECURE-LOGGING" || !logger) {
+    if (/(?:^|\s)Tool Input:/m.test(message)) return "TOOL_INPUT";
+    if (/(?:^|\s)Sending A2A/m.test(message)) return "A2A_MESSAGE_SENT";
+    if (/(?:^|\s)Output was:/m.test(message)) return "TOOL_OUTPUT";
   }
-  if (logger.includes("a2a-http-client")) {
+  if (logger.includes("a2a-http-client") || (!logger && /REQUESTER\s*\n/m.test(message))) {
     if (message.includes("agent-card.json")) return "AGENT_DISCOVERY";
     if (/REQUESTER\s*\nPOST\s+\//m.test(message)) return "DOWNSTREAM_REQUEST";
     if (/REQUESTER\s*\nHTTP\/1\.1\s+\d/m.test(message)) return "DOWNSTREAM_RESPONSE";
     return "HTTP_CHUNK";
+  }
+  if (!logger) {
+    if (/^LISTENER\s*\n.*POST\s+\//m.test(message) || message.startsWith("LISTENER\nPOST"))
+      return "INBOUND_REQUEST";
+    if (message.includes("HTTP/1.1 200") || message.includes("HTTP/1.1 2"))
+      return "FINAL_RESPONSE";
   }
   if (logger === "flex-gateway-envoy") return "GATEWAY";
   return "OTHER";
@@ -670,11 +676,14 @@ function parseRuntimeLogsToEntriesAndJobCard(
     if (!lineTaskIdRegex.test(line)) continue;
     const timestampMatch = line.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)/);
     const timestamp = timestampMatch ? timestampMatch[1] : new Date().toISOString();
-    const loggerMatch = line.match(/\[[\w]+\]\s+(\S+)\s+(\S+)/);
-    const logger = loggerMatch ? loggerMatch[1] : "";
-    const level = loggerMatch ? loggerMatch[2] : "";
-    const messageMatch = line.match(/^[\d-T:Z.]+\s+\w+\s+\[[\w]+\]\s+[\w-]+\s+[\w-]+\s+(.+)$/);
-    const message = messageMatch ? messageMatch[1] : line;
+    // Full format: "2026-... INFO [thread] com.logger LEVEL message..."
+    const fullFormatMatch = line.match(/^[\d-T:Z.]+\s+\w+\s+\[[\w-]+\]\s+([\w.-]+)\s+([\w-]+)\s+([\s\S]+)$/);
+    // JSON API format: "2026-... message..." (no logger/level prefix)
+    const logger = fullFormatMatch ? fullFormatMatch[1] : "";
+    const level = fullFormatMatch ? fullFormatMatch[2] : "";
+    const message = fullFormatMatch
+      ? fullFormatMatch[3]
+      : (timestampMatch ? line.slice(timestampMatch[0].length).trimStart() : line);
     const type = classifyLog(logger, message);
     const fields = parseFields(message);
     const summary = summarizeLine(type, message, fields);
@@ -893,7 +902,8 @@ async function getTaskDetailsFromRuntimeLogs(
   const startTime = now - timeRangeMs;
   const endTime = now;
 
-  // Fast path: when we have the broker's apiInstanceId and envId, fetch from that deployment first (same as task list)
+  // Fast path: resolve the broker's AMC deployment via metadata.source (app name) → AMC ?name= lookup.
+  // This avoids scanning all deployments in the environment.
   if (envId && apiInstanceId) {
     try {
       const rmUrl = `${baseUrl}/apimanager/api/v1/organizations/${orgId}/environments/${envId}/apis/${apiInstanceId}`;
@@ -905,33 +915,43 @@ async function getTaskDetailsFromRuntimeLogs(
         const apiInfo = (await rmRes.json()) as {
           deploymentId?: string;
           deployment?: { applicationId?: string; deploymentId?: string | null };
-          instanceLabel?: string;
-          assetId?: string;
+          metadata?: { source?: string };
         };
-        const dep = apiInfo.deployment || {};
-        const deploymentIdToTry = dep.deploymentId ?? dep.applicationId ?? apiInfo.deploymentId;
-        const brokerName = (apiInfo.instanceLabel || apiInfo.assetId || "").toLowerCase();
 
-        let deploymentId: string | null = deploymentIdToTry || null;
-        if (!deploymentId && brokerName) {
-          const listRes = await loggedFetch(
-            `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${envId}/deployments`,
-            { method: "GET", headers: { Authorization: `Bearer ${accessToken}` } }
-          );
+        // Parse app name from metadata.source (e.g. "urn:gav:orgId:agent-network-employee-onboarding:1.0.3")
+        const metadataSource = apiInfo.metadata?.source;
+        const sourceParts = metadataSource?.split(":") ?? [];
+        const appNameFromSource = sourceParts.length >= 4 ? sourceParts[3] : null;
+
+        let deploymentId: string | null = null;
+
+        // Preferred: resolve via AMC ?name= (gets the CloudHub deployment that has logs + Object Store)
+        if (appNameFromSource) {
+          const listUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${envId}/deployments?name=${encodeURIComponent(appNameFromSource)}`;
+          const listRes = await loggedFetch(listUrl, {
+            method: "GET",
+            headers: { Authorization: `Bearer ${accessToken}` },
+          });
           if (listRes.ok) {
             const listData = (await listRes.json()) as { items?: Array<{ id: string; name: string }> };
-            const items = listData.items || [];
-            const normalizedBroker = brokerName.replace(/-/g, "");
-            for (const item of items) {
-              const nameNorm = (item.name || "").toLowerCase().replace(/-/g, "");
-              if (nameNorm === normalizedBroker || nameNorm.includes(normalizedBroker) || normalizedBroker.includes(nameNorm)) {
-                deploymentId = item.id;
-                debugLog("[NO-ENTITLEMENT] Matched broker deployment by name:", item.name, "->", item.id);
-                break;
-              }
+            const match = (listData.items ?? []).find((d) => d.name === appNameFromSource);
+            if (match) {
+              deploymentId = match.id;
+              debugLog("[NO-ENTITLEMENT] Fast path: resolved AMC deployment by app name:", appNameFromSource, "->", deploymentId);
             }
           }
         }
+
+        // Fallback: try RM deployment IDs directly (works for non-HY deployments)
+        if (!deploymentId) {
+          const dep = apiInfo.deployment || {};
+          const rmDeploymentId = dep.deploymentId ?? dep.applicationId ?? apiInfo.deploymentId ?? null;
+          if (rmDeploymentId) {
+            deploymentId = rmDeploymentId;
+            debugLog("[NO-ENTITLEMENT] Fast path: using RM deploymentId:", deploymentId);
+          }
+        }
+
         if (deploymentId) {
           const detailRes = await loggedFetch(
             `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${envId}/deployments/${deploymentId}`,
@@ -941,19 +961,30 @@ async function getTaskDetailsFromRuntimeLogs(
             const detail = (await detailRes.json()) as { desiredVersion?: string; replicas?: Array<{ id: string }> };
             const specId = detail.desiredVersion ?? detail.replicas?.[0]?.id;
             if (specId) {
-              const searchParams = { startTime, endTime, length: 10000, descending: true };
-              const logsUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${envId}/deployments/${deploymentId}/specs/${specId}/logs/file?search=${encodeURIComponent(JSON.stringify(searchParams))}`;
+              const safeLength = 1000;
+              const logsUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${envId}/deployments/${deploymentId}/specs/${specId}/logs?length=${safeLength}&descending=true`;
               const logsRes = await loggedFetch(logsUrl, {
                 method: "GET",
                 headers: { Authorization: `Bearer ${accessToken}` },
               });
               if (logsRes.ok) {
-                const logsText = await logsRes.text();
-                const taskIdPattern = taskId.replace(/-/g, "[-]");
-                if (new RegExp(taskIdPattern, "gi").test(logsText)) {
+                const contentType = logsRes.headers.get("content-type") || "";
+                let logsText: string;
+                if (contentType.includes("application/json")) {
+                  const entries = (await logsRes.json()) as Array<{ timestamp?: number; message?: string }>;
+                  logsText = Array.isArray(entries)
+                    ? entries
+                        .map((e) => `${e.timestamp != null ? new Date(e.timestamp).toISOString() : ""} ${e.message ?? ""}`.trim())
+                        .filter((l) => l.length > 0)
+                        .join("\n")
+                    : "";
+                } else {
+                  logsText = await logsRes.text();
+                }
+                if (logsText.includes(taskId)) {
                   const parsed = parseRuntimeLogsToEntriesAndJobCard(logsText, taskId);
                   if (parsed) {
-                    debugLog("[NO-ENTITLEMENT] Task details from broker deployment");
+                    debugLog("[NO-ENTITLEMENT] Fast path: found task in broker deployment", deploymentId);
                     return parsed;
                   }
                 }
@@ -1049,15 +1080,8 @@ async function getTaskDetailsFromRuntimeLogs(
           }
 
           try {
-            // Fetch logs file for this deployment
-            const searchParams = {
-              startTime,
-              endTime,
-              length: 10000,
-              descending: true,
-            };
-            const searchEncoded = encodeURIComponent(JSON.stringify(searchParams));
-            const logsUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${env.id}/deployments/${deployment.id}/specs/${specId}/logs/file?search=${searchEncoded}`;
+            const safeLength = 1000;
+            const logsUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${env.id}/deployments/${deployment.id}/specs/${specId}/logs?length=${safeLength}&descending=true`;
 
             const logsRes = await loggedFetch(logsUrl, {
               method: "GET",
@@ -1067,10 +1091,26 @@ async function getTaskDetailsFromRuntimeLogs(
             });
 
             if (!logsRes.ok) {
-              continue; // Try next deployment
+              continue;
             }
 
-            const logsText = await logsRes.text();
+            const contentType = logsRes.headers.get("content-type") || "";
+            let logsText: string;
+            if (contentType.includes("application/json")) {
+              const entries = (await logsRes.json()) as Array<{ timestamp?: number; message?: string }>;
+              logsText = Array.isArray(entries)
+                ? entries
+                    .map((e) => `${e.timestamp != null ? new Date(e.timestamp).toISOString() : ""} ${e.message ?? ""}`.trim())
+                    .filter((l) => l.length > 0)
+                    .join("\n")
+                : "";
+            } else {
+              logsText = await logsRes.text();
+            }
+
+            if (!logsText.includes(taskId)) {
+              continue;
+            }
             
             const parsed = parseRuntimeLogsToEntriesAndJobCard(logsText, taskId);
             if (parsed) {
