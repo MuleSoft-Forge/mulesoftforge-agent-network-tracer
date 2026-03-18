@@ -15,7 +15,7 @@ import { debugLog, debugError } from "@/lib/api-logger";
 import type { BrokerInEnvironment } from "@/lib/visualizer/brokers-in-environment-types";
 import type { CanonicalGraph, CanonicalNode } from "@/lib/agent-network-types";
 import type { FabricGraphResponse } from "@/lib/adapters/visualizer-to-canonical";
-import type { EdgeStyle, NodeFilters } from "@/components/CanvasOptionsMenu";
+import type { EdgeStyle, NodeFilters, CanvasLayout } from "@/components/CanvasOptionsMenu";
 import { DEFAULT_ACTIVITY_PERIOD_MINUTES } from "@/lib/constants";
 
 const DEFAULT_CANVAS_HEIGHT = 60; // 60% of height by default
@@ -32,6 +32,7 @@ export default function MainContent() {
   const [error, setError] = useState<string | null>(null);
   const [fabricData, setFabricData] = useState<FabricGraphResponse | null>(null);
   const [edgeStyle, setEdgeStyle] = useState<EdgeStyle>("straight");
+  const [layout, setLayout] = useState<CanvasLayout>("tree");
   const [nodeFilters, setNodeFilters] = useState<NodeFilters>({
     showAgents: true,
     showMCPServers: true,
@@ -356,13 +357,13 @@ export default function MainContent() {
         onBrokerTasksData={handleBrokerTasksData}
         loadingBrokers={loading}
       />
-      <div ref={containerRef} className="flex flex-1 flex-col overflow-hidden bg-gray-50">
+      <div ref={containerRef} className="flex flex-1 flex-col overflow-hidden bg-gradient-to-br from-gray-50 via-white to-gray-50">
         {/* Header with Activity button and View raw */}
-        <div className="flex items-center justify-between border-b border-gray-200 bg-white px-4 py-2">
+        <div className="flex items-center justify-between border-b border-gray-200/50 bg-white/80 backdrop-blur-sm px-4 py-2 shadow-sm">
           <div className="flex items-center gap-2">
             <button
               type="button"
-              className="rounded-anypoint-button bg-primary px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-all duration-150 ease-[cubic-bezier(0.46,0.03,0.52,0.96)]"
+              className="rounded-anypoint-button bg-gradient-to-r from-primary to-purple-600 px-3 py-1.5 text-sm font-medium text-white shadow-md hover:shadow-lg transition-all duration-200 ease-[cubic-bezier(0.46,0.03,0.52,0.96)]"
               aria-label="Activity mode"
               aria-pressed="true"
             >
@@ -406,6 +407,8 @@ export default function MainContent() {
                   graph={graph}
                   edgeStyle={edgeStyle}
                   onEdgeStyleChange={setEdgeStyle}
+                  layout={layout}
+                  onLayoutChange={setLayout}
                   nodeFilters={nodeFilters}
                   onNodeFiltersChange={setNodeFilters}
                 />

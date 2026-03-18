@@ -33,6 +33,11 @@ export default function TaskDetailsStepNode({
         <span className={`rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${getBadgeClass(entry.type)}`}>
           {entry.type.replace(/_/g, " ")}
         </span>
+        {entry.logger === "INSECURE-LOGGING" && (
+          <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-red-700 border border-red-200" title="INSECURE-LOGGING logger">
+            ⚠
+          </span>
+        )}
         <span className="font-mono text-[10px] text-gray-500">{formatTimestamp(entry.timestamp)}</span>
         <span className="flex-1 truncate text-gray-700">{entry.summary}</span>
       </div>

@@ -2,12 +2,13 @@
 
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import type { CanonicalGraph, CanonicalNode, CanonicalEdge } from "@/lib/agent-network-types";
+import type { EdgeStyle, NodeFilters, CanvasLayout } from "@/components/CanvasOptionsMenu";
+import CanvasOptionsMenu from "@/components/CanvasOptionsMenu";
 import {
   calculateTreeLayout,
+  calculateRadialLayout,
   applyRepulsion,
 } from "@/lib/layouts/canvas-layouts";
-import CanvasOptionsMenu from "@/components/CanvasOptionsMenu";
-import type { EdgeStyle, NodeFilters } from "@/components/CanvasOptionsMenu";
 
 const NODE_WIDTH = 240;
 const NODE_HEIGHT = 56;
@@ -23,6 +24,8 @@ interface AgentNetworkCanvasProps {
   graph: CanonicalGraph | null;
   edgeStyle?: EdgeStyle;
   onEdgeStyleChange?: (style: EdgeStyle) => void;
+  layout?: CanvasLayout;
+  onLayoutChange?: (layout: CanvasLayout) => void;
   nodeFilters?: NodeFilters;
   onNodeFiltersChange?: (filters: NodeFilters) => void;
   className?: string;
@@ -41,6 +44,8 @@ export default function AgentNetworkCanvas({
   graph,
   edgeStyle = "straight",
   onEdgeStyleChange,
+  layout = "tree",
+  onLayoutChange,
   nodeFilters = { showAgents: true, showMCPServers: true, showLLM: true },
   onNodeFiltersChange,
   className = "",
@@ -51,15 +56,24 @@ export default function AgentNetworkCanvas({
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [draggedNodeId, setDraggedNodeId] = useState<string | null>(null);
   const [nodeDragStart, setNodeDragStart] = useState({ x: 0, y: 0 });
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+  const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const lastContainerSizeRef = useRef<{ w: number; h: number } | null>(null);
+  const initialFitDoneRef = useRef(false);
+  const justDraggedRef = useRef(false);
   // Local state for node positions that can be updated by dragging
   const [localPositions, setLocalPositions] = useState<Map<string, { x: number; y: number }>>(new Map());
 
   // Pan handlers - only pan if not dragging a node
   const handleMouseDown = useCallback(
     (e: React.MouseEvent<SVGSVGElement>) => {
+      if (e.target === svgRef.current) {
+        setSelectedNodeId(null); // Clear selection when clicking canvas background
+      }
       if (e.button === 0 && draggedNodeId === null) {
-        // Left mouse button and not dragging a node
         setIsDragging(true);
         setDragStart({ x: e.clientX, y: e.clientY });
       }
@@ -106,9 +120,15 @@ export default function AgentNetworkCanvas({
   );
 
   const handleMouseUp = useCallback(() => {
+    if (draggedNodeId) {
+      justDraggedRef.current = true;
+      setTimeout(() => {
+        justDraggedRef.current = false;
+      }, 0);
+    }
     setIsDragging(false);
     setDraggedNodeId(null);
-  }, []);
+  }, [draggedNodeId]);
 
   // Node drag handlers
   const handleNodeMouseDown = useCallback(
@@ -237,12 +257,16 @@ export default function AgentNetworkCanvas({
         }
       });
     } else {
-      // Calculate layout (always tree layout)
-      const layoutPositions = calculateTreeLayout(graph);
-      
-      // Apply repulsion physics to prevent overlap
-      const repulsedPositions = applyRepulsion(layoutPositions, graph);
-      
+      // Calculate layout (tree or radial)
+      const layoutPositions =
+        layout === "radial"
+          ? calculateRadialLayout(graph)
+          : calculateTreeLayout(graph);
+      const repulsedPositions =
+        layout === "tree"
+          ? applyRepulsion(layoutPositions, graph)
+          : layoutPositions;
+
       repulsedPositions.forEach((pos, id) => {
         posMap.set(id, pos);
       });
@@ -250,7 +274,7 @@ export default function AgentNetworkCanvas({
 
     return posMap;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodeCount]);
+  }, [nodeCount, layout]);
 
   // Initialize local positions from graph when it changes
   useEffect(() => {
@@ -261,6 +285,12 @@ export default function AgentNetworkCanvas({
       setLocalPositions(new Map());
     }
   }, [initialPositions]);
+
+  // Reset initial-fit flag when graph or layout changes so we fit again
+  const graphKey = graph ? `${graph.nodes.length}-${graph.edges.length}-${layout}` : "";
+  useEffect(() => {
+    initialFitDoneRef.current = false;
+  }, [graphKey]);
 
   // Merge local positions with initial positions (local takes precedence)
   const positions = useMemo(() => {
@@ -314,15 +344,78 @@ export default function AgentNetworkCanvas({
     });
   }, [graph, filteredNodes, positions]);
 
-  // Center view on nodes when graph changes - fit to visible nodes with padding
-  // Use filteredNodes.length as dependency to re-center when filters change
-  // Also depend on positions.size to re-center when positions are initialized from existing graph positions
+  // Double-click on canvas background to fit view to nodes
+  const handleCanvasDoubleClick = useCallback(
+    (e: React.MouseEvent<SVGSVGElement>) => {
+      if (e.target === svgRef.current) {
+        handleCenter();
+      }
+    },
+    [handleCenter]
+  );
+
+  // Keyboard shortcuts: F = fit, +/= = zoom in, - = zoom out
   useEffect(() => {
-    if (!graph || filteredNodes.length === 0 || positions.size === 0) {
+    if (!graph) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target?.closest("input, textarea, [contenteditable=\"true\"]")) return;
+      if (e.key === "f" || e.key === "F") {
+        e.preventDefault();
+        handleCenter();
+      }
+      if (e.key === "=" || e.key === "+") {
+        e.preventDefault();
+        handleZoomIn();
+      }
+      if (e.key === "-") {
+        e.preventDefault();
+        handleZoomOut();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [graph, handleCenter, handleZoomIn, handleZoomOut]);
+
+  // On canvas resize: keep the network at the same on-screen size (same zoom level).
+  // Shrinking the canvas shows a cropped view; growing it shows more. No re-fit.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      const newW = entry.contentRect.width;
+      const newH = entry.contentRect.height;
+      const last = lastContainerSizeRef.current;
+      lastContainerSizeRef.current = { w: newW, h: newH };
+      if (last && last.w > 0 && last.h > 0 && (newW !== last.w || newH !== last.h)) {
+        setViewBox((vb) => {
+          const centerX = vb.x + vb.width / 2;
+          const centerY = vb.y + vb.height / 2;
+          const scaleX = newW / last.w;
+          const scaleY = newH / last.h;
+          const newWidth = vb.width * scaleX;
+          const newHeight = vb.height * scaleY;
+          return {
+            x: centerX - newWidth / 2,
+            y: centerY - newHeight / 2,
+            width: newWidth,
+            height: newHeight,
+          };
+        });
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Center view on nodes when graph first loads (once per graph); "Center" button for manual re-fit
+  useEffect(() => {
+    if (!graph || filteredNodes.length === 0 || positions.size === 0 || initialFitDoneRef.current) {
       return;
     }
 
-    // Only use positions of visible (filtered) nodes
     const visiblePositions = filteredNodes
       .map((node: CanonicalNode) => positions.get(node.id))
       .filter((pos): pos is { x: number; y: number } => pos !== undefined);
@@ -346,7 +439,15 @@ export default function AgentNetworkCanvas({
       width: width + paddingX * 2,
       height: height + paddingY * 2,
     });
+    initialFitDoneRef.current = true;
   }, [graph, filteredNodes.length, positions.size, filteredNodes, positions]);
+
+  // Clear selection when the selected node is filtered out
+  useEffect(() => {
+    if (selectedNodeId && filteredNodes.length > 0 && !filteredNodes.some((n: CanonicalNode) => n.id === selectedNodeId)) {
+      setSelectedNodeId(null);
+    }
+  }, [selectedNodeId, filteredNodes]);
 
   // Early return after all hooks
   if (!graph || graph.nodes.length === 0) {
@@ -363,6 +464,10 @@ export default function AgentNetworkCanvas({
 
   const typeColor = (type: string) => NODE_TYPE_COLORS[type]?.stroke ?? NODE_TYPE_COLORS.AGENT.stroke;
 
+  const selectedNode = selectedNodeId && graph
+    ? graph.nodes.find((n: CanonicalNode) => n.id === selectedNodeId) ?? null
+    : null;
+
   // Filter edges - only show edges where both source and target nodes are visible
   const filteredEdges = useMemo((): CanonicalEdge[] => {
     if (!graph) return [];
@@ -373,22 +478,59 @@ export default function AgentNetworkCanvas({
   }, [graph, filteredNodes]);
 
   return (
-    <div className={`relative h-full w-full bg-gray-50 overflow-hidden ${className}`}>
-      {/* Legend: bottom-left */}
-      <div
-        className="absolute bottom-4 left-4 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-gray-300 bg-white px-3 py-2 shadow-sm"
-        aria-label="Node type legend"
-      >
-        {Object.entries(NODE_TYPE_COLORS).map(([type, { stroke, label }]: [string, { stroke: string; label: string }]) => (
-          <div key={type} className="flex items-center gap-2">
-            <span
-              className="inline-block h-3 w-3 rounded-sm border-2 border-gray-800"
-              style={{ borderColor: stroke, backgroundColor: "white" }}
-              aria-hidden
-            />
-            <span className="text-xs text-gray-700">{label}</span>
+    <div
+      ref={containerRef}
+      className={`relative h-full w-full bg-gray-50 overflow-hidden ${className}`}
+    >
+      {/* Bottom-left: node details panel (when selected) + legend */}
+      <div className="absolute bottom-4 left-4 flex flex-col-reverse gap-2 max-w-[calc(100%-8rem)]">
+        <div
+          className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-gray-300 bg-white px-3 py-2 shadow-sm w-fit"
+          aria-label="Node type legend"
+        >
+          {Object.entries(NODE_TYPE_COLORS).map(([type, { stroke, label }]: [string, { stroke: string; label: string }]) => (
+            <div key={type} className="flex items-center gap-2">
+              <span
+                className="inline-block h-3 w-3 rounded-sm border-2 border-gray-800"
+                style={{ borderColor: stroke, backgroundColor: "white" }}
+                aria-hidden
+              />
+              <span className="text-xs text-gray-700">{label}</span>
+            </div>
+          ))}
+        </div>
+        {selectedNode && (
+          <div className="rounded-lg border border-gray-200 bg-white shadow-lg z-10 w-fit max-w-sm">
+            <div className="flex items-center justify-between border-b border-gray-200 px-3 py-2">
+              <span className="text-xs font-semibold text-gray-700">Node details</span>
+              <button
+                type="button"
+                onClick={() => setSelectedNodeId(null)}
+                className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus:ring-1 focus:ring-primary"
+                aria-label="Close"
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="px-3 py-2 space-y-1.5 text-sm">
+              <p className="font-medium text-gray-900">{selectedNode.label}</p>
+              <p className="text-gray-600">
+                <span className="font-medium">{selectedNode.type}</span>
+                {selectedNode.version && ` · ${selectedNode.version}`}
+              </p>
+              {selectedNode.frameworkType && (
+                <p className="text-gray-500">{selectedNode.frameworkType}</p>
+              )}
+              {(selectedNode.exchangeAssetId ?? selectedNode.id) && (
+                <p className="text-[10px] text-gray-400 truncate" title={selectedNode.exchangeAssetId ?? selectedNode.id}>
+                  {selectedNode.exchangeAssetId ?? selectedNode.id}
+                </p>
+              )}
+            </div>
           </div>
-        ))}
+        )}
       </div>
       <svg
         ref={svgRef}
@@ -402,9 +544,13 @@ export default function AgentNetworkCanvas({
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
         onWheel={handleWheel}
+        onDoubleClick={handleCanvasDoubleClick}
         aria-label="Agent network graph"
       >
         <defs>
+          <filter id="node-shadow" x="-20%" y="-20%" width="140%" height="140%">
+            <feDropShadow dx="0" dy="2" stdDeviation="3" floodColor="#000" floodOpacity="0.12" />
+          </filter>
           <marker
             id="arrow"
             markerWidth={8}
@@ -424,25 +570,26 @@ export default function AgentNetworkCanvas({
           const sourceNode = filteredNodes.find((n: CanonicalNode) => n.id === e.source);
           const targetNode = filteredNodes.find((n: CanonicalNode) => n.id === e.target);
           
-          // Check if this is a broker -> LLM edge
           const isBrokerToLLM = sourceNode?.type === "BROKER" && targetNode?.type === "LLM";
           
-          // Calculate edge endpoints
           let x1: number, y1: number, x2: number, y2: number;
           
           if (isBrokerToLLM) {
-            // Connect from right side of broker to left side of LLM (same Y level)
-            x1 = src.x + NODE_WIDTH; // Right side of broker
-            y1 = src.y + NODE_HEIGHT / 2; // Middle of broker
-            x2 = tgt.x; // Left side of LLM
-            y2 = tgt.y + NODE_HEIGHT / 2; // Middle of LLM
+            x1 = src.x + NODE_WIDTH;
+            y1 = src.y + NODE_HEIGHT / 2;
+            x2 = tgt.x;
+            y2 = tgt.y + NODE_HEIGHT / 2;
           } else {
-            // Default: connect from center bottom of source to center top of target
             x1 = src.x + NODE_WIDTH / 2;
             y1 = src.y + NODE_HEIGHT;
             x2 = tgt.x + NODE_WIDTH / 2;
             y2 = tgt.y;
           }
+
+          const isHovered = hoveredEdgeId === e.id;
+          const dimmed = hoveredEdgeId !== null && !isHovered;
+          const edgeOpacity = dimmed ? 0.25 : 1;
+          const strokeW = isHovered ? 2.2 : 1.5;
           
           if (edgeStyle === "bent") {
             const dx = x2 - x1;
@@ -452,27 +599,44 @@ export default function AgentNetworkCanvas({
             const cpy = (y1 + y2) / 2 + (dx / len) * BEND_OFFSET;
             const d = `M ${x1} ${y1} Q ${cpx} ${cpy} ${x2} ${y2}`;
             return (
-              <path
+              <g
                 key={e.id}
-                d={d}
-                fill="none"
-                stroke="#c4c4c4"
-                strokeWidth={1.5}
-                markerEnd="url(#arrow)"
-              />
+                onMouseEnter={() => setHoveredEdgeId(e.id)}
+                onMouseLeave={() => setHoveredEdgeId(null)}
+                className="cursor-pointer"
+              >
+                {/* Invisible wide stroke for easier hover */}
+                <path d={d} fill="none" stroke="transparent" strokeWidth={14} />
+                <path
+                  d={d}
+                  fill="none"
+                  stroke="#94a3b8"
+                  strokeWidth={strokeW}
+                  markerEnd="url(#arrow)"
+                  style={{ opacity: edgeOpacity }}
+                />
+              </g>
             );
           }
           return (
-            <line
+            <g
               key={e.id}
-              x1={x1}
-              y1={y1}
-              x2={x2}
-              y2={y2}
-              stroke="#c4c4c4"
-              strokeWidth={1.5}
-              markerEnd="url(#arrow)"
-            />
+              onMouseEnter={() => setHoveredEdgeId(e.id)}
+              onMouseLeave={() => setHoveredEdgeId(null)}
+              className="cursor-pointer"
+            >
+              <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth={14} />
+              <line
+                x1={x1}
+                y1={y1}
+                x2={x2}
+                y2={y2}
+                stroke="#94a3b8"
+                strokeWidth={strokeW}
+                markerEnd="url(#arrow)"
+                style={{ opacity: edgeOpacity }}
+              />
+            </g>
           );
         })}
         {filteredNodes.map((n: CanonicalNode) => {
@@ -500,6 +664,14 @@ export default function AgentNetworkCanvas({
             <g
               key={n.id}
               onMouseDown={(e) => handleNodeMouseDown(e, n.id)}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!justDraggedRef.current) {
+                  setSelectedNodeId(n.id);
+                }
+              }}
+              onMouseEnter={() => setHoveredNodeId(n.id)}
+              onMouseLeave={() => setHoveredNodeId(null)}
               className="cursor-move"
             >
               <title>
@@ -515,10 +687,25 @@ export default function AgentNetworkCanvas({
                 rx={8}
                 fill="white"
                 stroke={typeColor(n.type)}
-                strokeWidth={isDragging ? 3 : 2}
+                strokeWidth={isDragging ? 3 : hoveredNodeId === n.id ? 2.5 : 2}
+                filter={hoveredNodeId === n.id || isDragging ? "url(#node-shadow)" : undefined}
                 className={isDragging ? "cursor-grabbing" : "cursor-move"}
                 style={{ opacity: isDragging ? 0.8 : 1 }}
               />
+              {/* Selection ring */}
+              {selectedNodeId === n.id && (
+                <rect
+                  x={pos.x - 2}
+                  y={pos.y - 2}
+                  width={NODE_WIDTH + 4}
+                  height={NODE_HEIGHT + 4}
+                  rx={10}
+                  fill="none"
+                  stroke="#5e66f9"
+                  strokeWidth={2.5}
+                  className="pointer-events-none"
+                />
+              )}
               {iconUrl && (
                 <image
                   href={iconUrl}
@@ -561,12 +748,17 @@ export default function AgentNetworkCanvas({
         })}
       </svg>
       {/* Canvas controls */}
-      <div className="absolute bottom-4 right-4 flex flex-col gap-2">
-        {(onEdgeStyleChange || onNodeFiltersChange) && (
+      <div className="absolute bottom-4 right-4 flex flex-col items-end gap-2">
+        <div className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 shadow-sm text-[10px] text-gray-500 tabular-nums" aria-live="polite">
+          {Math.round((CANVAS_SIZE / viewBox.width) * 100)}%
+        </div>
+        {(onEdgeStyleChange || onNodeFiltersChange || onLayoutChange) && (
           <div className="rounded-lg border border-gray-300 bg-white shadow-md p-1">
             <CanvasOptionsMenu
               edgeStyle={edgeStyle}
               onEdgeStyleChange={onEdgeStyleChange ?? (() => {})}
+              layout={layout}
+              onLayoutChange={onLayoutChange ?? (() => {})}
               nodeFilters={nodeFilters}
               onNodeFiltersChange={onNodeFiltersChange ?? (() => {})}
             />
@@ -576,6 +768,7 @@ export default function AgentNetworkCanvas({
           <button
             type="button"
             onClick={handleZoomOut}
+            title="Zoom out (−)"
             className="flex h-8 w-8 items-center justify-center border-r border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors focus:outline-none focus:ring-1 focus:ring-primary rounded-l-lg"
             aria-label="Zoom out"
           >
@@ -597,6 +790,7 @@ export default function AgentNetworkCanvas({
           <button
             type="button"
             onClick={handleCenter}
+            title="Fit view (F)"
             className="flex h-8 w-8 items-center justify-center border-r border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors focus:outline-none focus:ring-1 focus:ring-primary"
             aria-label="Center view"
           >
@@ -620,6 +814,7 @@ export default function AgentNetworkCanvas({
           <button
             type="button"
             onClick={handleZoomIn}
+            title="Zoom in (+)"
             className="flex h-8 w-8 items-center justify-center text-gray-600 hover:bg-gray-50 transition-colors focus:outline-none focus:ring-1 focus:ring-primary rounded-r-lg"
             aria-label="Zoom in"
           >

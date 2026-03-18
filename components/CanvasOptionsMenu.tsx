@@ -4,6 +4,8 @@ import { useState, useRef, useEffect } from "react";
 
 export type EdgeStyle = "straight" | "bent";
 
+export type CanvasLayout = "tree" | "radial";
+
 export interface NodeFilters {
   showAgents: boolean;
   showMCPServers: boolean;
@@ -13,6 +15,8 @@ export interface NodeFilters {
 interface CanvasOptionsMenuProps {
   edgeStyle: EdgeStyle;
   onEdgeStyleChange: (style: EdgeStyle) => void;
+  layout: CanvasLayout;
+  onLayoutChange: (layout: CanvasLayout) => void;
   nodeFilters: NodeFilters;
   onNodeFiltersChange: (filters: NodeFilters) => void;
 }
@@ -20,6 +24,8 @@ interface CanvasOptionsMenuProps {
 export default function CanvasOptionsMenu({
   edgeStyle,
   onEdgeStyleChange,
+  layout,
+  onLayoutChange,
   nodeFilters,
   onNodeFiltersChange,
 }: CanvasOptionsMenuProps) {
@@ -86,6 +92,41 @@ export default function CanvasOptionsMenu({
             <h3 className="text-sm font-semibold text-gray-900">Options</h3>
           </div>
           <div className="p-3 space-y-4">
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-gray-700">
+                Layout
+              </label>
+              <div className="space-y-1">
+                <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-gray-50">
+                  <input
+                    type="radio"
+                    name="layout"
+                    value="tree"
+                    checked={layout === "tree"}
+                    onChange={() => {
+                      onLayoutChange("tree");
+                      setIsOpen(false);
+                    }}
+                    className="h-4 w-4 border-gray-300 text-primary focus:ring-primary"
+                  />
+                  <span className="text-sm text-gray-700">Tree</span>
+                </label>
+                <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-gray-50">
+                  <input
+                    type="radio"
+                    name="layout"
+                    value="radial"
+                    checked={layout === "radial"}
+                    onChange={() => {
+                      onLayoutChange("radial");
+                      setIsOpen(false);
+                    }}
+                    className="h-4 w-4 border-gray-300 text-primary focus:ring-primary"
+                  />
+                  <span className="text-sm text-gray-700">Radial</span>
+                </label>
+              </div>
+            </div>
             <div>
               <label className="mb-1.5 block text-sm font-medium text-gray-700">
                 Edge style

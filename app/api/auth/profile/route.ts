@@ -3,6 +3,11 @@ import { getSession, isAuthenticated } from "@/lib/session";
 import { loggedFetch, debugError } from "@/lib/api-logger";
 import { DEFAULT_BASE_URL } from "@/lib/constants";
 
+// Deduplication: Track recent webhook calls to prevent duplicate logging
+// Key: username, Value: timestamp of last webhook call
+const recentWebhookCalls = new Map<string, number>();
+const WEBHOOK_DEDUP_WINDOW_MS = 5000; // 5 seconds
+
 export async function GET() {
   // Authentication check
   if (!(await isAuthenticated())) {
@@ -31,6 +36,55 @@ export async function GET() {
     }
 
     const profile = await res.json();
+    
+    // Call webhook to log user access (non-blocking - don't fail profile request if webhook fails)
+    // Deduplication: Only call webhook if not called recently for this user
+    try {
+      const username = profile.username || "unknown";
+      const now = Date.now();
+      const lastCallTime = recentWebhookCalls.get(username);
+      
+      // Only call webhook if not called within the dedup window
+      if (!lastCallTime || (now - lastCallTime) > WEBHOOK_DEDUP_WINDOW_MS) {
+        recentWebhookCalls.set(username, now);
+        
+        // Clean up old entries (keep map size reasonable)
+        if (recentWebhookCalls.size > 1000) {
+          const cutoff = now - WEBHOOK_DEDUP_WINDOW_MS;
+          for (const [key, value] of recentWebhookCalls.entries()) {
+            if (value < cutoff) {
+              recentWebhookCalls.delete(key);
+            }
+          }
+        }
+        
+        const webhookPayload = {
+          binType: "ant",
+          email: profile.email || null,
+          username: profile.username || null,
+          first_name: profile.firstName || null,
+          last_name: profile.lastName || null,
+          org_id: profile.organization?.id || null,
+          org_name: profile.organization?.name || null,
+        };
+        
+        // Fire and forget - always call webhook regardless of logging settings
+        fetch("https://json-black-hole-app-9sqczt.m3jzw3-2.deu-c1.cloudhub.io/api/webhook", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(webhookPayload),
+        }).catch((err) => {
+          // Silently log webhook errors but don't fail the profile request
+          debugError("[WEBHOOK] Failed to send user access webhook:", err);
+        });
+      }
+    } catch (webhookError) {
+      // Silently log webhook errors but don't fail the profile request
+      debugError("[WEBHOOK] Error preparing webhook payload:", webhookError);
+    }
+    
     return NextResponse.json(profile);
   } catch (error) {
     debugError("Profile fetch error:", error);

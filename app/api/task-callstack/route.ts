@@ -752,7 +752,8 @@ async function fetchObjectStoreInNoEntitlementMode(
   jobCard: { broker?: string; apiInstanceId?: string; appId?: string; contextId?: string; startTime?: string | number },
   apiInstanceIdFromRequest: string | undefined,
   accessToken: string,
-  baseUrl: string
+  baseUrl: string,
+  resolvedDeploymentId?: string | null
 ): Promise<{
   objectStore: {
     available: boolean;
@@ -771,48 +772,53 @@ async function fetchObjectStoreInNoEntitlementMode(
   const apiInstanceId = (jobCard.apiInstanceId || apiInstanceIdFromRequest || "").trim();
   const appId = (jobCard.appId ?? "").trim();
 
-  let deploymentId: string | null = null;
+  let deploymentId: string | null = resolvedDeploymentId ?? null;
   let deploymentType: DeploymentTypeHint = undefined;
-  if (appId) {
-    const appIdMatch = appId.match(/^APP_([a-f0-9-]+)__/);
-    if (appIdMatch) deploymentId = appIdMatch[1];
-    else if (/^[a-f0-9-]{36}$/.test(appId)) deploymentId = appId;
-  }
-  if (!deploymentId && apiInstanceId) {
-    try {
-      const rmRes = await loggedFetch(
-        `${baseUrl}/apimanager/api/v1/organizations/${orgId}/environments/${envId}/apis/${apiInstanceId}`,
-        { method: "GET", headers: { Authorization: `Bearer ${accessToken}` } }
-      );
-      if (rmRes.ok) {
-        const apiInfo = (await rmRes.json()) as {
-          deploymentId?: string | number;
-          deployment?: { applicationId?: string; deploymentId?: string | null; type?: string };
-          endpoint?: { deploymentType?: string };
-          appId?: string;
-        };
-        const dep = apiInfo.deployment || {};
-        deploymentType = dep.type ?? apiInfo.endpoint?.deploymentType;
-        const rawId =
-          apiInfo.deploymentId ??
-          dep.deploymentId ??
-          dep.applicationId ??
-          apiInfo.deployment?.applicationId ??
-          null;
-        if (rawId != null) deploymentId = String(rawId).trim() || null;
-        if (!deploymentId && apiInfo.appId) {
-          const m = String(apiInfo.appId).match(/^APP_([a-f0-9-]+)__/);
-          if (m) deploymentId = m[1];
+
+  if (deploymentId) {
+    debugLog("[NO-ENTITLEMENT] Object Store: using pre-resolved deploymentId:", deploymentId);
+  } else {
+    if (appId) {
+      const appIdMatch = appId.match(/^APP_([a-f0-9-]+)__/);
+      if (appIdMatch) deploymentId = appIdMatch[1];
+      else if (/^[a-f0-9-]{36}$/.test(appId)) deploymentId = appId;
+    }
+    if (!deploymentId && apiInstanceId) {
+      try {
+        const rmRes = await loggedFetch(
+          `${baseUrl}/apimanager/api/v1/organizations/${orgId}/environments/${envId}/apis/${apiInstanceId}`,
+          { method: "GET", headers: { Authorization: `Bearer ${accessToken}` } }
+        );
+        if (rmRes.ok) {
+          const apiInfo = (await rmRes.json()) as {
+            deploymentId?: string | number;
+            deployment?: { applicationId?: string; deploymentId?: string | null; type?: string };
+            endpoint?: { deploymentType?: string };
+            appId?: string;
+          };
+          const dep = apiInfo.deployment || {};
+          deploymentType = dep.type ?? apiInfo.endpoint?.deploymentType;
+          const rawId =
+            apiInfo.deploymentId ??
+            dep.deploymentId ??
+            dep.applicationId ??
+            apiInfo.deployment?.applicationId ??
+            null;
+          if (rawId != null) deploymentId = String(rawId).trim() || null;
+          if (!deploymentId && apiInfo.appId) {
+            const m = String(apiInfo.appId).match(/^APP_([a-f0-9-]+)__/);
+            if (m) deploymentId = m[1];
+          }
+        } else {
+          deploymentType = undefined;
         }
-      } else {
+      } catch (e) {
+        debugLog("[NO-ENTITLEMENT] Object Store: error resolving deploymentId from Runtime Manager", e);
         deploymentType = undefined;
       }
-    } catch (e) {
-      debugLog("[NO-ENTITLEMENT] Object Store: error resolving deploymentId from Runtime Manager", e);
+    } else {
       deploymentType = undefined;
     }
-  } else {
-    deploymentType = undefined;
   }
 
   if (!envId || !deploymentId) {
@@ -1186,6 +1192,7 @@ export async function GET(request: NextRequest) {
         // No-Entitlement Sync: Use same resolver pipeline for consistency
         let noEntDeploymentApiStatus: ApiStatus["deploymentApi"] = "not_used";
         let noEntAmc403Error: string | null = null;
+        let resolvedDeploymentIdFromPipeline: string | null = null;
         if (validatedApiInstanceId && validatedEnvId) {
           try {
             const noEntState: TaskCallstackState = {
@@ -1212,9 +1219,13 @@ export async function GET(request: NextRequest) {
               errors: [],
             };
             const resolvedNoEntState = await resolveDeploymentContext(noEntState);
+            resolvedDeploymentIdFromPipeline = resolvedNoEntState.deploymentContext.id;
             if (resolvedNoEntState.deploymentContext.resolvedName) {
               jobCardFromRuntime = { ...jobCardFromRuntime, appId: resolvedNoEntState.deploymentContext.resolvedName };
               debugLog("[NO-ENTITLEMENT] Overrode jobCard.appId with resolved broker app:", resolvedNoEntState.deploymentContext.resolvedName);
+            }
+            if (resolvedDeploymentIdFromPipeline) {
+              debugLog("[NO-ENTITLEMENT] Resolved deploymentId from pipeline:", resolvedDeploymentIdFromPipeline, "(source:", resolvedNoEntState.deploymentContext.source, ")");
             }
             // Extract deploymentApiStatus from resolved state (immutable)
             noEntDeploymentApiStatus = resolvedNoEntState.deploymentContext.deploymentApiStatus;
@@ -1239,7 +1250,8 @@ export async function GET(request: NextRequest) {
               },
               validatedApiInstanceId ?? undefined,
               accessToken,
-              baseUrl
+              baseUrl,
+              resolvedDeploymentIdFromPipeline
             );
           // Error Transparency: Use deploymentApiStatus from resolved state (preserves 403 from Resolver 3)
           const noEntitlementApiStatus: ApiStatus = {
@@ -1386,6 +1398,7 @@ export async function GET(request: NextRequest) {
         // No-Entitlement Sync: Use same resolver pipeline for consistency
         let noEntDeploymentApiStatus2: ApiStatus["deploymentApi"] = "not_used";
         let noEntAmc403Error2: string | null = null;
+        let resolvedDeploymentIdFromPipeline2: string | null = null;
         if (validatedApiInstanceId && validatedEnvId) {
           try {
             const noEntState: TaskCallstackState = {
@@ -1412,9 +1425,13 @@ export async function GET(request: NextRequest) {
               errors: [],
             };
             const resolvedNoEntState = await resolveDeploymentContext(noEntState);
+            resolvedDeploymentIdFromPipeline2 = resolvedNoEntState.deploymentContext.id;
             if (resolvedNoEntState.deploymentContext.resolvedName) {
               jobCardFromRuntime = { ...jobCardFromRuntime, appId: resolvedNoEntState.deploymentContext.resolvedName };
               debugLog("[NO-ENTITLEMENT] Overrode jobCard.appId with resolved broker app:", resolvedNoEntState.deploymentContext.resolvedName);
+            }
+            if (resolvedDeploymentIdFromPipeline2) {
+              debugLog("[NO-ENTITLEMENT] Resolved deploymentId from pipeline:", resolvedDeploymentIdFromPipeline2, "(source:", resolvedNoEntState.deploymentContext.source, ")");
             }
             // Extract deploymentApiStatus from resolved state (immutable)
             noEntDeploymentApiStatus2 = resolvedNoEntState.deploymentContext.deploymentApiStatus;
@@ -1439,7 +1456,8 @@ export async function GET(request: NextRequest) {
               },
               validatedApiInstanceId ?? undefined,
               accessToken,
-              baseUrl
+              baseUrl,
+              resolvedDeploymentIdFromPipeline2
             );
           // Error Transparency: Use deploymentApiStatus from resolved state (preserves 403 from Resolver 3)
           const noEntitlementApiStatus: ApiStatus = {

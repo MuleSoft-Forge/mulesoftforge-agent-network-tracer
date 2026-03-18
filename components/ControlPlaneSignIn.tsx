@@ -77,7 +77,7 @@ export default function ControlPlaneSignIn() {
 
   return (
     <div className="w-full max-w-sm">
-      <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+      <div className="rounded-2xl border border-gray-200/50 bg-white/90 backdrop-blur-sm p-6 shadow-xl hover:shadow-2xl transition-all duration-300">
         <div className="flex flex-col gap-4">
           <div className="flex items-center gap-2">
             <label
@@ -141,7 +141,7 @@ export default function ControlPlaneSignIn() {
               <button
                 type="button"
                 onClick={() => setPrivacyModalOpen(true)}
-                className="block w-full rounded-anypoint border border-primary bg-white px-4 py-2.5 text-center text-sm font-medium text-primary hover:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
+                className="block w-full rounded-anypoint border-2 border-primary bg-white px-4 py-2.5 text-center text-sm font-medium text-primary hover:bg-gradient-to-r hover:from-primary/5 hover:to-purple-500/5 hover:border-primary/80 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 transition-all duration-200"
               >
                 Read Privacy Policy
               </button>
@@ -165,7 +165,7 @@ export default function ControlPlaneSignIn() {
                   !REGIONS.find((r: { id: string; available: boolean }) => r.id === region)
                     ?.available
                 }
-                className="block w-full rounded-anypoint-button bg-primary px-6 py-3 text-center text-sm font-medium text-white shadow-sm transition-colors hover:bg-indigo-600 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-primary"
+                className="block w-full rounded-anypoint-button bg-gradient-to-r from-primary to-purple-600 px-6 py-3 text-center text-sm font-medium text-white shadow-lg hover:shadow-xl hover:scale-[1.02] transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-primary disabled:hover:scale-100"
                 aria-label="Sign in with Anypoint Platform"
               >
                 Sign in with Anypoint

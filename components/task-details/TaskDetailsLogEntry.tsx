@@ -28,6 +28,11 @@ export default function TaskDetailsLogEntry({
         <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${getBadgeClass(entry.type)}`}>
           {entry.type.replace(/_/g, " ")}
         </span>
+        {entry.logger === "INSECURE-LOGGING" && (
+          <span className="rounded bg-red-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-red-700 border border-red-200" title="INSECURE-LOGGING logger">
+            ⚠ INSECURE
+          </span>
+        )}
         <span className="flex-1 truncate text-gray-700">{entry.summary}</span>
       </div>
       {isExpanded && (
@@ -35,7 +40,7 @@ export default function TaskDetailsLogEntry({
           {entry.fields.toolInputJson != null && (
             <div className="mb-2">
               <p className="mb-1 font-semibold">Tool Input:</p>
-              <pre className="max-h-40 overflow-auto scrollbar-thin rounded bg-white p-1 text-[10px]">
+              <pre className="max-h-96 overflow-auto scrollbar-thin rounded bg-white p-1 text-[10px]">
                 {(() => {
                   const value = entry.fields.toolInputJson;
                   if (value == null) return "";
@@ -58,7 +63,7 @@ export default function TaskDetailsLogEntry({
           {entry.fields.toolOutputJson != null && (
             <div className="mb-2">
               <p className="mb-1 font-semibold">Tool Output:</p>
-              <pre className="max-h-40 overflow-auto scrollbar-thin rounded bg-white p-1 text-[10px]">
+              <pre className="max-h-96 overflow-auto scrollbar-thin rounded bg-white p-1 text-[10px]">
                 {(() => {
                   const value = entry.fields.toolOutputJson;
                   if (value == null) return "";
@@ -81,7 +86,7 @@ export default function TaskDetailsLogEntry({
           {entry.fields.userMessage != null && entry.fields.userMessage !== "" && (
             <div className="mb-2">
               <p className="mb-1 font-semibold">User Message:</p>
-              <pre className="max-h-40 overflow-auto scrollbar-thin rounded bg-white p-1 text-[10px]">
+              <pre className="max-h-96 overflow-auto scrollbar-thin rounded bg-white p-1 text-[10px]">
                 {(() => {
                   try {
                     const parsed = JSON.parse(entry.fields.userMessage);
@@ -95,7 +100,7 @@ export default function TaskDetailsLogEntry({
           )}
           <details className="mt-2">
             <summary className="cursor-pointer text-gray-500">Show raw log</summary>
-            <pre className="mt-1 max-h-40 overflow-auto scrollbar-thin rounded bg-white p-1 text-[10px]">
+            <pre className="mt-1 max-h-96 overflow-auto scrollbar-thin rounded bg-white p-1 text-[10px]">
               {typeof entry.raw.message === "string" ? entry.raw.message : ""}
             </pre>
             <div className="mt-1 text-[9px] text-gray-400">

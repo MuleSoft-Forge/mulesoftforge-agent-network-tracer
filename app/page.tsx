@@ -53,62 +53,87 @@ export default async function HomePage() {
   ];
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white">
-      {/* Hero Section */}
-      <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">
-        <div className="text-center">
-          <div className="flex justify-center mb-6">
-            <div className="relative">
-              <Image
-                src="/logo.svg"
-                alt="Agent Network Tracer"
-                width={100}
-                height={100}
-                className="h-24 w-24 drop-shadow-lg"
-              />
-              <div className="absolute -inset-1 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full blur opacity-20 animate-pulse"></div>
+    <div className="min-h-screen relative">
+      {/* Animated background with mesh gradient */}
+      <div className="fixed inset-0 mesh-gradient animate-gradient pointer-events-none"></div>
+      
+      {/* Animated orbs for visual interest */}
+      <div className="fixed top-20 left-10 w-72 h-72 bg-gradient-to-r from-blue-400/20 to-purple-400/20 rounded-full blur-3xl animate-pulse-glow pointer-events-none"></div>
+      <div className="fixed bottom-20 right-10 w-96 h-96 bg-gradient-to-r from-teal-400/20 to-indigo-400/20 rounded-full blur-3xl animate-pulse-glow pointer-events-none" style={{ animationDelay: '1s' }}></div>
+      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-gradient-to-r from-violet-400/10 to-pink-400/10 rounded-full blur-3xl animate-pulse-glow pointer-events-none" style={{ animationDelay: '2s' }}></div>
+
+      {/* Main content */}
+      <div className="relative z-10">
+        {/* Hero Section */}
+        <div className="mx-auto max-w-7xl px-4 py-20 sm:px-6 lg:px-8">
+          <div className="text-center">
+            <div className="flex justify-center mb-0">
+              <div className="relative">
+                <Image
+                  src="/ant-logo-landing.png"
+                  alt="Agent Network Tracer"
+                  width={240}
+                  height={240}
+                  className="h-56 w-56 drop-shadow-lg sm:h-72 sm:w-72"
+                />
+              </div>
+            </div>
+            
+            <div className="mb-6 -mt-6 overflow-visible">
+              <h1 className="text-5xl font-bold bg-gradient-to-r from-gray-900 via-gray-800 to-gray-900 bg-clip-text text-transparent sm:text-6xl lg:text-7xl tracking-tight leading-tight inline-block">
+                Agent Network Tracer
+              </h1>
+            </div>
+            
+            <p className="text-xl text-gray-700 sm:text-2xl mb-12 max-w-3xl mx-auto font-light leading-relaxed">
+              {getTagline()}
+            </p>
+
+            {/* Sign in CTA */}
+            <div className="flex justify-center mb-20">
+              <div className="transform transition-all duration-300 hover:scale-105">
+                <ControlPlaneSignIn />
+              </div>
             </div>
           </div>
-          
-          <h1 className="text-5xl font-bold text-gray-900 sm:text-6xl lg:text-7xl mb-6">
-            Agent Network Tracer
-          </h1>
-          
-          <p className="text-xl text-gray-600 sm:text-2xl mb-8 max-w-3xl mx-auto">
-            {getTagline()}
-          </p>
 
-          {/* Sign in CTA */}
-          <div className="flex justify-center mb-16">
-            <ControlPlaneSignIn />
+          {/* Feature Cards Grid */}
+          <div className="grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-3 mt-24">
+            {features.map((feature, index) => (
+              <div
+                key={index}
+                className="transform transition-all duration-500 animate-fade-in-up opacity-0"
+                style={{
+                  animationDelay: `${index * 100}ms`,
+                }}
+              >
+                <FeatureCard
+                  iconName={feature.iconName}
+                  title={feature.title}
+                  description={feature.description}
+                  color={feature.color}
+                  showScreenshot={feature.showScreenshot}
+                />
+              </div>
+            ))}
           </div>
-        </div>
 
-        {/* Feature Cards Grid */}
-        <div className="grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-3 mt-20">
-          {features.map((feature, index) => (
-            <FeatureCard
-              key={index}
-              iconName={feature.iconName}
-              title={feature.title}
-              description={feature.description}
-              color={feature.color}
-              showScreenshot={feature.showScreenshot}
-            />
-          ))}
-        </div>
-
-        {/* Bottom CTA */}
-        <div className="mt-20 text-center">
-          <div className="inline-block rounded-2xl bg-gradient-to-r from-blue-500 to-purple-500 p-1 shadow-xl">
-            <div className="rounded-xl bg-white px-8 py-6">
-              <h2 className="text-2xl font-bold text-gray-900 mb-2">
-                Ready to explore your agent network?
-              </h2>
-              <p className="text-gray-600 mb-6">
-                Sign in with your Anypoint Platform credentials to get started.
-              </p>
-              <ControlPlaneSignIn />
+          {/* Bottom CTA */}
+          <div className="mt-24 mb-24 text-center">
+            <div className="inline-block transform transition-all duration-300 hover:scale-105">
+              <div className="relative rounded-3xl bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 p-[2px] shadow-2xl animate-gradient">
+                <div className="rounded-3xl bg-white/95 backdrop-blur-sm px-10 py-8 border border-white/20">
+                  <h2 className="text-3xl font-bold bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent mb-3">
+                    Ready to explore your agent network?
+                  </h2>
+                  <p className="text-gray-600 mb-8 text-lg">
+                    Sign in with your Anypoint Platform credentials to get started.
+                  </p>
+                  <div className="flex justify-center">
+                    <ControlPlaneSignIn />
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>

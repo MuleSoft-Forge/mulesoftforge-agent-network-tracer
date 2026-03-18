@@ -8,17 +8,72 @@ import { resolveBrokerContext } from "@/lib/broker-context";
 
 export const dynamic = "force-dynamic";
 
+/** Log entry from AMC GET /logs API (JSON array). */
+interface AmcLogEntry {
+  docId?: string;
+  timestamp?: number;
+  message?: string;
+  replicaId?: string;
+  logLevel?: string;
+  context?: unknown;
+}
+
 /**
- * No-entitlement mode: get broker tasks via Runtime Manager + Application Manager logs/file.
+ * Fetch logs using GET .../logs?length=&descending= (same as Anypoint UI). Returns text lines for parseLogsForTasks.
+ */
+/** AMC /logs API allows max length 1000 per request. */
+const AMC_LOGS_MAX_LENGTH = 1000;
+
+async function fetchLogsFromAmc(
+  baseUrl: string,
+  orgId: string,
+  envId: string,
+  deploymentId: string,
+  specId: string,
+  accessToken: string,
+  length: number = AMC_LOGS_MAX_LENGTH
+): Promise<string> {
+  const safeLength = Math.min(Math.max(1, length), AMC_LOGS_MAX_LENGTH);
+  const logsUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${envId}/deployments/${deploymentId}/specs/${specId}/logs?length=${safeLength}&descending=true`;
+  const res = await loggedFetch(logsUrl, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) {
+    debugLog("[NO-ENTITLEMENT] GET /logs failed:", res.status);
+    return "";
+  }
+  const contentType = res.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    const entries = (await res.json()) as AmcLogEntry[];
+    if (!Array.isArray(entries)) return "";
+    debugLog("[NO-ENTITLEMENT] GET /logs returned", entries.length, "JSON log entries");
+    return entries
+      .map((e) => {
+        const ts = e.timestamp != null ? new Date(e.timestamp).toISOString() : "";
+        return `${ts} ${e.message ?? ""}`.trim();
+      })
+      .filter((line) => line.length > 0)
+      .join("\n");
+  }
+  return res.text();
+}
+
+/**
+ * No-entitlement mode: get broker tasks via Runtime Manager + Application Manager GET /logs (JSON).
  * Used when the org does not have Monitoring Center Premium (_msearch not available).
+ * When brokerAppName is provided (e.g. from resolveBrokerContext), we list AMC deployments by
+ * ?name=brokerAppName to use the CloudHub/AMC deployment that has logs, instead of the RM applicationId.
  */
 async function getBrokerTasksFromRuntimeLogs(
   orgId: string,
   apiInstanceId: string,
   accessToken: string,
   baseUrl: string,
-  timeRangeMs: number
+  timeRangeMs: number,
+  options?: { envId?: string; brokerAppName?: string }
 ): Promise<{ tasks: unknown[] }> {
+  const { envId: requestEnvId, brokerAppName } = options ?? {};
   debugLog("[NO-ENTITLEMENT] Getting broker tasks from runtime logs for apiInstanceId:", apiInstanceId);
 
   try {
@@ -41,6 +96,71 @@ async function getBrokerTasksFromRuntimeLogs(
     // Skip Design (deprecated design-time env); only use runtime environments for RM/AMC calls
     const environments = allEnvs.filter((e) => (e.type || "").toLowerCase() !== "design");
     debugLog("[NO-ENTITLEMENT] Found", environments.length, "runtime environments (excluded Design)");
+
+    // Step 1.2: If we have the AMC app name (e.g. from resolveBrokerContext), list deployment by name
+    // so we use the CloudHub deployment that has logs (e.g. c7096613...) instead of RM applicationId (b57...).
+    if (brokerAppName && requestEnvId && environments.some((e) => e.id === requestEnvId)) {
+      try {
+        const listUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${requestEnvId}/deployments?name=${encodeURIComponent(brokerAppName)}`;
+        const listRes = await loggedFetch(listUrl, {
+          method: "GET",
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (listRes.ok) {
+          const listData = (await listRes.json()) as { items?: Array<{ id: string; name: string }>; total?: number };
+          const items = listData.items ?? [];
+          if (items.length === 1) {
+            const amcDeploymentId = items[0].id;
+            debugLog("[NO-ENTITLEMENT] Matched AMC deployment by name (request env):", items[0].name, "->", amcDeploymentId);
+            // Resolve specId: try /specs first, then deployment detail
+            let specId: string | null = null;
+            const specsUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${requestEnvId}/deployments/${amcDeploymentId}/specs`;
+            const specsRes = await loggedFetch(specsUrl, {
+              method: "GET",
+              headers: { Authorization: `Bearer ${accessToken}` },
+            });
+            if (specsRes.ok) {
+              const specs = (await specsRes.json()) as Array<{ version?: string; id?: string }>;
+              specId = specs?.length ? (specs[0].version ?? specs[0].id ?? null) : null;
+            }
+            if (!specId) {
+              const depUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${requestEnvId}/deployments/${amcDeploymentId}`;
+              const depRes = await loggedFetch(depUrl, {
+                method: "GET",
+                headers: { Authorization: `Bearer ${accessToken}` },
+              });
+              if (depRes.ok) {
+                const dep = (await depRes.json()) as { desiredVersion?: string; replicas?: Array<{ id: string }> };
+                specId = dep.desiredVersion ?? dep.replicas?.[0]?.id ?? null;
+              }
+            }
+            if (specId) {
+              const logsText = await fetchLogsFromAmc(
+                baseUrl,
+                orgId,
+                requestEnvId,
+                amcDeploymentId,
+                specId,
+                accessToken
+              );
+              if (logsText.length > 0) {
+                const parsedTasks = parseLogsForTasks(logsText, apiInstanceId);
+                for (const task of parsedTasks) {
+                  allTasks[task.taskId] = task;
+                }
+                debugLog("[NO-ENTITLEMENT] Found", parsedTasks.length, "tasks using AMC deployment by name (request env)");
+                const tasksList = Object.values(allTasks);
+                tasksList.sort((a, b) => (b.startTime || "").localeCompare(a.startTime || ""));
+                debugLog("[NO-ENTITLEMENT] Successfully parsed", tasksList.length, "tasks from runtime logs");
+                return { tasks: tasksList };
+              }
+            }
+          }
+        }
+      } catch (e) {
+        debugLog("[NO-ENTITLEMENT] AMC list by name (request env) failed:", e);
+      }
+    }
 
     // Step 1.5: Get API instance details from Runtime Manager (deploymentId or deployment.applicationId for Flex)
     let apiInstanceInfo: { deploymentId?: string; targetEnvId?: string } | null = null;
@@ -114,52 +234,39 @@ async function getBrokerTasksFromRuntimeLogs(
             
             if (specId) {
               debugLog("[NO-ENTITLEMENT] Got specId:", specId, "for deployment:", apiInstanceInfo.deploymentId);
-              // Try to fetch logs directly
-              const searchParams = {
-                startTime,
-                endTime,
-                length: 10000,
-                descending: true,
-              };
-              const searchEncoded = encodeURIComponent(JSON.stringify(searchParams));
-              const logsUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${targetEnv.id}/deployments/${apiInstanceInfo.deploymentId}/specs/${specId}/logs/file?search=${searchEncoded}`;
-
-              const logsRes = await loggedFetch(logsUrl, {
-                method: "GET",
-                headers: {
-                  Authorization: `Bearer ${accessToken}`,
-                },
-              });
-
-              if (logsRes.ok) {
-                const logsText = await logsRes.text();
+              const logsText = await fetchLogsFromAmc(
+                baseUrl,
+                orgId,
+                targetEnv.id,
+                apiInstanceInfo.deploymentId,
+                specId,
+                accessToken
+              );
+              if (logsText.length > 0) {
                 debugLog("[NO-ENTITLEMENT] Successfully fetched logs, length:", logsText.length, "chars");
-                
-                // Parse logs (see parsing logic below)
                 const parsedTasks = parseLogsForTasks(logsText, apiInstanceId);
                 for (const task of parsedTasks) {
                   allTasks[task.taskId] = task;
                 }
-                
                 if (parsedTasks.length > 0) {
                   debugLog("[NO-ENTITLEMENT] Found", parsedTasks.length, "tasks using deploymentId from Runtime Manager");
                 }
               } else {
-                debugLog("[NO-ENTITLEMENT] Failed to fetch logs for deployment:", logsRes.status);
+                debugLog("[NO-ENTITLEMENT] No log content for deployment/spec");
               }
             }
           } else if (deploymentRes.status === 404) {
             // Flex Gateway: deployment detail may not exist; try applicationId as both deploymentId and specId
             const specIdToTry = apiInstanceInfo.deploymentId;
-            const searchParams = { startTime, endTime, length: 10000, descending: true };
-            const searchEncoded = encodeURIComponent(JSON.stringify(searchParams));
-            const logsUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${targetEnv.id}/deployments/${apiInstanceInfo.deploymentId}/specs/${specIdToTry}/logs/file?search=${searchEncoded}`;
-            const logsRes = await loggedFetch(logsUrl, {
-              method: "GET",
-              headers: { Authorization: `Bearer ${accessToken}` },
-            });
-            if (logsRes.ok) {
-              const logsText = await logsRes.text();
+            const logsText = await fetchLogsFromAmc(
+              baseUrl,
+              orgId,
+              targetEnv.id,
+              apiInstanceInfo.deploymentId,
+              specIdToTry,
+              accessToken
+            );
+            if (logsText.length > 0) {
               const parsedTasks = parseLogsForTasks(logsText, apiInstanceId);
               for (const task of parsedTasks) {
                 allTasks[task.taskId] = task;
@@ -234,8 +341,33 @@ async function getBrokerTasksFromRuntimeLogs(
             // Try multiple approaches to get logs
             const approaches: Array<{ name: string; deploymentId: string; specId?: string; getSpecs: boolean }> = [];
 
-            // Approach 0: Resolve AMC deployment by name (list deployments and match broker name)
-            if (brokerName) {
+            // Approach 0a: If we have the AMC app name, list deployments with ?name= (exact match, has logs)
+            if (brokerAppName) {
+              try {
+                const listUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${env.id}/deployments?name=${encodeURIComponent(brokerAppName)}`;
+                const listRes = await loggedFetch(listUrl, {
+                  method: "GET",
+                  headers: { Authorization: `Bearer ${accessToken}` },
+                });
+                if (listRes.ok) {
+                  const listData = (await listRes.json()) as { items?: Array<{ id: string; name: string }> };
+                  const items = listData.items || [];
+                  if (items.length === 1) {
+                    approaches.push({
+                      name: "amc-deployment-by-app-name",
+                      deploymentId: items[0].id,
+                      getSpecs: true,
+                    });
+                    debugLog("[NO-ENTITLEMENT] Matched AMC deployment by app name:", items[0].name, "->", items[0].id);
+                  }
+                }
+              } catch (_) {
+                // ignore
+              }
+            }
+
+            // Approach 0b: Resolve AMC deployment by broker name (list all and match normalized name)
+            if (brokerName && !brokerAppName) {
               try {
                 const listUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${env.id}/deployments`;
                 const listRes = await loggedFetch(listUrl, {
@@ -310,11 +442,27 @@ async function getBrokerTasksFromRuntimeLogs(
                   } else {
                     debugLog(`[NO-ENTITLEMENT] Approach "${approach.name}": Failed to fetch specs, status:`, specsRes.status);
                     if (approach.specId) {
-                      // Use provided specId
                       specId = approach.specId;
                       debugLog(`[NO-ENTITLEMENT] Approach "${approach.name}": Using provided specId:`, specId);
                     } else {
-                      continue; // Try next approach
+                      // Fallback: get specId from deployment detail (desiredVersion or replicas[0].id) - matches Anypoint UI
+                      try {
+                        const depUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${env.id}/deployments/${approach.deploymentId}`;
+                        const depRes = await loggedFetch(depUrl, {
+                          method: "GET",
+                          headers: { Authorization: `Bearer ${accessToken}` },
+                        });
+                        if (depRes.ok) {
+                          const dep = (await depRes.json()) as { desiredVersion?: string; replicas?: Array<{ id: string }> };
+                          specId = dep.desiredVersion ?? dep.replicas?.[0]?.id ?? null;
+                          if (specId) {
+                            debugLog(`[NO-ENTITLEMENT] Approach "${approach.name}": Got specId from deployment detail:`, specId);
+                          }
+                        }
+                      } catch (_) {
+                        // ignore
+                      }
+                      if (!specId) continue;
                     }
                   }
                 } else if (approach.specId) {
@@ -323,29 +471,20 @@ async function getBrokerTasksFromRuntimeLogs(
                 }
                 
                 if (specId) {
-                  const searchParams = {
-                    startTime,
-                    endTime,
-                    length: 10000,
-                    descending: true,
-                  };
-                  const searchEncoded = encodeURIComponent(JSON.stringify(searchParams));
-                  const logsUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${env.id}/deployments/${approach.deploymentId}/specs/${specId}/logs/file?search=${searchEncoded}`;
+                  debugLog(`[NO-ENTITLEMENT] Approach "${approach.name}": Fetching GET /logs for deployment=${approach.deploymentId} specId=${specId}`);
+                  const logsText = await fetchLogsFromAmc(
+                    baseUrl,
+                    orgId,
+                    env.id,
+                    approach.deploymentId,
+                    specId,
+                    accessToken
+                  );
 
-                  debugLog(`[NO-ENTITLEMENT] Approach "${approach.name}": Fetching logs from:`, logsUrl.replace(/Bearer\s+\S+/, "Bearer [REDACTED]"));
-                  const logsRes = await loggedFetch(logsUrl, {
-                    method: "GET",
-                    headers: {
-                      Authorization: `Bearer ${accessToken}`,
-                    },
-                  });
-
-                  if (logsRes.ok) {
-                    const logsText = await logsRes.text();
+                  if (logsText.length > 0) {
                     debugLog(`[NO-ENTITLEMENT] Approach "${approach.name}": Successfully fetched logs, length:`, logsText.length, "chars");
                     debugLog(`[NO-ENTITLEMENT] Approach "${approach.name}": First 500 chars:`, logsText.substring(0, 500));
-                    
-                    // Parse logs
+
                     const parsedTasks = parseLogsForTasks(logsText, apiInstanceId);
                     debugLog(`[NO-ENTITLEMENT] Approach "${approach.name}": Parsed`, parsedTasks.length, "tasks");
                     
@@ -373,9 +512,7 @@ async function getBrokerTasksFromRuntimeLogs(
                       debugLog(`[NO-ENTITLEMENT] Approach "${approach.name}": No tasks found in logs (might be wrong deployment)`);
                     }
                   } else {
-                    debugLog(`[NO-ENTITLEMENT] Approach "${approach.name}": Failed to fetch logs, status:`, logsRes.status);
-                    const errorText = await logsRes.text().catch(() => "");
-                    debugLog(`[NO-ENTITLEMENT] Approach "${approach.name}": Error response:`, errorText.substring(0, 200));
+                    debugLog(`[NO-ENTITLEMENT] Approach "${approach.name}": No log content returned (wrong deployment/spec or empty logs)`);
                   }
                 } else {
                   debugLog(`[NO-ENTITLEMENT] Approach "${approach.name}": No specId available`);
@@ -706,7 +843,8 @@ export async function POST(request: NextRequest) {
           apiInstanceId,
           accessToken,
           baseUrl,
-          timeRange
+          timeRange,
+          { envId: envId ?? undefined, brokerAppName: brokerAppName ?? undefined }
         );
         const tasksList = (noEntitlementResult?.tasks || []) as Array<{
           taskId: string;

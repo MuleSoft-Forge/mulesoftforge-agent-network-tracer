@@ -173,7 +173,7 @@ export default function TasksList({
                   {task.taskId}
                 </div>
                 <div className="mt-0.5 text-[10px] text-gray-600">
-                  {startTimeStr} • {task.duration || "?"}s • {task.maxIteration} iter
+                  {startTimeStr} • {task.maxIteration} iter
                 </div>
                 {toolNames && (
                   <div className="mt-0.5 text-[10px] text-gray-500">

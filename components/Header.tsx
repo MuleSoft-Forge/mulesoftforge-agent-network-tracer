@@ -137,21 +137,26 @@ export default function Header() {
 
   return (
     <>
-    <header className="border-b border-gray-200 bg-white">
-      <div className="flex h-14 w-full items-center justify-between gap-4 pl-4 pr-4">
+    <header className="relative z-50 border-b border-gray-200/50 bg-white/80 backdrop-blur-md shadow-sm">
+      {/* Subtle gradient overlay */}
+      <div className="absolute inset-0 bg-gradient-to-r from-transparent via-primary/5 to-transparent opacity-50"></div>
+      <div className="relative flex h-14 w-full items-center justify-between gap-4 pl-4 pr-4">
         <div className="flex min-w-0 items-center gap-6">
           <Link
             href={authenticated ? "/agent-network" : "/"}
-            className="flex shrink-0 items-center gap-2 text-lg font-semibold text-gray-900"
+            className="flex shrink-0 items-center gap-2 text-lg font-semibold text-gray-900 hover:text-primary transition-colors duration-200 group"
           >
-            <Image
-              src="/logo.svg"
-              alt=""
-              width={32}
-              height={32}
-              className="h-8 w-8 shrink-0"
-            />
-            <span>Agent Network Tracer</span>
+            <div className="relative">
+              <Image
+                src="/ant-logo-landing.png"
+                alt=""
+                width={64}
+                height={64}
+                className="h-16 w-16 shrink-0 group-hover:scale-110 transition-transform duration-200"
+              />
+              <div className="absolute inset-0 bg-gradient-to-r from-primary/20 to-purple-500/20 rounded-full blur opacity-0 group-hover:opacity-100 transition-opacity duration-200"></div>
+            </div>
+            <span className="bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent group-hover:from-primary group-hover:to-purple-600 transition-all duration-200">Agent Network Tracer</span>
           </Link>
           <nav className="flex items-center gap-1 ml-8" aria-label="App menu">
             {NAV_ITEMS.filter((item: NavItem) => !item.requiresAuth || authenticated).map((item: NavItem) => {
@@ -161,10 +166,10 @@ export default function Header() {
                 <Link
                   key={href}
                   href={href}
-                  className={`shrink-0 rounded-anypoint px-3 py-2 text-sm font-medium transition-all duration-150 ease-[cubic-bezier(0.46,0.03,0.52,0.96)] focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 ${
+                  className={`shrink-0 rounded-anypoint px-3 py-2 text-sm font-medium transition-all duration-200 ease-[cubic-bezier(0.46,0.03,0.52,0.96)] focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 ${
                     isActive
-                      ? "bg-primary/10 text-primary"
-                      : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                      ? "bg-gradient-to-r from-primary/15 to-purple-500/15 text-primary shadow-sm"
+                      : "text-gray-600 hover:bg-gradient-to-r hover:from-gray-50 hover:to-gray-100/50 hover:text-gray-900"
                   }`}
                 >
                   {label}
@@ -186,13 +191,13 @@ export default function Header() {
                 <button
                   type="button"
                   onClick={() => setMenuOpen((prev) => !prev)}
-                  className="flex min-w-0 items-center gap-3 rounded-lg border border-gray-200 bg-gray-50/80 px-3 py-2 shadow-sm hover:bg-gray-100/80 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
+                  className="flex min-w-0 items-center gap-3 rounded-lg border border-gray-200/50 bg-white/60 backdrop-blur-sm px-3 py-2 shadow-sm hover:bg-white/80 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 transition-all duration-200"
                   aria-expanded={menuOpen}
                   aria-haspopup="true"
                   aria-label="Account menu"
                 >
                   <div
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary text-sm font-semibold text-white"
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-purple-600 text-sm font-semibold text-white shadow-md hover:shadow-lg transition-shadow duration-200"
                     aria-hidden="true"
                   >
                     {initial}
@@ -214,7 +219,7 @@ export default function Header() {
                 </button>
                 {menuOpen && (
                   <div
-                    className="absolute right-0 top-full z-10 mt-1 w-72 rounded-lg border border-gray-200 bg-white shadow-lg"
+                    className="absolute right-0 top-full z-50 mt-1 w-72 rounded-lg border border-gray-200 bg-white shadow-xl"
                     role="menu"
                   >
                     {profile?.organization && (

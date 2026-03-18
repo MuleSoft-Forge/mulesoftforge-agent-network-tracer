@@ -592,7 +592,7 @@ async function findObjectStore(
   // If no preferred region, use a small fallback set of common regions
   const regionsToTry: ObjectStoreRegion[] = preferred
     ? [preferred]
-    : ["us-east-1", "us-west-2", "eu-central-1"]; // Fallback: only search common regions if translation fails
+    : ["us-east-1", "us-west-2", "eu-central-1", "ca-central-1"]; // Fallback: search common regions if translation fails
   
   if (!preferred) {
     debugLog(`[ObjectStore] Using fallback regions: ${regionsToTry.join(", ")}`);
@@ -673,7 +673,7 @@ async function findObjectStore(
   // If we got 403 errors in all regions, throw a specific error
   if (has403Errors.size > 0 && has403Errors.size === regionsToTry.length) {
     debugError(`[ObjectStore] All regions returned 403 Forbidden - insufficient permissions to access Object Store`);
-    const regionsSearched = preferred ? [preferred] : ["us-east-1", "us-west-2", "eu-central-1"];
+    const regionsSearched = preferred ? [preferred] : ["us-east-1", "us-west-2", "eu-central-1", "ca-central-1"];
     debugLog(`[ObjectStore] 403 error summary - orgId: ${orgId}, envId: ${envId}, deploymentId: ${deploymentId}, tried regions: ${regionsSearched.join(", ")}`);
     throw new Error("403 Forbidden: Insufficient permissions to access Object Store");
   }
@@ -1015,7 +1015,7 @@ export async function fetchObjectStoreData(
     // Determine which regions were actually searched
     const searchedRegions = objectStoreRegion 
       ? [objectStoreRegion] 
-      : ["us-east-1", "us-west-2", "eu-central-1"]; // Fallback regions
+      : ["us-east-1", "us-west-2", "eu-central-1", "ca-central-1"]; // Fallback regions
     let errorMessage = `Object Store not found for deployment ${deploymentId}. Searched region(s): ${searchedRegions.join(", ")}. Store pattern: APP_${deploymentId}__defaultPersistentObjectStore`;
     if (deploymentType === "HY") {
       errorMessage += `. Note: Hybrid (HY) deployments may not have Object Store provisioned.`;
