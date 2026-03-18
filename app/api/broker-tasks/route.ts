@@ -145,14 +145,11 @@ async function getBrokerTasksFromRuntimeLogs(
               );
               if (logsText.length > 0) {
                 const parsedTasks = parseLogsForTasks(logsText, apiInstanceId);
-                for (const task of parsedTasks) {
-                  allTasks[task.taskId] = task;
-                }
                 debugLog("[NO-ENTITLEMENT] Found", parsedTasks.length, "tasks using AMC deployment by name (request env)");
-                const tasksList = Object.values(allTasks);
-                tasksList.sort((a, b) => (b.startTime || "").localeCompare(a.startTime || ""));
-                debugLog("[NO-ENTITLEMENT] Successfully parsed", tasksList.length, "tasks from runtime logs");
-                return { tasks: tasksList };
+                if (parsedTasks.length > 0) {
+                  parsedTasks.sort((a, b) => (b.startTime || "").localeCompare(a.startTime || ""));
+                  return { tasks: parsedTasks };
+                }
               }
             }
           }
