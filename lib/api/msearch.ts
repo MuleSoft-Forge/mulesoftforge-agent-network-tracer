@@ -2,6 +2,7 @@ import { loggedFetch } from "@/lib/api-logger";
 
 export interface MSearchOptions {
   size?: number;
+  from?: number;
   sortOrder?: "asc" | "desc";
   timeRangeMs?: number;
 }
@@ -23,7 +24,7 @@ export async function msearch(
   accessToken: string,
   baseUrl: string
 ): Promise<MSearchResult> {
-  const { size = 500, sortOrder = "asc", timeRangeMs = 30 * 24 * 3600 * 1000 } = opts;
+  const { size = 500, from = 0, sortOrder = "asc", timeRangeMs = 30 * 24 * 3600 * 1000 } = opts;
   const now = Date.now();
   // Anypoint's API doesn't support wildcard patterns in _msearch index field
   // Use empty array to search all indices, then filter by orgId in the query
@@ -32,6 +33,7 @@ export async function msearch(
     JSON.stringify({
       version: true,
       size,
+      from,
       sort: [{ timestamp: { order: sortOrder, unmapped_type: "boolean" } }],
       _source: { excludes: [] },
       stored_fields: ["*"],
@@ -76,5 +78,12 @@ export async function msearch(
   const raw = await res.json();
   const r = (raw.responses || [])[0] || {};
   const hits = (r.hits && r.hits.hits) || [];
-  return { total: r.hits ? r.hits.total : 0, hits, raw };
+  const totalRaw = r.hits && r.hits.total;
+  const total =
+    typeof totalRaw === "number"
+      ? totalRaw
+      : totalRaw && typeof totalRaw === "object" && typeof totalRaw.value === "number"
+        ? totalRaw.value
+        : 0;
+  return { total, hits, raw };
 }

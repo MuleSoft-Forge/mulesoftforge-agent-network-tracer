@@ -819,16 +819,46 @@ export async function POST(request: NextRequest) {
     const luceneQuery = `orgId=${orgId} AND taskId= AND apiInstanceId=${apiInstanceId}`;
     debugLog(`[BROKER-TASKS] Query: ${luceneQuery}`);
 
-    // Search for logs containing taskId= pattern filtered by apiInstanceId
-    debugLog("[BROKER-TASKS] Step 4: Searching logs with msearch...");
-    const allLogsResult = await msearch(
-      orgId,
-      luceneQuery,
-      { size: 1000, sortOrder: "desc", timeRangeMs: timeRange },
-      accessToken,
-      baseUrl
-    );
-    debugLog(`[BROKER-TASKS] Search result: ${allLogsResult.hits?.length || 0} hits, total=${allLogsResult.total ?? 0}, error: ${allLogsResult.error || "none"}`);
+    // Search for logs containing taskId= pattern filtered by apiInstanceId.
+    // Page through results when total > page size so we count all unique tasks.
+    const PAGE_SIZE = 1000;
+    const MAX_PAGES = 20; // cap at 20k hits to avoid runaway
+    debugLog("[BROKER-TASKS] Step 4: Searching logs with msearch (paging when needed)...");
+    const allHits: unknown[] = [];
+    let totalFromApi = 0;
+    let pageError: string | undefined;
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const from = page * PAGE_SIZE;
+      const pageResult = await msearch(
+        orgId,
+        luceneQuery,
+        { size: PAGE_SIZE, from, sortOrder: "desc", timeRangeMs: timeRange },
+        accessToken,
+        baseUrl
+      );
+      if (pageResult.error === "MONITORING_CENTER_PREMIUM_REQUIRED") {
+        pageError = pageResult.error;
+        break;
+      }
+      totalFromApi = pageResult.total;
+      const hits = pageResult.hits ?? [];
+      allHits.push(...hits);
+      if (page === 0) {
+        debugLog(`[BROKER-TASKS] Search result: ${hits.length} hits, total=${totalFromApi}, error: ${pageResult.error || "none"}`);
+      }
+      if (hits.length < PAGE_SIZE || allHits.length >= totalFromApi) {
+        break;
+      }
+      debugLog(`[BROKER-TASKS] Fetched page ${page + 1}, total hits so far: ${allHits.length}/${totalFromApi}`);
+    }
+    const allLogsResult = {
+      total: totalFromApi,
+      hits: allHits,
+      error: pageError,
+    };
+    if (allHits.length > 0 && allHits.length < totalFromApi) {
+      debugLog(`[BROKER-TASKS] Paging complete: ${allHits.length} hits fetched (total=${totalFromApi})`);
+    }
 
     // No entitlement: use Runtime Manager + Application Manager logs (standard APIs)
     if (allLogsResult.error === "MONITORING_CENTER_PREMIUM_REQUIRED") {
