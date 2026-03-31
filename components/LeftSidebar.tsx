@@ -26,7 +26,10 @@ function getStoredExpanded(): boolean {
   }
 }
 
+export type ViewMode = "activity" | "exchange";
+
 interface LeftSidebarProps {
+  viewMode?: ViewMode;
   onSelectionChange?: (pathOrgId: string, orgIds: string[], isAll: boolean, rootOrgId?: string) => void;
   onEnvironmentChange?: (env: Environment) => void;
   onOrgAndEnvChange?: (orgId: string, envId: string) => void;
@@ -41,6 +44,7 @@ interface LeftSidebarProps {
 }
 
 export default function LeftSidebar({
+  viewMode = "activity",
   onSelectionChange,
   onEnvironmentChange,
   onOrgAndEnvChange,
@@ -194,12 +198,14 @@ export default function LeftSidebar({
         }`}
       >
         <div className="flex-1 overflow-y-auto p-3">
-          <ActivityPeriodSelector
-            value={activityPeriodKey}
-            onSelect={handleActivityPeriodSelect}
-            disabled={loadingBrokers}
-          />
-          <div className="mt-4">
+          {viewMode === "activity" && (
+            <ActivityPeriodSelector
+              value={activityPeriodKey}
+              onSelect={handleActivityPeriodSelect}
+              disabled={loadingBrokers}
+            />
+          )}
+          <div className={viewMode === "activity" ? "mt-4" : ""}>
             <BusinessGroupSelector
               initialOrgId={undefined}
               onSelect={handleSelect}
@@ -256,11 +262,13 @@ export default function LeftSidebar({
                   )}
                 </div>
               ) : (
-                <p className="text-sm text-gray-500">No Brokers Activity Exists</p>
+                <p className="text-sm text-gray-500">
+                  {viewMode === "exchange" ? "No brokers found" : "No Brokers Activity Exists"}
+                </p>
               )}
             </div>
           )}
-          {selection && selection.value !== "ALL" && selectedBrokerNodeId && (
+          {viewMode === "activity" && selection && selection.value !== "ALL" && selectedBrokerNodeId && (
             <div className="mt-4">
               {(() => {
                 const broker = brokers.find((b: BrokerInEnvironment) => b.nodeId === selectedBrokerNodeId);

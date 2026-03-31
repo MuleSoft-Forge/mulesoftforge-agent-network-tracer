@@ -312,37 +312,72 @@ export default function AgentNetworkCanvas({
     });
   }, [graph, nodeFilters]);
 
-  // Center/reset zoom handler - fit to visible nodes with padding
-  const handleCenter = useCallback(() => {
+  // Fit the viewBox so the graph fills the available container space.
+  // Uses the container's pixel dimensions to pick the right zoom level
+  // rather than a fixed percentage padding that leaves small graphs tiny.
+  const fitToView = useCallback(() => {
     if (!graph || filteredNodes.length === 0 || positions.size === 0) {
       return;
     }
 
-    // Only use positions of visible (filtered) nodes
     const visiblePositions = filteredNodes
       .map((node: CanonicalNode) => positions.get(node.id))
       .filter((pos): pos is { x: number; y: number } => pos !== undefined);
 
     if (visiblePositions.length === 0) return;
 
-    const minX = Math.min(...visiblePositions.map((p: { x: number; y: number }) => p.x)) - PAD * 2;
-    const minY = Math.min(...visiblePositions.map((p: { x: number; y: number }) => p.y)) - PAD * 2;
-    const maxX = Math.max(...visiblePositions.map((p: { x: number; y: number }) => p.x)) + NODE_WIDTH + PAD * 2;
-    const maxY = Math.max(...visiblePositions.map((p: { x: number; y: number }) => p.y)) + NODE_HEIGHT + PAD * 2;
+    const minX = Math.min(...visiblePositions.map((p) => p.x));
+    const minY = Math.min(...visiblePositions.map((p) => p.y));
+    const maxX = Math.max(...visiblePositions.map((p) => p.x)) + NODE_WIDTH;
+    const maxY = Math.max(...visiblePositions.map((p) => p.y)) + NODE_HEIGHT;
 
-    const width = maxX - minX;
-    const height = maxY - minY;
+    const contentW = maxX - minX;
+    const contentH = maxY - minY;
 
-    const paddingX = width * 0.2;
-    const paddingY = height * 0.2;
+    // Get the actual pixel size of the container
+    const el = containerRef.current;
+    const containerW = el ? el.clientWidth : 800;
+    const containerH = el ? el.clientHeight : 600;
+
+    // We want the graph to fill ~80% of the container (10% margin each side).
+    // Calculate the SVG-unit viewBox that achieves this.
+    const containerAspect = containerW / containerH;
+    const contentAspect = contentW / contentH;
+
+    let vbW: number;
+    let vbH: number;
+
+    if (contentAspect > containerAspect) {
+      // Graph is wider than container — fit to width
+      vbW = contentW;
+      vbH = vbW / containerAspect;
+    } else {
+      // Graph is taller than container — fit to height
+      vbH = contentH;
+      vbW = vbH * containerAspect;
+    }
+
+    // Add a small margin (10% of the fitted dimension on each side)
+    const margin = 0.1;
+    const marginW = vbW * margin;
+    const marginH = vbH * margin;
+    vbW += marginW * 2;
+    vbH += marginH * 2;
+
+    // Center the content within the viewBox
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
 
     setViewBox({
-      x: minX - paddingX,
-      y: minY - paddingY,
-      width: width + paddingX * 2,
-      height: height + paddingY * 2,
+      x: cx - vbW / 2,
+      y: cy - vbH / 2,
+      width: vbW,
+      height: vbH,
     });
   }, [graph, filteredNodes, positions]);
+
+  // Keep the old name so keyboard shortcut / button refs still work
+  const handleCenter = fitToView;
 
   // Double-click on canvas background to fit view to nodes
   const handleCanvasDoubleClick = useCallback(
@@ -410,37 +445,18 @@ export default function AgentNetworkCanvas({
     return () => ro.disconnect();
   }, []);
 
-  // Center view on nodes when graph first loads (once per graph); "Center" button for manual re-fit
+  // Fit view when graph first loads (once per graph change)
   useEffect(() => {
     if (!graph || filteredNodes.length === 0 || positions.size === 0 || initialFitDoneRef.current) {
       return;
     }
-
-    const visiblePositions = filteredNodes
-      .map((node: CanonicalNode) => positions.get(node.id))
-      .filter((pos): pos is { x: number; y: number } => pos !== undefined);
-
-    if (visiblePositions.length === 0) return;
-
-    const minX = Math.min(...visiblePositions.map((p: { x: number; y: number }) => p.x)) - PAD * 2;
-    const minY = Math.min(...visiblePositions.map((p: { x: number; y: number }) => p.y)) - PAD * 2;
-    const maxX = Math.max(...visiblePositions.map((p: { x: number; y: number }) => p.x)) + NODE_WIDTH + PAD * 2;
-    const maxY = Math.max(...visiblePositions.map((p: { x: number; y: number }) => p.y)) + NODE_HEIGHT + PAD * 2;
-
-    const width = maxX - minX;
-    const height = maxY - minY;
-
-    const paddingX = width * 0.2;
-    const paddingY = height * 0.2;
-
-    setViewBox({
-      x: minX - paddingX,
-      y: minY - paddingY,
-      width: width + paddingX * 2,
-      height: height + paddingY * 2,
+    // Small delay to ensure the container has its final size after layout
+    const raf = requestAnimationFrame(() => {
+      fitToView();
+      initialFitDoneRef.current = true;
     });
-    initialFitDoneRef.current = true;
-  }, [graph, filteredNodes.length, positions.size, filteredNodes, positions]);
+    return () => cancelAnimationFrame(raf);
+  }, [graph, filteredNodes.length, positions.size, fitToView]);
 
   // Clear selection when the selected node is filtered out
   useEffect(() => {
