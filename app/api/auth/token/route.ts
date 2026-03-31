@@ -3,7 +3,7 @@ import { sealData } from "iron-session";
 import { cookies } from "next/headers";
 import { getCredentialsForRegion } from "@/lib/regions";
 import type { RegionId } from "@/lib/regions";
-import { loggedFetch, debugError } from "@/lib/api-logger";
+import { loggedFetch, debugLog, debugError } from "@/lib/api-logger";
 import { sessionOptions, type SessionData } from "@/lib/session";
 import { TokenRequestSchema } from "@/lib/schemas";
 
@@ -77,6 +77,7 @@ export async function POST(request: NextRequest) {
         };
         monitoringProductSKU = profile?.organization?.entitlements?.monitoringCenter?.productSKU;
         monitoringCenterEnabled = monitoringProductSKU === 1;
+        debugLog(`[AUTH-TOKEN] monitoringCenter.productSKU=${monitoringProductSKU} → monitoringCenterEnabled=${monitoringCenterEnabled}`);
       }
     } catch (profileError) {
       debugError("Profile fetch after login failed (using monitoringCenterEnabled=false):", profileError);
@@ -88,8 +89,9 @@ export async function POST(request: NextRequest) {
       refreshToken: tokenData.refresh_token,
       expiresAt: Date.now() + (tokenData.expires_in * 1000),
       baseUrl: creds.baseUrl,
-      invalidatedAt: undefined, // Explicitly clear any previous invalidation
+      invalidatedAt: undefined,
       monitoringCenterEnabled,
+      monitoringProductSKU,
     };
 
     const sealed = await sealData(sessionData, sessionOptions);

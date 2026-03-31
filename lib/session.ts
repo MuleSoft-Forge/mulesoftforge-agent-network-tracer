@@ -13,6 +13,8 @@ const SessionDataSchema = z.object({
   invalidatedAt: z.number().optional(),
   /** True only when monitoringCenter.productSKU === 1 (Log Search / _msearch available). SKU 3 = basic monitoring (no Log Search). */
   monitoringCenterEnabled: z.boolean().optional(),
+  /** Raw productSKU from profile for debugging. */
+  monitoringProductSKU: z.number().optional(),
 });
 
 export type SessionData = z.infer<typeof SessionDataSchema>;
@@ -91,6 +93,7 @@ export async function getSessionStatus() {
       expiresAt: session.expiresAt,
       baseUrl: session.baseUrl,
       monitoringCenterEnabled: session.monitoringCenterEnabled,
+      monitoringProductSKU: session.monitoringProductSKU,
     };
   } catch {
     return { authenticated: false };
