@@ -1151,9 +1151,11 @@ export async function GET(request: NextRequest) {
   }
   debugLog("[TASK-CALLSTACK] ✓ Authentication successful");
   
-  const { baseUrl, accessToken } = authResult;
+  const { baseUrl, accessToken, session } = authResult;
+  const hasMsearch = session.monitoringCenterEnabled === true;
   debugLog(`[TASK-CALLSTACK] baseUrl: ${baseUrl}`);
   debugLog(`[TASK-CALLSTACK] accessToken: ${accessToken ? "present" : "missing"} (${accessToken?.length || 0} chars)`);
+  debugLog(`[TASK-CALLSTACK] monitoringCenterEnabled: ${hasMsearch}`);
   
   const { searchParams } = new URL(request.url);
   const orgId = searchParams.get("orgId");
@@ -1197,19 +1199,28 @@ export async function GET(request: NextRequest) {
   debugLog(`[TASK-CALLSTACK] Time range: ${timeRange}ms (30 days)`);
 
   try {
-    // Phase 1: search by taskId - filter by orgId first since we search all indices
-    debugLog("[TASK-CALLSTACK] Step 4: Phase 1 - Searching logs by taskId...");
-    const phase1Query = `orgId=${validatedOrgId} AND "${validatedTaskId}"`;
-    debugLog(`[TASK-CALLSTACK] Phase 1 query: ${phase1Query}`);
-    debugLog(`[TASK-CALLSTACK] Phase 1 timeRange: ${timeRange}ms`);
-    const phase1 = await msearch(validatedOrgId, phase1Query, { timeRangeMs: timeRange }, accessToken, baseUrl);
-    debugLog(`[TASK-CALLSTACK] Phase 1 result: ${phase1.hits?.length || 0} hits, error: ${phase1.error || "none"}`);
-    if (phase1.hits?.length > 0) {
-      const first = phase1.hits[0] as { _source?: { appId?: string; [key: string]: unknown } };
-      const src = first._source || {};
-      const firstAppId = (src.appId as string) || "undefined";
-      const firstApiInstanceId = (src.apiInstanceId as string) || (typeof src.fields === "object" && src.fields && typeof (src.fields as Record<string, unknown>).apiInstanceId === "string" ? (src.fields as Record<string, unknown>).apiInstanceId : "undefined");
-      debugLog(`[KEY_FACTS] msearch Phase 1: hitCount=${phase1.hits.length}, firstHit.appId=${firstAppId}, firstHit.apiInstanceId=${String(firstApiInstanceId)}`);
+    // Phase 1: search by taskId — only when org has Log Search (productSKU === 1)
+    let phase1Query = `orgId=${validatedOrgId} AND "${validatedTaskId}"`;
+    const phase1 = hasMsearch
+      ? await (async () => {
+          debugLog("[TASK-CALLSTACK] Step 4: Phase 1 - Searching logs by taskId...");
+          debugLog(`[TASK-CALLSTACK] Phase 1 query: ${phase1Query}`);
+          debugLog(`[TASK-CALLSTACK] Phase 1 timeRange: ${timeRange}ms`);
+          const result = await msearch(validatedOrgId, phase1Query, { timeRangeMs: timeRange }, accessToken, baseUrl);
+          debugLog(`[TASK-CALLSTACK] Phase 1 result: ${result.hits?.length || 0} hits, error: ${result.error || "none"}`);
+          if (result.hits?.length > 0) {
+            const first = result.hits[0] as { _source?: { appId?: string; [key: string]: unknown } };
+            const src = first._source || {};
+            const firstAppId = (src.appId as string) || "undefined";
+            const firstApiInstanceId = (src.apiInstanceId as string) || (typeof src.fields === "object" && src.fields && typeof (src.fields as Record<string, unknown>).apiInstanceId === "string" ? (src.fields as Record<string, unknown>).apiInstanceId : "undefined");
+            debugLog(`[KEY_FACTS] msearch Phase 1: hitCount=${result.hits.length}, firstHit.appId=${firstAppId}, firstHit.apiInstanceId=${String(firstApiInstanceId)}`);
+          }
+          return result;
+        })()
+      : { total: 0, hits: [] as unknown[], raw: {}, error: "MONITORING_CENTER_PREMIUM_REQUIRED" as const };
+
+    if (!hasMsearch) {
+      debugLog("[TASK-CALLSTACK] Skipping msearch (monitoringCenterEnabled=false, productSKU !== 1)");
     }
     
     // No-entitlement mode: get task details from runtime logs
