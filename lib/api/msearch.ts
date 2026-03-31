@@ -1,8 +1,9 @@
-import { loggedFetch } from "@/lib/api-logger";
+import { loggedFetch, debugLog } from "@/lib/api-logger";
 
 export interface MSearchOptions {
   size?: number;
   from?: number;
+  /** @deprecated Ignored: timestamp sort caused ES fielddata failures on monitoring indices. */
   sortOrder?: "asc" | "desc";
   timeRangeMs?: number;
 }
@@ -12,6 +13,8 @@ export interface MSearchResult {
   hits: unknown[];
   raw: unknown;
   error?: "MONITORING_CENTER_PREMIUM_REQUIRED";
+  /** ES `_shards.failed` when present — sorting on `timestamp` used to blow up shards (text field / no fielddata). */
+  shardFailures?: number;
 }
 
 /**
@@ -24,17 +27,20 @@ export async function msearch(
   accessToken: string,
   baseUrl: string
 ): Promise<MSearchResult> {
-  const { size = 500, from = 0, sortOrder = "asc", timeRangeMs = 30 * 24 * 3600 * 1000 } = opts;
+  const { size = 500, from = 0, timeRangeMs = 30 * 24 * 3600 * 1000 } = opts;
   const now = Date.now();
   // Anypoint's API doesn't support wildcard patterns in _msearch index field
   // Use empty array to search all indices, then filter by orgId in the query
+  //
+  // Do NOT sort on `timestamp`: many monitoring indices map it as text → fielddata errors on
+  // hundreds of shards → empty `hits` even when docs match. Callers paginate with `from`/`size`;
+  // order is unstable across pages but broker-task discovery tolerates that for typical volumes.
   const ndjson = [
     JSON.stringify({ index: [], ignore_unavailable: true, preference: now }),
     JSON.stringify({
       version: true,
       size,
       from,
-      sort: [{ timestamp: { order: sortOrder, unmapped_type: "boolean" } }],
       _source: { excludes: [] },
       stored_fields: ["*"],
       docvalue_fields: ["timestamp"],
@@ -77,6 +83,13 @@ export async function msearch(
 
   const raw = await res.json();
   const r = (raw.responses || [])[0] || {};
+  const shards = r._shards as { failed?: number; total?: number; successful?: number } | undefined;
+  const shardFailures = typeof shards?.failed === "number" ? shards.failed : 0;
+  if (shardFailures > 0) {
+    debugLog(
+      `[msearch] Elasticsearch partial failure: _shards.failed=${shardFailures} total=${shards?.total} successful=${shards?.successful} (check ENABLE_API_LOGGING for full body)`
+    );
+  }
   const hits = (r.hits && r.hits.hits) || [];
   const totalRaw = r.hits && r.hits.total;
   const total =
@@ -85,5 +98,5 @@ export async function msearch(
       : totalRaw && typeof totalRaw === "object" && typeof totalRaw.value === "number"
         ? totalRaw.value
         : 0;
-  return { total, hits, raw };
+  return { total, hits, raw, ...(shardFailures > 0 ? { shardFailures } : {}) };
 }

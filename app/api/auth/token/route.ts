@@ -60,7 +60,12 @@ export async function POST(request: NextRequest) {
     const accessToken = tokenData.access_token as string;
 
     // Fetch profile to derive entitlements (stable for duration of login)
+    // monitoringCenter.productSKU mapping (empirical):
+    //   1 = includes Log Search (_msearch API works)
+    //   3 = basic monitoring (no Log Search — _msearch returns 200 + empty)
+    //   other/unknown = assume no _msearch
     let monitoringCenterEnabled = false;
+    let monitoringProductSKU: number | undefined;
     try {
       const profileRes = await loggedFetch(`${creds.baseUrl}/accounts/api/profile`, {
         method: "GET",
@@ -70,8 +75,8 @@ export async function POST(request: NextRequest) {
         const profile = (await profileRes.json()) as {
           organization?: { entitlements?: { monitoringCenter?: { productSKU?: number } } };
         };
-        const sku = profile?.organization?.entitlements?.monitoringCenter?.productSKU;
-        monitoringCenterEnabled = typeof sku === "number" && sku >= 1;
+        monitoringProductSKU = profile?.organization?.entitlements?.monitoringCenter?.productSKU;
+        monitoringCenterEnabled = monitoringProductSKU === 1;
       }
     } catch (profileError) {
       debugError("Profile fetch after login failed (using monitoringCenterEnabled=false):", profileError);

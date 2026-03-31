@@ -11,7 +11,7 @@ const SessionDataSchema = z.object({
   baseUrl: z.string().url().optional(),
   oauthState: z.string().optional(),
   invalidatedAt: z.number().optional(),
-  /** Set at login from profile.organization.entitlements.monitoringCenter.productSKU >= 1. Other entitlements can be added later. */
+  /** True only when monitoringCenter.productSKU === 1 (Log Search / _msearch available). SKU 3 = basic monitoring (no Log Search). */
   monitoringCenterEnabled: z.boolean().optional(),
 });
 
