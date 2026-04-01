@@ -45,3 +45,4 @@ for d in "${DOMAINS[@]}"; do
 done
 
 echo ">>> Done. Custom domains should now serve this deployment. Hard-refresh browsers (e.g. Cmd+Shift+R)."
+echo ">>> After load, header should show the same short Git SHA as: git rev-parse --short HEAD"

@@ -8,6 +8,7 @@ import { ChevronDown, LogOut, FileJson } from "lucide-react";
 import { REGIONS } from "@/lib/regions";
 import type { RegionOption } from "@/lib/regions";
 import { parseProfile, type Profile } from "@/lib/parsers";
+import BuildStamp from "@/components/BuildStamp";
 
 const PROFILE_CACHE_KEY = "agent-network-profile";
 
@@ -179,6 +180,7 @@ export default function Header() {
           </nav>
         </div>
         <div className="flex shrink-0 items-center gap-3">
+          <BuildStamp />
           {authenticated && (
             <>
               {regionLabel && (
