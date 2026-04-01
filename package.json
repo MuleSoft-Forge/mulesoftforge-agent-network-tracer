@@ -7,8 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "deploy": "bash scripts/vercel-deploy-with-alias.sh",
-    "deploy:force": "bash scripts/vercel-deploy-with-alias.sh --force",
+    "deploy": "vercel --prod --yes",
     "reset": "bash reset.sh",
     "start:clean": "bash start-clean.sh"
   },
