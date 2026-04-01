@@ -40,6 +40,84 @@ interface AssetFileDescriptor {
   [key: string]: unknown;
 }
 
+async function fetchExchangeFiles(
+  orgId: string,
+  assetId: string,
+  version: string,
+  assetData: { organizationId?: string; groupId?: string; files?: AssetFileDescriptor[] }
+): Promise<ExchangeFileEntry[]> {
+  const textFiles = (assetData.files ?? []).filter(
+    (f) =>
+      f.classifier &&
+      f.packaging &&
+      TEXT_PACKAGINGS.has(f.packaging.toLowerCase()) &&
+      !SKIP_CLASSIFIERS.has(f.classifier.toLowerCase())
+  );
+
+  if (textFiles.length === 0) return [];
+
+  return Promise.all(
+    textFiles.map(async (f) => {
+      try {
+        const params = new URLSearchParams();
+        if (f.downloadURL) {
+          params.set("downloadURL", f.downloadURL);
+        } else {
+          const fileOrgId = assetData.groupId || assetData.organizationId || orgId;
+          params.set("organizationId", fileOrgId);
+          params.set("assetId", assetId);
+          params.set("version", version);
+          params.set("classifier", f.classifier!);
+          params.set("packaging", f.packaging!);
+        }
+
+        const res = await fetch(`/api/exchange/file?${params.toString()}`);
+        if (!res.ok) return { classifier: f.classifier!, packaging: f.packaging!, content: null };
+
+        const contentType = res.headers.get("content-type") ?? "";
+        if (contentType.includes("json")) {
+          const data = (await res.json()) as { content?: string };
+          return { classifier: f.classifier!, packaging: f.packaging!, content: data.content ?? null };
+        }
+        const text = await res.text();
+        return { classifier: f.classifier!, packaging: f.packaging!, content: text };
+      } catch {
+        return { classifier: f.classifier!, packaging: f.packaging!, content: null };
+      }
+    })
+  );
+}
+
+async function fetchMavenFiles(
+  orgId: string,
+  assetId: string,
+  version: string,
+  groupId?: string
+): Promise<ExchangeFileEntry[]> {
+  try {
+    const params = new URLSearchParams({
+      organizationId: orgId,
+      assetId,
+      version,
+    });
+    if (groupId) params.set("groupId", groupId);
+
+    const res = await fetch(`/api/exchange/maven-files?${params.toString()}`);
+    if (!res.ok) return [];
+
+    const data = (await res.json()) as {
+      files?: Array<{ classifier: string; packaging: string; content: string | null }>;
+    };
+    return (data.files ?? []).map((f) => ({
+      classifier: f.classifier,
+      packaging: f.packaging,
+      content: f.content,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 async function fetchVersionFiles(
   orgId: string,
   assetId: string,
@@ -56,54 +134,33 @@ async function fetchVersionFiles(
     files?: AssetFileDescriptor[];
   };
 
-  const textFiles = (assetData.files ?? []).filter(
-    (f) =>
-      f.classifier &&
-      f.packaging &&
-      TEXT_PACKAGINGS.has(f.packaging.toLowerCase()) &&
-      !SKIP_CLASSIFIERS.has(f.classifier.toLowerCase())
-  );
+  // Fetch Exchange metadata files and Maven agent-network zip in parallel
+  const [exchangeFiles, mavenFiles] = await Promise.all([
+    fetchExchangeFiles(orgId, assetId, version, assetData),
+    fetchMavenFiles(orgId, assetId, version, assetData.groupId || assetData.organizationId),
+  ]);
 
-  if (textFiles.length === 0) return [];
+  // Merge: Maven files first (the real network definitions), then Exchange files
+  // Deduplicate by classifier name
+  const seen = new Set<string>();
+  const merged: ExchangeFileEntry[] = [];
 
-  const entries = await Promise.all(
-    textFiles.map(async (f) => {
-      try {
-        const params = new URLSearchParams();
+  for (const f of mavenFiles) {
+    const key = f.classifier;
+    if (!seen.has(key)) {
+      seen.add(key);
+      merged.push(f);
+    }
+  }
+  for (const f of exchangeFiles) {
+    const key = `${f.classifier}.${f.packaging}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      merged.push(f);
+    }
+  }
 
-        if (f.downloadURL) {
-          params.set("downloadURL", f.downloadURL);
-        } else {
-          // Fallback: construct params for the proxy to build the URL
-          const fileOrgId = assetData.groupId || assetData.organizationId || orgId;
-          params.set("organizationId", fileOrgId);
-          params.set("assetId", assetId);
-          params.set("version", version);
-          params.set("classifier", f.classifier!);
-          params.set("packaging", f.packaging!);
-        }
-
-        const res = await fetch(`/api/exchange/file?${params.toString()}`);
-        if (!res.ok) {
-          return { classifier: f.classifier!, packaging: f.packaging!, content: null };
-        }
-
-        const contentType = res.headers.get("content-type") ?? "";
-        if (contentType.includes("json")) {
-          const data = (await res.json()) as { content?: string };
-          return { classifier: f.classifier!, packaging: f.packaging!, content: data.content ?? null };
-        }
-
-        // If the proxy returned raw text (shouldn't happen with our route, but be safe)
-        const text = await res.text();
-        return { classifier: f.classifier!, packaging: f.packaging!, content: text };
-      } catch {
-        return { classifier: f.classifier!, packaging: f.packaging!, content: null };
-      }
-    })
-  );
-
-  return entries;
+  return merged;
 }
 
 export default function ExchangeVersionsPanel({
