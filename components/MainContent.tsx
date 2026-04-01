@@ -9,7 +9,7 @@ import TaskDetails from "@/components/TaskDetails";
 import ExchangeVersionsPanel from "@/components/ExchangeVersionsPanel";
 import ExchangeDiffSummary from "@/components/ExchangeDiffSummary";
 import ExchangeFileDiff from "@/components/ExchangeFileDiff";
-import type { VersionFiles } from "@/components/ExchangeFileDiff";
+import type { ExchangeFileEntry, VersionFiles } from "@/components/ExchangeFileDiff";
 import { useDebugViewer } from "@/components/debug/useDebugViewer";
 import { visualizerToCanonical } from "@/lib/adapters/visualizer-to-canonical";
 import { filterVisualizerByBroker, filterVisualizerAllBrokers } from "@/lib/filters/visualizer-filter";
@@ -23,8 +23,33 @@ import type { FabricGraphResponse } from "@/lib/adapters/visualizer-to-canonical
 import type { EdgeStyle, NodeFilters, CanvasLayout } from "@/components/CanvasOptionsMenu";
 import type { GraphDiff } from "@/lib/adapters/exchange-to-canonical";
 import { DEFAULT_ACTIVITY_PERIOD_MINUTES } from "@/lib/constants";
+import { beautifyIfJsonPackaging } from "@/lib/json-beautify";
+import LineNumberedBlock from "@/components/LineNumberedBlock";
 
 const DEFAULT_CANVAS_HEIGHT = 60; // 60% of height by default
+
+function ExchangeSingleFileCard({ f }: { f: ExchangeFileEntry }) {
+  return (
+    <div className="rounded-lg border border-gray-200 overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 border-b border-gray-200">
+        <span className="text-sm font-mono font-medium text-gray-900">
+          {f.classifier}.{f.packaging}
+        </span>
+      </div>
+      {f.content != null ? (
+        f.classifier === "agent-network" && f.packaging === "yaml" ? (
+          <LineNumberedBlock content={f.content} />
+        ) : (
+          <pre className="p-3 text-xs font-mono text-gray-700 overflow-x-auto whitespace-pre bg-white max-h-96">
+            {beautifyIfJsonPackaging(f.packaging, f.content) ?? ""}
+          </pre>
+        )
+      ) : (
+        <div className="p-3 text-xs text-gray-400">Unable to load file content</div>
+      )}
+    </div>
+  );
+}
 
 export default function MainContent() {
   const [viewMode, setViewMode] = useState<ViewMode>("activity");
@@ -610,6 +635,7 @@ export default function MainContent() {
                   orgId={orgId}
                   assetId={selectedBroker.assetId}
                   brokerName={selectedBroker.name || selectedBroker.assetId}
+                  agentNetworkGav={selectedBroker.agentNetworkGav}
                   onGraphLoad={handleExchangeGraphLoad}
                   onDiffResult={handleExchangeDiffResult}
                   onCompareGraphs={handleCompareGraphs}
@@ -688,25 +714,62 @@ export default function MainContent() {
                               afterVersion={exchangeDiffVersions.after}
                             />
                           </div>
-                        ) : singleVersionFiles && singleVersionFiles.files.length > 0 ? (
-                          <div className="space-y-3">
+                        ) : singleVersionFiles ? (
+                          <div className="space-y-6">
                             <h3 className="text-sm font-semibold text-gray-900">
                               Files — {singleVersionFiles.version}
                             </h3>
-                            {singleVersionFiles.files.map((f) => (
-                              <div key={`${f.classifier}.${f.packaging}`} className="rounded-lg border border-gray-200 overflow-hidden">
-                                <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 border-b border-gray-200">
-                                  <span className="text-sm font-mono font-medium text-gray-900">
-                                    {f.classifier}.{f.packaging}
-                                  </span>
-                                </div>
-                                {f.content != null ? (
-                                  <pre className="p-3 text-xs font-mono text-gray-700 overflow-x-auto whitespace-pre bg-white max-h-96">{f.content}</pre>
+
+                            <section className="space-y-2">
+                              <div>
+                                <h4 className="text-xs font-semibold text-gray-800">
+                                  Published artifact (Maven)
+                                </h4>
+                                <p className="text-[11px] text-gray-500 mb-2">
+                                  agent-network.yaml and exchange.json from the agent-network zip
+                                </p>
+                                {singleVersionFiles.published.length === 0 ? (
+                                  <p className="text-xs text-gray-400 rounded-md border border-dashed border-gray-200 bg-gray-50 px-3 py-2">
+                                    No Maven files for this version (check agent-network link).
+                                  </p>
                                 ) : (
-                                  <div className="p-3 text-xs text-gray-400">Unable to load file content</div>
+                                  <div className="space-y-3">
+                                    {singleVersionFiles.published.map((f) => (
+                                      <ExchangeSingleFileCard
+                                        key={`pub-${f.classifier}.${f.packaging}`}
+                                        f={f}
+                                      />
+                                    ))}
+                                  </div>
                                 )}
                               </div>
-                            ))}
+                            </section>
+
+                            <section className="space-y-2">
+                              <div>
+                                <h4 className="text-xs font-semibold text-gray-800">
+                                  Exchange asset files
+                                </h4>
+                                <p className="text-[11px] text-gray-500 mb-2">
+                                  Files on the broker asset in Exchange (e.g. a2a-card, agent-metadata)
+                                </p>
+                                {singleVersionFiles.exchangeAsset.length === 0 ? (
+                                  <p className="text-xs text-gray-400 rounded-md border border-dashed border-gray-200 bg-gray-50 px-3 py-2">
+                                    No matching Exchange files for this version, or the broker asset does not
+                                    publish them at this version.
+                                  </p>
+                                ) : (
+                                  <div className="space-y-3">
+                                    {singleVersionFiles.exchangeAsset.map((f) => (
+                                      <ExchangeSingleFileCard
+                                        key={`ex-${f.classifier}.${f.packaging}`}
+                                        f={f}
+                                      />
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            </section>
                           </div>
                         ) : exchangeFilesLoading ? (
                           <div className="flex h-full flex-col items-center justify-center gap-2">

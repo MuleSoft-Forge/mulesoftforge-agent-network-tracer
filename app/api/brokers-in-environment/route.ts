@@ -13,19 +13,42 @@ export const dynamic = "force-dynamic";
  * Check if an API instance exists in the given environment (Runtime Manager API).
  * Used to filter fabric instance IDs to the exact selected environment.
  */
+interface InstanceCheckResult {
+  exists: boolean;
+  agentNetworkGav?: { groupId: string; assetId: string; version: string };
+}
+
+function parseGav(urn: string): { groupId: string; assetId: string; version: string } | undefined {
+  // "urn:gav:groupId:assetId:version"
+  const parts = urn.replace("urn:gav:", "").split(":");
+  if (parts.length >= 3) {
+    return { groupId: parts[0], assetId: parts[1], version: parts[2] };
+  }
+  return undefined;
+}
+
 async function apiInstanceExistsInEnvironment(
   baseUrl: string,
   orgId: string,
   environmentId: string,
   apiInstanceId: string,
   authHeader: string
-): Promise<boolean> {
+): Promise<InstanceCheckResult> {
   const url = `${baseUrl}/apimanager/api/v1/organizations/${encodeURIComponent(orgId)}/environments/${encodeURIComponent(environmentId)}/apis/${encodeURIComponent(apiInstanceId)}`;
   const res = await loggedFetch(url, {
     method: "GET",
     headers: { Authorization: authHeader },
   });
-  return res.ok;
+  if (!res.ok) return { exists: false };
+
+  try {
+    const data = (await res.json()) as { metadata?: { source?: string } };
+    const source = data?.metadata?.source;
+    const gav = source ? parseGav(source) : undefined;
+    return { exists: true, agentNetworkGav: gav };
+  } catch {
+    return { exists: true };
+  }
 }
 
 /** Anypoint environment from GET .../organizations/{orgId}/environments (response.data[]. */
@@ -151,7 +174,10 @@ export async function GET(request: NextRequest) {
           )
         )
       );
-      const instanceIds = rawInstanceIds.filter((_, i) => existenceChecks[i]);
+      const instanceIds = rawInstanceIds.filter((_, i) => existenceChecks[i].exists);
+
+      // Extract agent-network GAV from the first instance that has it
+      const agentNetworkGav = existenceChecks.find((c) => c.agentNetworkGav)?.agentNetworkGav;
 
       if (instanceIds.length > 0) {
         brokers.push({
@@ -160,6 +186,7 @@ export async function GET(request: NextRequest) {
           name: node.name ?? node.assetId ?? nodeId,
           organizationId: node.organizationId ?? "",
           instanceIds,
+          ...(agentNetworkGav ? { agentNetworkGav } : {}),
         });
       }
     }

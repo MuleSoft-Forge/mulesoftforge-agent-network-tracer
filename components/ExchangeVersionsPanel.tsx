@@ -18,6 +18,8 @@ interface ExchangeVersionsPanelProps {
   orgId: string;
   assetId: string;
   brokerName: string;
+  /** GAV of the parent agent-network asset, from the broker's API Manager metadata */
+  agentNetworkGav?: { groupId: string; assetId: string; version: string };
   onGraphLoad: (graph: CanonicalGraph | null) => void;
   onDiffResult: (diff: GraphDiff | null, beforeVersion: string, afterVersion: string) => void;
   onCompareGraphs: (before: CanonicalGraph, after: CanonicalGraph) => void;
@@ -28,79 +30,20 @@ interface ExchangeVersionsPanelProps {
 
 type CompareSlot = "before" | "after";
 
-const TEXT_PACKAGINGS = new Set(["yaml", "yml", "json", "txt", "xml", "raml"]);
-const SKIP_CLASSIFIERS = new Set(["icon"]);
-
-interface AssetFileDescriptor {
-  classifier?: string;
-  packaging?: string;
-  mainFile?: string;
-  downloadURL?: string;
-  isGenerated?: boolean;
-  [key: string]: unknown;
-}
-
-async function fetchExchangeFiles(
+async function fetchMavenPublishedFiles(
   orgId: string,
-  assetId: string,
   version: string,
-  assetData: { organizationId?: string; groupId?: string; files?: AssetFileDescriptor[] }
+  agentNetworkInfo?: { assetId: string; groupId: string } | null
 ): Promise<ExchangeFileEntry[]> {
-  const textFiles = (assetData.files ?? []).filter(
-    (f) =>
-      f.classifier &&
-      f.packaging &&
-      TEXT_PACKAGINGS.has(f.packaging.toLowerCase()) &&
-      !SKIP_CLASSIFIERS.has(f.classifier.toLowerCase())
-  );
+  if (!agentNetworkInfo) return [];
 
-  if (textFiles.length === 0) return [];
-
-  return Promise.all(
-    textFiles.map(async (f) => {
-      try {
-        const params = new URLSearchParams();
-        if (f.downloadURL) {
-          params.set("downloadURL", f.downloadURL);
-        } else {
-          const fileOrgId = assetData.groupId || assetData.organizationId || orgId;
-          params.set("organizationId", fileOrgId);
-          params.set("assetId", assetId);
-          params.set("version", version);
-          params.set("classifier", f.classifier!);
-          params.set("packaging", f.packaging!);
-        }
-
-        const res = await fetch(`/api/exchange/file?${params.toString()}`);
-        if (!res.ok) return { classifier: f.classifier!, packaging: f.packaging!, content: null };
-
-        const contentType = res.headers.get("content-type") ?? "";
-        if (contentType.includes("json")) {
-          const data = (await res.json()) as { content?: string };
-          return { classifier: f.classifier!, packaging: f.packaging!, content: data.content ?? null };
-        }
-        const text = await res.text();
-        return { classifier: f.classifier!, packaging: f.packaging!, content: text };
-      } catch {
-        return { classifier: f.classifier!, packaging: f.packaging!, content: null };
-      }
-    })
-  );
-}
-
-async function fetchMavenFiles(
-  orgId: string,
-  assetId: string,
-  version: string,
-  groupId?: string
-): Promise<ExchangeFileEntry[]> {
   try {
     const params = new URLSearchParams({
       organizationId: orgId,
-      assetId,
+      assetId: agentNetworkInfo.assetId,
       version,
+      groupId: agentNetworkInfo.groupId,
     });
-    if (groupId) params.set("groupId", groupId);
 
     const res = await fetch(`/api/exchange/maven-files?${params.toString()}`);
     if (!res.ok) return [];
@@ -108,11 +51,80 @@ async function fetchMavenFiles(
     const data = (await res.json()) as {
       files?: Array<{ classifier: string; packaging: string; content: string | null }>;
     };
-    return (data.files ?? []).map((f) => ({
-      classifier: f.classifier,
-      packaging: f.packaging,
-      content: f.content,
-    }));
+
+    return (data.files ?? [])
+      .filter((f) => f.content !== null)
+      .map((f) => ({
+        classifier: f.classifier,
+        packaging: f.packaging,
+        content: f.content,
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function isBrokerExchangeListFile(f: {
+  classifier?: string;
+  packaging?: string;
+}): boolean {
+  const c = (f.classifier ?? "").toLowerCase();
+  const p = (f.packaging ?? "").toLowerCase();
+  if (!["json", "yaml", "yml"].includes(p)) return false;
+  return c === "a2a-card" || c === "agent-metadata";
+}
+
+/** a2a-card, agent-metadata (and similar) from the broker asset listing in Exchange */
+async function fetchBrokerExchangeAssetFiles(
+  orgId: string,
+  brokerAssetId: string,
+  version: string
+): Promise<ExchangeFileEntry[]> {
+  try {
+    const assetParams = new URLSearchParams({
+      organizationId: orgId,
+      assetId: brokerAssetId,
+      version,
+    });
+    const assetRes = await fetch(`/api/exchange/asset?${assetParams.toString()}`);
+    if (!assetRes.ok) return [];
+
+    const assetData = (await assetRes.json()) as {
+      files?: Array<{
+        classifier?: string;
+        packaging?: string;
+        downloadURL?: string;
+      }>;
+    };
+
+    const files = assetData.files ?? [];
+    const targets = files.filter(
+      (f) =>
+        f.downloadURL &&
+        f.classifier &&
+        f.packaging &&
+        isBrokerExchangeListFile(f)
+    );
+
+    const downloaded = await Promise.all(
+      targets.map(async (f) => {
+        const params = new URLSearchParams({
+          downloadURL: f.downloadURL!,
+          classifier: f.classifier!,
+          packaging: f.packaging!,
+        });
+        const fileRes = await fetch(`/api/exchange/file?${params.toString()}`);
+        if (!fileRes.ok) return null;
+        const data = (await fileRes.json()) as { content?: string };
+        return {
+          classifier: f.classifier!,
+          packaging: f.packaging!,
+          content: data.content ?? null,
+        } satisfies ExchangeFileEntry;
+      })
+    );
+
+    return downloaded.filter((x): x is ExchangeFileEntry => x !== null);
   } catch {
     return [];
   }
@@ -120,53 +132,23 @@ async function fetchMavenFiles(
 
 async function fetchVersionFiles(
   orgId: string,
-  assetId: string,
-  version: string
-): Promise<ExchangeFileEntry[]> {
-  const assetRes = await fetch(
-    `/api/exchange/asset?organizationId=${encodeURIComponent(orgId)}&assetId=${encodeURIComponent(assetId)}&version=${encodeURIComponent(version)}`
-  );
-  if (!assetRes.ok) return [];
-
-  const assetData = (await assetRes.json()) as {
-    organizationId?: string;
-    groupId?: string;
-    files?: AssetFileDescriptor[];
-  };
-
-  // Fetch Exchange metadata files and Maven agent-network zip in parallel
-  const [exchangeFiles, mavenFiles] = await Promise.all([
-    fetchExchangeFiles(orgId, assetId, version, assetData),
-    fetchMavenFiles(orgId, assetId, version, assetData.groupId || assetData.organizationId),
+  brokerAssetId: string,
+  version: string,
+  agentNetworkInfo?: { assetId: string; groupId: string } | null
+): Promise<VersionFiles> {
+  const [published, exchangeAsset] = await Promise.all([
+    fetchMavenPublishedFiles(orgId, version, agentNetworkInfo),
+    fetchBrokerExchangeAssetFiles(orgId, brokerAssetId, version),
   ]);
 
-  // Merge: Maven files first (the real network definitions), then Exchange files
-  // Deduplicate by classifier name
-  const seen = new Set<string>();
-  const merged: ExchangeFileEntry[] = [];
-
-  for (const f of mavenFiles) {
-    const key = f.classifier;
-    if (!seen.has(key)) {
-      seen.add(key);
-      merged.push(f);
-    }
-  }
-  for (const f of exchangeFiles) {
-    const key = `${f.classifier}.${f.packaging}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      merged.push(f);
-    }
-  }
-
-  return merged;
+  return { version, published, exchangeAsset };
 }
 
 export default function ExchangeVersionsPanel({
   orgId,
   assetId,
   brokerName,
+  agentNetworkGav,
   onGraphLoad,
   onDiffResult,
   onCompareGraphs,
@@ -183,8 +165,19 @@ export default function ExchangeVersionsPanel({
   const [beforeVersion, setBeforeVersion] = useState<string | null>(null);
   const [afterVersion, setAfterVersion] = useState<string | null>(null);
   const [comparing, setComparing] = useState(false);
+  // The agent-network asset info comes directly from the broker's API Manager metadata — no searching
+  const agentNetworkAsset = agentNetworkGav
+    ? { assetId: agentNetworkGav.assetId, groupId: agentNetworkGav.groupId, name: agentNetworkGav.assetId }
+    : null;
 
   useEffect(() => {
+    if (!agentNetworkGav) {
+      setVersions([]);
+      setLoading(false);
+      setError("No agent-network asset linked to this broker");
+      return;
+    }
+
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -196,35 +189,28 @@ export default function ExchangeVersionsPanel({
     onGraphLoad(null);
 
     fetch(
-      `/api/exchange/versions?organizationId=${encodeURIComponent(orgId)}&assetId=${encodeURIComponent(assetId)}`
+      `/api/exchange/versions?organizationId=${encodeURIComponent(agentNetworkGav.groupId)}&assetId=${encodeURIComponent(agentNetworkGav.assetId)}`
     )
       .then(async (res) => {
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
-          throw new Error(
-            (data as { error?: string }).error || `Failed: ${res.status}`
-          );
+          throw new Error((data as { error?: string }).error || `Failed: ${res.status}`);
         }
         return res.json();
       })
       .then((data: { versions?: ExchangeVersion[] }) => {
-        if (cancelled) return;
-        setVersions(data.versions ?? []);
+        if (!cancelled) setVersions(data.versions ?? []);
       })
       .catch((err: unknown) => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to load versions");
-        }
+        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load versions");
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
 
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgId, assetId]);
+  }, [orgId, assetId, agentNetworkGav?.assetId, agentNetworkGav?.groupId]);
 
   const loadVersionGraph = useCallback(
     async (version: string) => {
@@ -252,13 +238,13 @@ export default function ExchangeVersionsPanel({
       loadVersionGraph(version);
 
       if (onVersionFilesLoaded) {
-        const files = await fetchVersionFiles(orgId, assetId, version);
-        onVersionFilesLoaded({ version, files });
+        const vf = await fetchVersionFiles(orgId, assetId, version, agentNetworkAsset);
+        onVersionFilesLoaded(vf);
       } else {
         onFilesLoadingChange?.(false);
       }
     },
-    [loadVersionGraph, onDiffResult, onVersionFilesLoaded, onFilesLoadingChange, orgId, assetId]
+    [loadVersionGraph, onDiffResult, onVersionFilesLoaded, onFilesLoadingChange, orgId, assetId, agentNetworkAsset]
   );
 
   const handleCompareSelect = useCallback(
@@ -280,23 +266,20 @@ export default function ExchangeVersionsPanel({
       const [beforeGraph, afterGraph, beforeFiles, afterFiles] = await Promise.all([
         exchangeVersionToCanonical(orgId, assetId, beforeVersion, brokerName),
         exchangeVersionToCanonical(orgId, assetId, afterVersion, brokerName),
-        fetchVersionFiles(orgId, assetId, beforeVersion),
-        fetchVersionFiles(orgId, assetId, afterVersion),
+        fetchVersionFiles(orgId, assetId, beforeVersion, agentNetworkAsset),
+        fetchVersionFiles(orgId, assetId, afterVersion, agentNetworkAsset),
       ]);
       const diff = diffGraphs(beforeGraph, afterGraph);
       onDiffResult(diff, beforeVersion, afterVersion);
       onCompareGraphs(beforeGraph, afterGraph);
-      onFilesLoaded?.(
-        { version: beforeVersion, files: beforeFiles },
-        { version: afterVersion, files: afterFiles }
-      );
+      onFilesLoaded?.(beforeFiles, afterFiles);
     } catch {
       onDiffResult(null, beforeVersion, afterVersion);
       onFilesLoadingChange?.(false);
     } finally {
       setComparing(false);
     }
-  }, [beforeVersion, afterVersion, orgId, assetId, brokerName, onDiffResult, onCompareGraphs, onFilesLoaded, onFilesLoadingChange]);
+  }, [beforeVersion, afterVersion, orgId, assetId, brokerName, onDiffResult, onCompareGraphs, onFilesLoaded, onFilesLoadingChange, agentNetworkAsset]);
 
   const toggleCompareMode = useCallback(() => {
     const next = !compareMode;
@@ -338,6 +321,13 @@ export default function ExchangeVersionsPanel({
 
   return (
     <div className="flex h-full flex-col gap-3">
+      {agentNetworkAsset && (
+        <div className="shrink-0 rounded-md bg-indigo-50 border border-indigo-200 px-2.5 py-1.5">
+          <p className="text-[10px] text-indigo-600 font-medium">Agent Network</p>
+          <p className="text-xs text-indigo-900 font-semibold truncate">{agentNetworkAsset.name}</p>
+          <p className="text-[10px] text-indigo-400 truncate">{agentNetworkAsset.assetId}</p>
+        </div>
+      )}
       <div className="flex items-center justify-between shrink-0">
         <h3 className="text-sm font-semibold text-gray-900">
           Versions ({versions.length})

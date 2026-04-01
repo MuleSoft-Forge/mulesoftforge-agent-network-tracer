@@ -63,13 +63,20 @@ export async function GET(request: NextRequest) {
     }
 
     const contentType = res.headers.get("content-type") ?? "application/octet-stream";
+    const pathLower = url.split("?")[0].toLowerCase();
+    const pathSuggestsText =
+      /\.(json|ya?ml|txt|xml|raml|md)(?:$|[?#])/i.test(pathLower) ||
+      /\/files\/[^/]+\.(json|ya?ml|txt|xml|raml)(?:$|[?#])/i.test(pathLower);
+    const packagingLower = packaging?.toLowerCase();
     const isText =
       contentType.includes("yaml") ||
       contentType.includes("json") ||
       contentType.includes("text") ||
       contentType.includes("xml") ||
       contentType.includes("raml") ||
-      (packaging && ["yaml", "yml", "json", "txt", "xml", "raml"].includes(packaging));
+      (packagingLower &&
+        ["yaml", "yml", "json", "txt", "xml", "raml"].includes(packagingLower)) ||
+      pathSuggestsText;
 
     if (isText) {
       const text = await res.text();

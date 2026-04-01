@@ -73,15 +73,22 @@ export async function GET(request: NextRequest) {
 
     debugLog(`[maven-files] Downloaded zip: ${buffer.length} bytes`);
 
-    const textFiles = extractTextFiles(buffer);
+    const allFiles = extractTextFiles(buffer);
 
-    debugLog(`[maven-files] Extracted ${textFiles.length} text files:`, textFiles.map((f) => f.filename));
+    // Only return the two files that matter
+    const WANTED = new Set(["agent-network.yaml", "exchange.json"]);
+    const textFiles = allFiles.filter((f) => WANTED.has(f.filename));
 
-    const files = textFiles.map((f) => ({
-      classifier: f.filename,
-      packaging: f.filename.split(".").pop() ?? "txt",
-      content: f.content,
-    }));
+    debugLog(`[maven-files] Extracted ${textFiles.length}/${allFiles.length} files:`, textFiles.map((f) => f.filename));
+
+    const files = textFiles.map((f) => {
+      const dot = f.filename.lastIndexOf(".");
+      const classifier =
+        dot > 0 ? f.filename.slice(0, dot) : f.filename;
+      const packaging =
+        dot > 0 ? f.filename.slice(dot + 1) : "txt";
+      return { classifier, packaging, content: f.content };
+    });
 
     return NextResponse.json({ files });
   } catch (error) {

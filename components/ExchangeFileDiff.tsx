@@ -4,6 +4,7 @@ import { useState, useMemo } from "react";
 import { ChevronDown, ChevronRight, FileText, Plus, Minus, Equal } from "lucide-react";
 import { diffLines, diffStats } from "@/lib/diff-lines";
 import type { DiffLine, DiffStats } from "@/lib/diff-lines";
+import { beautifyIfJsonPackaging } from "@/lib/json-beautify";
 
 export interface ExchangeFileEntry {
   classifier: string;
@@ -13,7 +14,10 @@ export interface ExchangeFileEntry {
 
 export interface VersionFiles {
   version: string;
-  files: ExchangeFileEntry[];
+  /** agent-network.yaml, exchange.json from the Maven-published zip */
+  published: ExchangeFileEntry[];
+  /** e.g. a2a-card.json, agent-metadata.json from the broker asset on Exchange */
+  exchangeAsset: ExchangeFileEntry[];
 }
 
 interface ExchangeFileDiffProps {
@@ -31,31 +35,40 @@ interface FileDiffData {
   stats: DiffStats;
 }
 
-function computeFileDiffs(before: VersionFiles, after: VersionFiles): FileDiffData[] {
-  const allClassifiers = new Set<string>();
+function fileKey(f: ExchangeFileEntry): string {
+  return `${f.classifier}::${f.packaging}`;
+}
+
+/** Line-level diffs for two file lists (same role, e.g. both published or both exchange-asset). */
+export function computeFileDiffsFromEntries(
+  beforeFiles: ExchangeFileEntry[],
+  afterFiles: ExchangeFileEntry[]
+): FileDiffData[] {
+  const allKeys = new Set<string>();
   const beforeMap = new Map<string, ExchangeFileEntry>();
   const afterMap = new Map<string, ExchangeFileEntry>();
 
-  for (const f of before.files) {
-    const key = `${f.classifier}.${f.packaging}`;
-    allClassifiers.add(key);
+  for (const f of beforeFiles) {
+    const key = fileKey(f);
+    allKeys.add(key);
     beforeMap.set(key, f);
   }
-  for (const f of after.files) {
-    const key = `${f.classifier}.${f.packaging}`;
-    allClassifiers.add(key);
+  for (const f of afterFiles) {
+    const key = fileKey(f);
+    allKeys.add(key);
     afterMap.set(key, f);
   }
 
   const results: FileDiffData[] = [];
 
-  for (const key of Array.from(allClassifiers).sort()) {
+  for (const key of Array.from(allKeys).sort()) {
     const bFile = beforeMap.get(key);
     const aFile = afterMap.get(key);
-    const [classifier, packaging] = key.split(".");
+    const classifier = bFile?.classifier ?? aFile?.classifier ?? "";
+    const packaging = bFile?.packaging ?? aFile?.packaging ?? "";
 
-    const beforeContent = bFile?.content ?? null;
-    const afterContent = aFile?.content ?? null;
+    const beforeContent = beautifyIfJsonPackaging(packaging, bFile?.content ?? null);
+    const afterContent = beautifyIfJsonPackaging(packaging, aFile?.content ?? null);
 
     let status: FileDiffData["status"];
     let lines: DiffLine[] = [];
@@ -97,7 +110,6 @@ function computeFileDiffs(before: VersionFiles, after: VersionFiles): FileDiffDa
     results.push({ classifier, packaging, beforeContent, afterContent, status, lines, stats });
   }
 
-  // Sort: changed first, then added, removed, unchanged
   const order: Record<string, number> = { changed: 0, added: 1, removed: 2, unchanged: 3 };
   results.sort((a, b) => (order[a.status] ?? 4) - (order[b.status] ?? 4));
 
@@ -244,40 +256,90 @@ function FileDiffBlock({ diff }: { diff: FileDiffData }) {
   );
 }
 
-export default function ExchangeFileDiff({ before, after }: ExchangeFileDiffProps) {
-  const fileDiffs = useMemo(() => computeFileDiffs(before, after), [before, after]);
+function FileDiffSection({
+  title,
+  subtitle,
+  diffs,
+}: {
+  title: string;
+  subtitle: string;
+  diffs: FileDiffData[];
+}) {
+  if (diffs.length === 0) {
+    return (
+      <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50/50 px-3 py-2">
+        <p className="text-xs font-medium text-gray-700">{title}</p>
+        <p className="text-[11px] text-gray-400 mt-0.5">{subtitle}</p>
+        <p className="text-xs text-gray-400 mt-2">No files in this category for one or both versions.</p>
+      </div>
+    );
+  }
 
-  const totalChanged = fileDiffs.filter((d) => d.status !== "unchanged").length;
-  const totalUnchanged = fileDiffs.filter((d) => d.status === "unchanged").length;
+  const totalChanged = diffs.filter((d) => d.status !== "unchanged").length;
+  const totalUnchanged = diffs.filter((d) => d.status === "unchanged").length;
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-gray-900">
-          File Diff: {before.version} → {after.version}
-        </h3>
-        <div className="flex items-center gap-3 text-[10px] text-gray-500">
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <p className="text-xs font-semibold text-gray-900">{title}</p>
+          <p className="text-[11px] text-gray-500">{subtitle}</p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2 text-[10px] text-gray-500">
           {totalChanged > 0 && (
             <span>
-              {totalChanged} file{totalChanged !== 1 ? "s" : ""} changed
+              {totalChanged} changed
             </span>
           )}
           {totalUnchanged > 0 && (
-            <span>
-              {totalUnchanged} unchanged
-            </span>
+            <span>{totalUnchanged} unchanged</span>
           )}
         </div>
       </div>
+      <div className="space-y-2">
+        {diffs.map((diff) => (
+          <FileDiffBlock key={`${diff.classifier}::${diff.packaging}`} diff={diff} />
+        ))}
+      </div>
+    </div>
+  );
+}
 
-      {fileDiffs.length === 0 ? (
+export default function ExchangeFileDiff({ before, after }: ExchangeFileDiffProps) {
+  const publishedDiffs = useMemo(
+    () => computeFileDiffsFromEntries(before.published, after.published),
+    [before.published, after.published]
+  );
+  const exchangeAssetDiffs = useMemo(
+    () => computeFileDiffsFromEntries(before.exchangeAsset, after.exchangeAsset),
+    [before.exchangeAsset, after.exchangeAsset]
+  );
+
+  const anyFiles = publishedDiffs.length > 0 || exchangeAssetDiffs.length > 0;
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-gray-900">
+          File diff: {before.version} → {after.version}
+        </h3>
+      </div>
+
+      {!anyFiles ? (
         <p className="text-sm text-gray-500">No downloadable text files found in these versions.</p>
       ) : (
-        <div className="space-y-2">
-          {fileDiffs.map((diff) => (
-            <FileDiffBlock key={`${diff.classifier}.${diff.packaging}`} diff={diff} />
-          ))}
-        </div>
+        <>
+          <FileDiffSection
+            title="Published artifact (Maven)"
+            subtitle="agent-network.yaml and exchange.json from the agent-network zip"
+            diffs={publishedDiffs}
+          />
+          <FileDiffSection
+            title="Exchange asset files"
+            subtitle="Files attached to the broker asset in Exchange (e.g. a2a-card, agent-metadata)"
+            diffs={exchangeAssetDiffs}
+          />
+        </>
       )}
     </div>
   );
