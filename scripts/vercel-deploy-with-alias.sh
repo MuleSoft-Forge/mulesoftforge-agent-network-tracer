@@ -7,27 +7,29 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-FORCE=()
-if [[ "${1:-}" == "--force" ]]; then
-  FORCE=(--force)
-fi
-
 DOMAINS=(
   "agentnetworktracer.com"
   "www.agentnetworktracer.com"
 )
 
-echo ">>> Deploying to production (${FORCE[*]:-no --force})..."
-OUT=$(npx vercel deploy --prod --yes "${FORCE[@]}" 2>&1) || {
-  echo "$OUT"
-  exit 1
-}
+if [[ "${1:-}" == "--force" ]]; then
+  echo ">>> Deploying to production (--force)..."
+  OUT=$(npx vercel deploy --prod --yes --force 2>&1) || {
+    echo "$OUT"
+    exit 1
+  }
+else
+  echo ">>> Deploying to production..."
+  OUT=$(npx vercel deploy --prod --yes 2>&1) || {
+    echo "$OUT"
+    exit 1
+  }
+fi
 echo "$OUT"
 
 # Prefer a stable URL line from CLI output
 URL=$(echo "$OUT" | grep -oE 'https://[a-zA-Z0-9_.-]+\.vercel\.app' | tail -1 || true)
 if [[ -z "${URL:-}" ]]; then
-  # Some CLI versions print only the deployment URL on the last line
   URL=$(echo "$OUT" | awk 'NF { line = $0 } END { print line }' | tr -d '\r' | grep -oE 'https://[a-zA-Z0-9_.-]+\.vercel\.app' || true)
 fi
 
