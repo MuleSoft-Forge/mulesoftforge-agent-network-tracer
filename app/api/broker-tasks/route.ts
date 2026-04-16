@@ -40,11 +40,13 @@ export async function POST(request: NextRequest) {
   debugLog(`[BROKER-TASKS] orgId=${orgId} apiInstanceId=${apiInstanceId} envId=${envId ?? "none"} timeRange=${timeRange}ms`);
 
   let brokerAppName: string | undefined;
+  let brokerDeploymentId: string | undefined;
   if (envId) {
     try {
       const ctx = await resolveBrokerContext(orgId, envId, apiInstanceId, accessToken, baseUrl);
       brokerAppName = ctx?.appName;
-      if (brokerAppName) debugLog(`[BROKER-TASKS] brokerAppName=${brokerAppName}`);
+      brokerDeploymentId = ctx?.deploymentId;
+      debugLog(`[BROKER-TASKS] resolveBrokerContext result: appName=${ctx?.appName ?? "null"}, deploymentId=${ctx?.deploymentId ?? "null"}, deploymentType=${ctx?.deploymentType ?? "null"}`);
     } catch (e) {
       debugLog("[BROKER-TASKS] resolveBrokerContext failed (continuing):", e);
     }

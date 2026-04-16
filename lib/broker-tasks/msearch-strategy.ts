@@ -65,6 +65,25 @@ export async function fetchTasksViaMSearch(
     debugLog(`[MSEARCH] Page ${page + 1}: ${allHits.length}/${totalFromApi} hits so far`);
   }
 
+  // Debug: log unique appId values from all hits so we can see what the monitoring API returns
+  if (brokerAppName !== undefined && allHits.length > 0) {
+    const appIdCounts: Record<string, number> = {};
+    for (const h of allHits) {
+      const src = (h as { _source?: { appId?: string } })._source;
+      const id = src?.appId ?? "(no appId)";
+      appIdCounts[id] = (appIdCounts[id] || 0) + 1;
+    }
+    debugLog(`[MSEARCH] Unique appId values in ${allHits.length} hits: ${JSON.stringify(appIdCounts)}`);
+    debugLog(`[MSEARCH] Filtering for brokerAppName="${brokerAppName}"`);
+    // Log a sample hit so we can see the full _source structure
+    const sampleHit = allHits[0] as { _source?: Record<string, unknown> };
+    if (sampleHit?._source) {
+      const sampleKeys = Object.keys(sampleHit._source);
+      debugLog(`[MSEARCH] Sample hit _source keys: ${sampleKeys.join(", ")}`);
+      debugLog(`[MSEARCH] Sample hit _source.appId="${sampleHit._source.appId}", _source.message="${String(sampleHit._source.message ?? "").substring(0, 200)}"`);
+    }
+  }
+
   const hitsToUse =
     brokerAppName !== undefined
       ? allHits.filter((h: unknown) => {
@@ -75,6 +94,10 @@ export async function fetchTasksViaMSearch(
 
   if (brokerAppName && hitsToUse.length !== allHits.length) {
     debugLog(`[MSEARCH] Post-filtered by appId=${brokerAppName}: ${allHits.length} -> ${hitsToUse.length}`);
+    if (hitsToUse.length === 0) {
+      debugLog(`[MSEARCH] WARNING: All hits filtered out! The broker's appId in monitoring logs does not match brokerAppName="${brokerAppName}"`);
+      debugLog(`[MSEARCH] This likely means the _msearch hits belong to a gateway/proxy app, not the broker's CloudHub deployment`);
+    }
   }
 
   const accumulators = parseHitsToAccumulators(hitsToUse);
