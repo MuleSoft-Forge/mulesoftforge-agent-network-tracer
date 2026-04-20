@@ -132,6 +132,8 @@ export interface ChatMessage {
   content: string;
   /** Only set for tool messages. */
   tool_call_id?: string;
+  /** Assistant row blocked by semantic prompt guard (403 deny list), not model output. */
+  blockReason?: "semantic-deny";
 }
 
 /** Credentials saved per-proxy in localStorage. */

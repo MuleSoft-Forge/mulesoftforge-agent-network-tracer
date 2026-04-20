@@ -14,6 +14,9 @@ export const runtime = "nodejs";
  *
  * Surfaces Flex Gateway response headers (`x-llm-proxy-*`) on both paths:
  * - Non-streaming: wraps body as `{ data, headers }`.
+ * - Upstream error: returns JSON with raw `detail` (body text), optional
+ *   `upstreamJson` when the body was JSON, `upstreamStatus`, `headers`, and a
+ *   short `error` summary so the client can show a modal vs inline deny-list.
  * - Streaming: forwards `x-llm-proxy-*` headers verbatim on the SSE response
  *   AND appends a final `event: llm-proxy-meta\n data: {...}` chunk with the
  *   captured headers, so clients can always recover metadata even if an edge
@@ -72,12 +75,34 @@ export async function POST(request: NextRequest) {
     const proxyHeaders = collectProxyHeaders(upstream.headers);
 
     if (!upstream.ok) {
+      const contentType = upstream.headers.get("Content-Type") ?? "";
       const text = await upstream.text();
+      let upstreamJson: unknown = undefined;
+      if (contentType.includes("application/json") && text.trim().length > 0) {
+        try {
+          upstreamJson = JSON.parse(text) as unknown;
+        } catch {
+          /* keep text in detail only */
+        }
+      }
+
+      let errorSummary = `LLM Proxy returned ${upstream.status}`;
+      if (upstreamJson !== undefined && typeof upstreamJson === "object" && upstreamJson !== null) {
+        const o = upstreamJson as Record<string, unknown>;
+        const er = o.error;
+        const msg = o.message;
+        if (typeof er === "string" && er.trim()) errorSummary = er;
+        else if (typeof msg === "string" && msg.trim()) errorSummary = msg;
+      }
+
       debugError("[LLM-PROXY/CHAT] upstream error", upstream.status, text.slice(0, 500));
       return NextResponse.json(
         {
-          error: `LLM Proxy returned ${upstream.status}`,
+          error: errorSummary,
           detail: text,
+          upstreamJson,
+          upstreamStatus: upstream.status,
+          upstreamContentType: contentType || undefined,
           headers: proxyHeaders,
         },
         { status: upstream.status }

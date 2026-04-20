@@ -9,6 +9,42 @@ function looksLikeDenyListPayload(o: Record<string, unknown>): boolean {
 }
 
 /**
+ * Parse `detail` from a `/api/llm-proxy/chat` error JSON body when it contains
+ * stringified JSON (e.g. Flex semantic guard payload).
+ */
+export function parseChatProxyErrorDetail(
+  body: Record<string, unknown>
+): Record<string, unknown> | null {
+  const detailRaw = body.detail;
+  if (detailRaw != null && typeof detailRaw === "object") {
+    return detailRaw as Record<string, unknown>;
+  }
+  let parsed: unknown = detailRaw;
+  if (typeof detailRaw === "string") {
+    const s = detailRaw.trim();
+    if (!s.startsWith("{")) return null;
+    try {
+      parsed = JSON.parse(s) as unknown;
+    } catch {
+      return null;
+    }
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+  return parsed as Record<string, unknown>;
+}
+
+/** Semantic prompt-guard deny list (403) — show inline in chat, not as a generic modal. */
+export function isLlmProxyDenyListChatError(
+  status: number,
+  body: Record<string, unknown>
+): boolean {
+  if (status !== 403) return false;
+  const o = parseChatProxyErrorDetail(body);
+  if (!o) return false;
+  return looksLikeDenyListPayload(o);
+}
+
+/**
  * Build a trace when `/api/llm-proxy/chat` returns an error body (e.g. upstream 403) so the
  * network diagram can still reflect semantic deny-list blocks when Flex sends JSON in `detail`.
  */
@@ -17,22 +53,8 @@ export function routeTraceFromChatProxyError(
   body: Record<string, unknown>
 ): LlmProxyRouteTrace | null {
   if (status !== 403) return null;
-  const detailRaw = body.detail;
-  let parsed: unknown = detailRaw;
-  if (typeof detailRaw === "string") {
-    const s = detailRaw.trim();
-    if (s.startsWith("{")) {
-      try {
-        parsed = JSON.parse(s) as unknown;
-      } catch {
-        return null;
-      }
-    } else {
-      return null;
-    }
-  }
-  if (!parsed || typeof parsed !== "object") return null;
-  const o = parsed as Record<string, unknown>;
+  const o = parseChatProxyErrorDetail(body);
+  if (!o) return null;
   if (!looksLikeDenyListPayload(o)) return null;
   const topic = typeof o.topic === "string" ? o.topic : undefined;
   const score =

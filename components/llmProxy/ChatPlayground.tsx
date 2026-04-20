@@ -7,7 +7,13 @@ import ModelRoutesPanel from "@/components/llmProxy/ModelRoutesPanel";
 import PromptTopicsSidebar from "@/components/llmProxy/PromptTopicsSidebar";
 import ReplyMetaPanels from "@/components/llmProxy/ReplyMetaPanels";
 import Spinner from "@/components/Spinner";
+import LlmProxyChatErrorModal from "@/components/llmProxy/LlmProxyChatErrorModal";
 import {
+  formatDenyListInlineMessage,
+  implementationErrorCopy,
+} from "@/lib/llmProxy/chat-proxy-errors";
+import {
+  isLlmProxyDenyListChatError,
   routeTraceFromChatProxyError,
   routeTraceFromProxyHeaders,
 } from "@/lib/llmProxy/route-trace";
@@ -67,6 +73,13 @@ export default function ChatPlayground({ proxy, onRouteTrace }: ChatPlaygroundPr
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Non–deny-list failures: full payload in a modal (MuleSoft / downstream errors). */
+  const [implementationError, setImplementationError] = useState<{
+    httpStatus: number;
+    title: string;
+    hint: string;
+    payload: Record<string, unknown>;
+  } | null>(null);
   const [paramsOpen, setParamsOpen] = useState(false);
   const [params, setParams] = useState<PlaygroundParams>(DEFAULT_PARAMS);
   const [inspectorOpen, setInspectorOpen] = useState(false);
@@ -91,6 +104,7 @@ export default function ChatPlayground({ proxy, onRouteTrace }: ChatPlaygroundPr
     setMetaByIndex({});
     setDraft("");
     setError(null);
+    setImplementationError(null);
     setLastRequest(null);
     setLastResponse(null);
     setParams(DEFAULT_PARAMS);
@@ -185,6 +199,7 @@ export default function ChatPlayground({ proxy, onRouteTrace }: ChatPlaygroundPr
     setMetaByIndex({});
     setDraft("");
     setError(null);
+    setImplementationError(null);
     setLastRequest(null);
     setLastResponse(null);
   }
@@ -278,6 +293,7 @@ export default function ChatPlayground({ proxy, onRouteTrace }: ChatPlaygroundPr
     });
     setDraft("");
     setError(null);
+    setImplementationError(null);
     setSending(true);
     onRouteTrace?.(null);
 
@@ -310,16 +326,53 @@ export default function ChatPlayground({ proxy, onRouteTrace }: ChatPlaygroundPr
       });
 
       if (!res.ok) {
-        const errJson = (await res.json().catch(() => ({
-          error: `HTTP ${res.status}`,
-        }))) as Record<string, unknown>;
-        const denyTrace = routeTraceFromChatProxyError(res.status, errJson);
-        if (denyTrace) {
-          onRouteTrace?.(denyTrace);
+        const raw = await res.text();
+        let errJson: Record<string, unknown>;
+        try {
+          errJson = raw.trim() ? (JSON.parse(raw) as Record<string, unknown>) : {};
+        } catch {
+          errJson = { error: `HTTP ${res.status}`, detail: raw };
         }
-        throw new Error(
-          String(errJson.detail ?? errJson.error ?? `HTTP ${res.status}`)
-        );
+        setLastResponse(errJson);
+
+        if (isLlmProxyDenyListChatError(res.status, errJson)) {
+          const denyTrace = routeTraceFromChatProxyError(res.status, errJson);
+          if (denyTrace) onRouteTrace?.(denyTrace);
+          const msg = formatDenyListInlineMessage(errJson);
+          setMessages((prev) => {
+            const copy = [...prev];
+            const lastIdx = copy.length - 1;
+            if (lastIdx >= 0 && copy[lastIdx].role === "assistant") {
+              copy[lastIdx] = {
+                ...copy[lastIdx],
+                content: msg,
+                blockReason: "semantic-deny",
+              };
+            }
+            return copy;
+          });
+        } else {
+          const { title, hint } = implementationErrorCopy(res.status);
+          setImplementationError({
+            httpStatus: res.status,
+            title,
+            hint,
+            payload: errJson,
+          });
+          setMessages((prev) => {
+            const copy = [...prev];
+            const lastIdx = copy.length - 1;
+            if (
+              lastIdx >= 0 &&
+              copy[lastIdx].role === "assistant" &&
+              copy[lastIdx].content === ""
+            ) {
+              copy.pop();
+            }
+            return copy;
+          });
+        }
+        return;
       }
 
       const eagerHeadersRaw = res.headers.get("X-Llm-Proxy-Headers");
@@ -398,7 +451,12 @@ export default function ChatPlayground({ proxy, onRouteTrace }: ChatPlaygroundPr
         // user aborted; keep partial content
       } else {
         const msg = err instanceof Error ? err.message : "Request failed";
-        setError(msg);
+        setImplementationError({
+          httpStatus: 0,
+          title: "Could not complete chat request",
+          hint: "The browser failed before a normal HTTP response was handled. Check your connection and try again.",
+          payload: { error: msg },
+        });
         setMessages((prev) => {
           const copy = [...prev];
           const lastIdx = copy.length - 1;
@@ -446,6 +504,16 @@ export default function ChatPlayground({ proxy, onRouteTrace }: ChatPlaygroundPr
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
+      {implementationError != null && (
+        <LlmProxyChatErrorModal
+          open
+          onClose={() => setImplementationError(null)}
+          title={implementationError.title}
+          hint={implementationError.hint}
+          httpStatus={implementationError.httpStatus}
+          payload={implementationError.payload}
+        />
+      )}
       {/* Header */}
       <div className="flex shrink-0 items-center justify-between border-b border-gray-200 bg-white px-4 py-2">
         <div className="min-w-0">
@@ -817,6 +885,9 @@ const ROLE_COLORS: Record<ChatMessage["role"], string> = {
   tool: "bg-purple-50 border-purple-200 text-purple-900",
 };
 
+const SEMANTIC_DENY_ROW =
+  "bg-amber-50 border-amber-400 text-amber-950 ring-1 ring-amber-200";
+
 function MessageRow({
   message,
   onChange,
@@ -826,10 +897,18 @@ function MessageRow({
   onChange: (patch: Partial<ChatMessage>) => void;
   onRemove: () => void;
 }) {
+  const rowStyle =
+    message.blockReason === "semantic-deny"
+      ? SEMANTIC_DENY_ROW
+      : ROLE_COLORS[message.role];
+
   return (
-    <div
-      className={`rounded-md border px-3 py-2 text-sm ${ROLE_COLORS[message.role]}`}
-    >
+    <div className={`rounded-md border px-3 py-2 text-sm ${rowStyle}`}>
+      {message.blockReason === "semantic-deny" && (
+        <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-amber-900">
+          Blocked · semantic deny list
+        </div>
+      )}
       <div className="mb-1 flex items-center justify-between gap-2">
         <select
           value={message.role}
