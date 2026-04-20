@@ -10,6 +10,7 @@ import ExchangeVersionsPanel from "@/components/ExchangeVersionsPanel";
 import ExchangeDiffSummary from "@/components/ExchangeDiffSummary";
 import ExchangeFileDiff from "@/components/ExchangeFileDiff";
 import type { ExchangeFileEntry, VersionFiles } from "@/components/ExchangeFileDiff";
+import LlmProxyTab from "@/components/llmProxy/LlmProxyTab";
 import { useDebugViewer } from "@/components/debug/useDebugViewer";
 import { visualizerToCanonical } from "@/lib/adapters/visualizer-to-canonical";
 import { filterVisualizerByBroker, filterVisualizerAllBrokers } from "@/lib/filters/visualizer-filter";
@@ -130,26 +131,39 @@ export default function MainContent() {
 
   const handleViewModeChange = useCallback((mode: ViewMode) => {
     setViewMode(mode);
-    if (mode === "exchange") {
-      setSelectedTaskId(null);
-      setTasksMode(null);
-      setExchangeGraph(null);
-      setExchangeDiff(null);
-      setExchangeDiffVersions({ before: "", after: "" });
-      setCompareBeforeGraph(null);
-      setCompareAfterGraph(null);
-      setExchangeBeforeFiles(null);
-      setExchangeAfterFiles(null);
-      setSingleVersionFiles(null);
-      setExchangeFilesLoading(false);
-      setExchangeTab("files");
-    } else {
-      setExchangeGraph(null);
-      setExchangeDiff(null);
-      setExchangeBeforeFiles(null);
-      setExchangeAfterFiles(null);
-      setSingleVersionFiles(null);
-      setExchangeFilesLoading(false);
+    switch (mode) {
+      case "exchange":
+        setSelectedTaskId(null);
+        setTasksMode(null);
+        setExchangeGraph(null);
+        setExchangeDiff(null);
+        setExchangeDiffVersions({ before: "", after: "" });
+        setCompareBeforeGraph(null);
+        setCompareAfterGraph(null);
+        setExchangeBeforeFiles(null);
+        setExchangeAfterFiles(null);
+        setSingleVersionFiles(null);
+        setExchangeFilesLoading(false);
+        setExchangeTab("files");
+        break;
+      case "llmProxy":
+        setSelectedTaskId(null);
+        setTasksMode(null);
+        setExchangeGraph(null);
+        setExchangeDiff(null);
+        setExchangeBeforeFiles(null);
+        setExchangeAfterFiles(null);
+        setSingleVersionFiles(null);
+        setExchangeFilesLoading(false);
+        break;
+      case "activity":
+        setExchangeGraph(null);
+        setExchangeDiff(null);
+        setExchangeBeforeFiles(null);
+        setExchangeAfterFiles(null);
+        setSingleVersionFiles(null);
+        setExchangeFilesLoading(false);
+        break;
     }
   }, []);
 
@@ -525,8 +539,21 @@ export default function MainContent() {
             >
               Exchange Versions
             </button>
+            <button
+              type="button"
+              onClick={() => handleViewModeChange("llmProxy")}
+              className={`rounded-anypoint-button px-3 py-1.5 text-sm font-medium transition-all duration-200 ease-[cubic-bezier(0.46,0.03,0.52,0.96)] ${
+                viewMode === "llmProxy"
+                  ? "bg-gradient-to-r from-primary to-purple-600 text-white shadow-md hover:shadow-lg"
+                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+              }`}
+              aria-label="LLM Proxy"
+              aria-pressed={viewMode === "llmProxy"}
+            >
+              LLM Proxy
+            </button>
           </div>
-          {selectedBroker && (viewMode === "activity" ? graph : exchangeGraph || compareAfterGraph) && (
+          {viewMode !== "llmProxy" && selectedBroker && (viewMode === "activity" ? graph : exchangeGraph || compareAfterGraph) && (
             <button
               type="button"
               onClick={handleViewRaw}
@@ -537,7 +564,10 @@ export default function MainContent() {
           )}
         </div>
         
-        {viewMode === "activity" ? (
+        {viewMode === "llmProxy" ? (
+          /* ===== LLM PROXY MODE ===== */
+          <LlmProxyTab orgId={orgId} envId={envId} />
+        ) : viewMode === "activity" ? (
           /* ===== ACTIVITY MODE ===== */
           selectedBroker ? (
             <div ref={contentAreaRef} className="flex flex-1 flex-col overflow-hidden">

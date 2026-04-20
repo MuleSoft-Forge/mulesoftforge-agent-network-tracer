@@ -51,6 +51,8 @@ export default function Header() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [regionLabel, setRegionLabel] = useState<string | null>(null);
+  /** Control plane origin from session (OAuth region); used for Anypoint link next to region label. */
+  const [anypointBaseUrl, setAnypointBaseUrl] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [rawOpen, setRawOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -76,17 +78,19 @@ export default function Header() {
     // Fetch session to get authentication status and region
     fetch("/api/auth/session")
       .then((res) => res.json())
-      .then((data) => {
+      .then((data: { authenticated?: boolean; baseUrl?: string }) => {
         setAuthenticated(!!data.authenticated);
-        
-        // Determine region from baseUrl - set immediately
+
         if (data.baseUrl) {
-          const region = REGIONS.find((r: RegionOption) => r.baseUrl === data.baseUrl);
-          setRegionLabel(region?.label ?? null);
+          const origin = data.baseUrl.replace(/\/$/, "");
+          setAnypointBaseUrl(origin);
+          const region = REGIONS.find((r: RegionOption) => r.baseUrl === origin);
+          setRegionLabel(region?.label ?? "Anypoint");
         } else if (data.authenticated) {
-          // Fallback: if authenticated but no baseUrl, assume US (default)
+          setAnypointBaseUrl(REGIONS[0].baseUrl.replace(/\/$/, ""));
           setRegionLabel("US (Global)");
         } else {
+          setAnypointBaseUrl(null);
           setRegionLabel(null);
         }
         
@@ -112,6 +116,7 @@ export default function Header() {
         setAuthenticated(false);
         setProfile(null);
         setRegionLabel(null);
+        setAnypointBaseUrl(null);
       });
   }, [pathname]); // Run when pathname changes to refresh on navigation
 
@@ -181,9 +186,17 @@ export default function Header() {
         <div className="flex shrink-0 items-center gap-3">
           {authenticated && (
             <>
-              {regionLabel && (
+              {regionLabel && anypointBaseUrl && (
                 <>
-                  <span className="text-xs text-gray-500">{regionLabel}</span>
+                  <a
+                    href={anypointBaseUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-gray-500 hover:text-primary hover:underline"
+                    title="Open Anypoint Platform (your sign-in region)"
+                  >
+                    {regionLabel}
+                  </a>
                   <div className="h-4 w-px bg-gray-200" aria-hidden="true" />
                 </>
               )}

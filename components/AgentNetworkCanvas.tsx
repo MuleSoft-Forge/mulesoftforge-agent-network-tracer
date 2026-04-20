@@ -577,6 +577,16 @@ export default function AgentNetworkCanvas({
           >
             <path d="M0,0 L8,4 L0,8 Z" fill="#94a3b8" />
           </marker>
+          <marker
+            id="arrow-active"
+            markerWidth={8}
+            markerHeight={8}
+            refX={6}
+            refY={4}
+            orient="auto"
+          >
+            <path d="M0,0 L8,4 L0,8 Z" fill="#dc2626" />
+          </marker>
         </defs>
         {filteredEdges.map((e: CanonicalEdge) => {
           const src = positions.get(e.source);
@@ -605,7 +615,9 @@ export default function AgentNetworkCanvas({
           const isHovered = hoveredEdgeId === e.id;
           const dimmed = hoveredEdgeId !== null && !isHovered;
           const edgeOpacity = dimmed ? 0.25 : 1;
-          const strokeW = isHovered ? 2.2 : 1.5;
+          const edgeStroke = e.active ? "#dc2626" : "#94a3b8";
+          const markerEnd = e.active ? "url(#arrow-active)" : "url(#arrow)";
+          const strokeW = (isHovered ? 2.2 : 1.5) + (e.active ? 0.5 : 0);
           
           if (edgeStyle === "bent") {
             const dx = x2 - x1;
@@ -626,9 +638,9 @@ export default function AgentNetworkCanvas({
                 <path
                   d={d}
                   fill="none"
-                  stroke="#94a3b8"
+                  stroke={edgeStroke}
                   strokeWidth={strokeW}
-                  markerEnd="url(#arrow)"
+                  markerEnd={markerEnd}
                   style={{ opacity: edgeOpacity }}
                 />
               </g>
@@ -647,9 +659,9 @@ export default function AgentNetworkCanvas({
                 y1={y1}
                 x2={x2}
                 y2={y2}
-                stroke="#94a3b8"
+                stroke={edgeStroke}
                 strokeWidth={strokeW}
-                markerEnd="url(#arrow)"
+                markerEnd={markerEnd}
                 style={{ opacity: edgeOpacity }}
               />
             </g>

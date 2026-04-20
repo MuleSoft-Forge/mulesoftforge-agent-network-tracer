@@ -1,21 +1,32 @@
 /**
  * API Request/Response Logger
- * 
+ *
  * Logs all API calls with full request/response details for debugging.
- * Can be disabled via ENABLE_API_LOGGING environment variable.
- * 
+ * Set ENABLE_API_LOGGING=true locally to enable `debugLog` / `loggedFetch` output.
+ *
+ * On deployed Vercel builds (`VERCEL=1` and `NODE_ENV=production`), verbose logging
+ * is always off so dashboard env mistakes cannot enable it. Local `vercel dev` is
+ * unaffected (`NODE_ENV=development`).
+ *
  * IMPORTANT: Never logs customer data - all sensitive fields are sanitized.
  * NOTE: access_token and refresh_token are logged (not redacted) for debugging/curl recreation.
  */
 
+/** Deployed Vercel (serverless/edge) — not local `next dev` or typical `vercel dev`. */
+function isVercelProductionBuild(): boolean {
+  return process.env.VERCEL === "1" && process.env.NODE_ENV === "production";
+}
+
 /**
- * Check if API logging is enabled
- * Set ENABLE_API_LOGGING=true to enable logging
- * If not set, logging is disabled by default (no logging)
+ * Check if API logging is enabled.
+ * Set ENABLE_API_LOGGING=true to enable logging (local / non-Vercel only).
+ * If not set, logging is disabled by default.
  */
 export function isLoggingEnabled(): boolean {
+  if (isVercelProductionBuild()) {
+    return false;
+  }
   const enabled = process.env.ENABLE_API_LOGGING;
-  // Default to false (no logging) unless explicitly enabled
   if (enabled === undefined) {
     return false;
   }
@@ -31,8 +42,26 @@ const FULL_RESPONSE_MAX_CHARS = 50000;
  * Set DEBUG_FULL_RESPONSES=true (or 1) to enable.
  */
 export function isFullResponseLoggingEnabled(): boolean {
+  if (isVercelProductionBuild()) {
+    return false;
+  }
   const v = process.env.DEBUG_FULL_RESPONSES;
   return v === "true" || v === "1";
+}
+
+/**
+ * Local development only (client or server). Never logs in production builds (including Vercel).
+ * Prefer this over raw `console.log` for noisy traces.
+ */
+export function devLog(...args: unknown[]): void {
+  if (process.env.NODE_ENV !== "development") return;
+  console.log(...args);
+}
+
+/** Same as {@link devLog} for warnings. */
+export function devWarn(...args: unknown[]): void {
+  if (process.env.NODE_ENV !== "development") return;
+  console.warn(...args);
 }
 
 function truncateForLog(body: unknown): unknown {
@@ -377,34 +406,42 @@ export async function loggedFetch(
 
   try {
     const response = await fetch(url, options);
-    
-    // Clone response to read body without consuming it
-    const clonedResponse = response.clone();
-    
-    // Read response body (but don't block on it)
+
+    // Read the body exactly once as a buffer, then hand back a fresh Response
+    // built from that buffer. This avoids `response.clone()` — which on
+    // Node/undici can leave the original body in a "Body is unusable" state
+    // after the clone is parsed (observed on some chunked/HTTP2 responses).
+    let bodyBuffer: ArrayBuffer | null = null;
+    try {
+      bodyBuffer = await response.arrayBuffer();
+    } catch {
+      bodyBuffer = null;
+    }
+
     let responseBody: unknown;
     const contentType = response.headers.get("content-type");
-    if (contentType?.includes("application/json")) {
+    if (bodyBuffer == null) {
+      responseBody = "[Unable to read response body]";
+    } else if (contentType?.includes("application/json")) {
       try {
-        responseBody = await clonedResponse.json();
+        const text = new TextDecoder("utf-8").decode(bodyBuffer);
+        responseBody = text.length === 0 ? "" : (JSON.parse(text) as unknown);
       } catch {
-        // Failed to parse JSON, try text
         try {
-          responseBody = await clonedResponse.text();
+          responseBody = new TextDecoder("utf-8").decode(bodyBuffer);
         } catch {
           responseBody = "[Unable to read response body]";
         }
       }
     } else {
       try {
-        const text = await clonedResponse.text();
+        const text = new TextDecoder("utf-8").decode(bodyBuffer);
         responseBody = text.length > 1000 ? `[LARGE_TEXT:${text.length} chars]` : text;
       } catch {
         responseBody = "[Unable to read response body]";
       }
     }
 
-    // Log response
     logApiResponse(
       url,
       method,
@@ -414,10 +451,18 @@ export async function loggedFetch(
       responseBody
     );
 
-    // Return original response
-    return response;
+    // Rebuild a Response so callers can still use `.json()` / `.text()`.
+    // Strip `content-encoding` since the body has already been decompressed
+    // by `arrayBuffer()` and we are handing raw bytes back.
+    const rebuiltHeaders = new Headers(response.headers);
+    rebuiltHeaders.delete("content-encoding");
+    rebuiltHeaders.delete("content-length");
+    return new Response(bodyBuffer, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: rebuiltHeaders,
+    });
   } catch (error) {
-    // Log error
     logApiError(url, method, error);
     throw error;
   }

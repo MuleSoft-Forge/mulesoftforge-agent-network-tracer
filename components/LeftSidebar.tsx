@@ -26,7 +26,7 @@ function getStoredExpanded(): boolean {
   }
 }
 
-export type ViewMode = "activity" | "exchange";
+export type ViewMode = "activity" | "exchange" | "llmProxy";
 
 interface LeftSidebarProps {
   viewMode?: ViewMode;
@@ -198,14 +198,7 @@ export default function LeftSidebar({
         }`}
       >
         <div className="flex-1 overflow-y-auto p-3">
-          {viewMode === "activity" && (
-            <ActivityPeriodSelector
-              value={activityPeriodKey}
-              onSelect={handleActivityPeriodSelect}
-              disabled={loadingBrokers}
-            />
-          )}
-          <div className={viewMode === "activity" ? "mt-4" : ""}>
+          <div>
             <BusinessGroupSelector
               initialOrgId={undefined}
               onSelect={handleSelect}
@@ -222,7 +215,7 @@ export default function LeftSidebar({
               disabled={loadingBrokers}
             />
           </div>
-          {selection && selection.value !== "ALL" && selectedEnvironmentId && (
+          {viewMode !== "llmProxy" && selection && selection.value !== "ALL" && selectedEnvironmentId && (
             <div className="mt-4 space-y-2">
               <div className="flex items-center gap-2">
                 <label
@@ -266,6 +259,15 @@ export default function LeftSidebar({
                   {viewMode === "exchange" ? "No brokers found" : "No Brokers Activity Exists"}
                 </p>
               )}
+            </div>
+          )}
+          {viewMode === "activity" && selection && selection.value !== "ALL" && selectedBrokerNodeId && (
+            <div className="mt-4">
+              <ActivityPeriodSelector
+                value={activityPeriodKey}
+                onSelect={handleActivityPeriodSelect}
+                disabled={loadingBrokers}
+              />
             </div>
           )}
           {viewMode === "activity" && selection && selection.value !== "ALL" && selectedBrokerNodeId && (

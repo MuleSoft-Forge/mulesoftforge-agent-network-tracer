@@ -65,6 +65,8 @@ export interface CanonicalEdge {
   source: string;
   target: string;
   type?: "designTime" | "runTime";
+  /** Highlighted path (e.g. LLM Proxy last request trace). */
+  active?: boolean;
 }
 
 export type CanvasMode = "design" | "runtime";

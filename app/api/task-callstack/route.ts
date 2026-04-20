@@ -536,8 +536,8 @@ async function searchTraceIdByCorrelationId(
     const url = `${baseUrl}/observability/api/v1/spans:search`;
     const res = await loggedFetch(url, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ query }),
@@ -545,8 +545,8 @@ async function searchTraceIdByCorrelationId(
 
     if (!res.ok) {
       debugLog(`[searchTraceIdByCorrelationId] spans:search failed: ${res.status}`);
-      return null;
-    }
+        return null;
+      }
 
     const data = (await res.json()) as { data?: Array<{ traceId?: string }> };
     const spans = data.data ?? [];
@@ -560,9 +560,9 @@ async function searchTraceIdByCorrelationId(
     return null;
   } catch (err) {
     debugLog(`[searchTraceIdByCorrelationId] error:`, err);
-    return null;
+      return null;
+    }
   }
-}
 
 /**
  * Search for trace spans by entity.name (broker app), envId, and time period.
@@ -600,8 +600,8 @@ async function searchTracesByEntityAndTime(
     const url = `${baseUrl}/observability/api/v1/spans:search`;
     const res = await loggedFetch(url, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ query }),
@@ -668,14 +668,14 @@ function parseRuntimeLogsToEntriesAndJobCard(
 ): { entries: unknown[]; jobCard: unknown } | null {
   const taskIdPattern = taskId.replace(/-/g, "[-]");
   const lineTaskIdRegex = new RegExp(taskIdPattern, "gi");
-  const logLines = logsText.split("\n").filter((line: string) => line.trim().length > 0);
-  const entries: unknown[] = [];
-  let entryIndex = 0;
-  for (const line of logLines) {
+            const logLines = logsText.split("\n").filter((line: string) => line.trim().length > 0);
+            const entries: unknown[] = [];
+            let entryIndex = 0;
+            for (const line of logLines) {
     lineTaskIdRegex.lastIndex = 0;
     if (!lineTaskIdRegex.test(line)) continue;
-    const timestampMatch = line.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)/);
-    const timestamp = timestampMatch ? timestampMatch[1] : new Date().toISOString();
+              const timestampMatch = line.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)/);
+              const timestamp = timestampMatch ? timestampMatch[1] : new Date().toISOString();
     // Full format: "2026-... INFO [thread] com.logger LEVEL message..."
     const fullFormatMatch = line.match(/^[\d-T:Z.]+\s+\w+\s+\[[\w-]+\]\s+([\w.-]+)\s+([\w-]+)\s+([\s\S]+)$/);
     // JSON API format: "2026-... message..." (no logger/level prefix)
@@ -684,20 +684,20 @@ function parseRuntimeLogsToEntriesAndJobCard(
     const message = fullFormatMatch
       ? fullFormatMatch[3]
       : (timestampMatch ? line.slice(timestampMatch[0].length).trimStart() : line);
-    const type = classifyLog(logger, message);
-    const fields = parseFields(message);
-    const summary = summarizeLine(type, message, fields);
-    entries.push({
-      index: entryIndex++,
-      type,
-      summary,
-      timestamp,
-      logger,
-      level,
-      appId: "",
-      workerId: "",
-      fields,
-      raw: { message, logger, timestamp, "log-level": level },
+              const type = classifyLog(logger, message);
+              const fields = parseFields(message);
+              const summary = summarizeLine(type, message, fields);
+              entries.push({
+                index: entryIndex++,
+                type,
+                summary,
+                timestamp,
+                logger,
+                level,
+                appId: "",
+                workerId: "",
+                fields,
+                raw: { message, logger, timestamp, "log-level": level },
       _id: `runtime-${entryIndex}`,
       _index: "runtime",
     });
@@ -717,37 +717,37 @@ function parseRuntimeLogsToEntriesAndJobCard(
       })
       .filter((n: number) => !isNaN(n) && n > 0)
   );
-  const firstEntry = entries[0] as { timestamp?: string | number };
-  const lastEntry = entries[entries.length - 1] as { timestamp?: string | number };
-  let duration: string | null = null;
-  if (firstEntry && lastEntry) {
-    const t1 = typeof firstEntry.timestamp === "number" ? firstEntry.timestamp : new Date(firstEntry.timestamp || "").getTime();
-    const t2 = typeof lastEntry.timestamp === "number" ? lastEntry.timestamp : new Date(lastEntry.timestamp || "").getTime();
-    duration = ((t2 - t1) / 1000).toFixed(1);
-  }
+            const firstEntry = entries[0] as { timestamp?: string | number };
+            const lastEntry = entries[entries.length - 1] as { timestamp?: string | number };
+            let duration: string | null = null;
+            if (firstEntry && lastEntry) {
+              const t1 = typeof firstEntry.timestamp === "number" ? firstEntry.timestamp : new Date(firstEntry.timestamp || "").getTime();
+              const t2 = typeof lastEntry.timestamp === "number" ? lastEntry.timestamp : new Date(lastEntry.timestamp || "").getTime();
+              duration = ((t2 - t1) / 1000).toFixed(1);
+            }
   // maxIter already calculated above from parsed log fields
   const toolStrings = toolSelections
     .map((e: unknown) => (e as { fields?: { tool?: string } }).fields?.tool as string)
     .filter((t: string | undefined): t is string => typeof t === "string" && Boolean(t));
-  const allTools: string[] = Array.from(new Set(toolStrings));
-  const jobCard = {
-    taskId,
+            const allTools: string[] = Array.from(new Set(toolStrings));
+            const jobCard = {
+              taskId,
     contextId: (entries.find((e: unknown) => (e as { fields?: { contextId?: string } }).fields?.contextId) as { fields?: { contextId?: string } } | undefined)?.fields?.contextId || "",
-    traceId: "",
+              traceId: "",
     broker: (entries.find((e: unknown) => (e as { fields?: { agent?: string } }).fields?.agent) as { fields?: { agent?: string } } | undefined)?.fields?.agent || "",
     apiInstanceId: (entries.find((e: unknown) => (e as { fields?: { apiInstanceId?: string } }).fields?.apiInstanceId) as { fields?: { apiInstanceId?: string } } | undefined)?.fields?.apiInstanceId || "",
-    userMessage: inbound ? ((inbound as { fields?: { userMessage?: string } }).fields?.userMessage || "") : "",
-    messageId: inbound ? ((inbound as { fields?: { messageId?: string } }).fields?.messageId || "") : "",
+              userMessage: inbound ? ((inbound as { fields?: { userMessage?: string } }).fields?.userMessage || "") : "",
+              messageId: inbound ? ((inbound as { fields?: { messageId?: string } }).fields?.messageId || "") : "",
     outcome: finalResp ? ((finalResp as { fields?: { resultStatus?: string } }).fields?.resultStatus || "completed") : toolExecutions.length > 0 ? "completed" : "",
-    startTime: firstEntry ? firstEntry.timestamp : "",
-    endTime: lastEntry ? lastEntry.timestamp : "",
-    duration,
-    iterations: maxIter,
-    toolsUsed: allTools.map((t: string) => t.replace(/^[a-zA-Z0-9]+_/, "")),
-    totalEntries: entries.length,
-    appId: "",
-  };
-  return { entries, jobCard };
+              startTime: firstEntry ? firstEntry.timestamp : "",
+              endTime: lastEntry ? lastEntry.timestamp : "",
+              duration,
+              iterations: maxIter,
+              toolsUsed: allTools.map((t: string) => t.replace(/^[a-zA-Z0-9]+_/, "")),
+              totalEntries: entries.length,
+              appId: "",
+            };
+            return { entries, jobCard };
 }
 
 /**
@@ -871,7 +871,7 @@ async function fetchObjectStoreInNoEntitlementMode(
       objectStoreApiStatus: status,
       monitoringSuggestions: deploymentDetail.monitoringSuggestions,
     };
-  } catch (error) {
+          } catch (error) {
     const msg = error instanceof Error ? error.message : "Unknown error";
     debugLog("[NO-ENTITLEMENT] Object Store fetch error:", msg);
     const objectStoreApiStatus: ApiStatus["objectStore"] = msg.includes("403") ? "403_forbidden" : "error";
@@ -1315,11 +1315,11 @@ export async function GET(request: NextRequest) {
           if (noEntAmc403Error) {
             debugLog(`[NO-ENTITLEMENT] AMC 403 Error preserved: ${noEntAmc403Error.substring(0, 200)}...`);
           }
-          return NextResponse.json({
+        return NextResponse.json({
             jobCard: { ...jobCardFromRuntime, objectStore, apiStatus: noEntitlementApiStatus },
             entries: runtimeLogsResult.entries,
             traceSpans: [],
-            rawQueries: { phase1: phase1Query, phase2: null, traceId: null },
+          rawQueries: { phase1: phase1Query, phase2: null, traceId: null },
             mode: "no-entitlement",
           });
         } catch (deploymentError) {
@@ -1337,7 +1337,7 @@ export async function GET(request: NextRequest) {
       }
 
       return NextResponse.json(
-        {
+        { 
           error: "Monitoring Center Premium entitlement required",
           message: "Log Search - Advanced package or a Titanium subscription to Anypoint Platform Required - Elasticsearch log search APIs - Enhanced raw storage (up to 128TB based on configuration) - Advanced logs and traces - LLM reasoning logs (for Agent Broker monitoring)",
           code: "MONITORING_CENTER_PREMIUM_REQUIRED",
@@ -1459,7 +1459,7 @@ export async function GET(request: NextRequest) {
               envId: validatedEnvId,
               skipTraces: true,
               accessToken,
-              baseUrl,
+          baseUrl,
               entries: runtimeLogsResult.entries,
               brokerName: (jobCardFromRuntime.broker as string) || "",
               appId: (jobCardFromRuntime.appId as string) || "",
@@ -1538,16 +1538,16 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      return NextResponse.json(
-        {
-          error: "Monitoring Center Premium entitlement required",
+        return NextResponse.json(
+          { 
+            error: "Monitoring Center Premium entitlement required",
           message: "Log Search - Advanced package or a Titanium subscription to Anypoint Platform Required - Elasticsearch log search APIs - Enhanced raw storage (up to 128TB based on configuration) - Advanced logs and traces - LLM reasoning logs (for Agent Broker monitoring)",
           code: "MONITORING_CENTER_PREMIUM_REQUIRED",
-        },
-        { status: 403 }
-      );
+          },
+          { status: 403 }
+        );
       }
-
+      
       allHits = phase2.hits;
       debugLog(`[TASK-CALLSTACK] Using phase 2 hits: ${allHits.length} total`);
     } else {
@@ -1798,11 +1798,11 @@ export async function GET(request: NextRequest) {
           debugLog(`[TASK-CALLSTACK]   - objectStoreRegion: ${objectStoreRegion ?? "(none)"}`);
           debugLog(`[TASK-CALLSTACK]   - taskStartTime: ${taskStartTime ?? "undefined"}`);
           const result = await fetchObjectStoreData(
-            validatedOrgId,
-            validatedEnvId,
-            validatedTaskId,
-            brokerName,
-            deploymentId,
+          validatedOrgId,
+          validatedEnvId,
+          validatedTaskId,
+          brokerName,
+          deploymentId,
             accessToken,
             deploymentType,
             objectStoreRegion,
@@ -1810,18 +1810,18 @@ export async function GET(request: NextRequest) {
           );
           debugLog(`[TASK-CALLSTACK] fetchObjectStoreData returned: available=${result.available}, objectStoreStatus=${result.objectStoreStatus ?? "undefined"}, errors=${result.errors?.length || 0}`);
           if (result.available) {
-            debugLog("[ObjectStore] Successfully fetched Object Store data");
-          } else {
+          debugLog("[ObjectStore] Successfully fetched Object Store data");
+        } else {
             const has403 = result.errors?.some((e: string) => e.includes("403"));
-            if (has403) {
+          if (has403) {
               debugError(`[ObjectStore] 403 Forbidden error detected - errors: ${JSON.stringify(result.errors)}`);
-            } else {
+          } else {
               debugLog(`[ObjectStore] Object Store data not available - errors: ${JSON.stringify(result.errors)}`);
-            }
           }
+        }
           return { result, monitoringSuggestions, deploymentApiStatus: finalDeploymentApiStatus };
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
           // Deployment fetch is required; if it failed, fail the whole request (no partial success).
           if (
             errorMessage.includes("Deployment detail required") ||
@@ -1829,37 +1829,37 @@ export async function GET(request: NextRequest) {
           ) {
             throw error;
           }
-          const is403 = errorMessage.includes("403");
-          if (is403) {
-            debugError(`[ObjectStore] 403 Forbidden error during fetch: ${errorMessage}`);
-          } else {
-            debugError(`[ObjectStore] Error fetching Object Store data: ${errorMessage}`);
-          }
+        const is403 = errorMessage.includes("403");
+        if (is403) {
+          debugError(`[ObjectStore] 403 Forbidden error during fetch: ${errorMessage}`);
+        } else {
+          debugError(`[ObjectStore] Error fetching Object Store data: ${errorMessage}`);
+        }
           // Preserve deploymentApiStatus from resolvedState even on error (immutable)
           return {
             result: {
-              available: false,
+          available: false,
               objectStoreStatus: (is403 ? "403_forbidden" : undefined) as "403_forbidden" | undefined,
-              errors: [errorMessage],
+          errors: [errorMessage],
             },
             deploymentApiStatus: deploymentApiStatus, // Use resolved state value
-          };
-        }
-      } else {
+        };
+      }
+    } else {
         const skipReason = !validatedEnvId ? "missing envId" : !deploymentId ? "missing deploymentId" : !accessToken ? "missing accessToken" : "unknown";
-        debugLog(
+      debugLog(
           `[ObjectStore] Skipping Object Store fetch - reason: ${skipReason}, envId: ${validatedEnvId ? validatedEnvId : "none"}, brokerName: ${brokerName || "none"}, deploymentId: ${deploymentId || "none"}, appId: ${finalAppId || "none"}, apiInstanceId: ${apiInstanceId || "none"}`
-        );
+      );
         const result: {
           available: boolean;
           objectStoreStatus?: "ok" | "403_forbidden" | "no_store" | "no_keys";
           errors?: string[];
         } = { available: false };
-        if (!deploymentId) {
+      if (!deploymentId) {
           result.errors = [];
-          if (applicationManager403Error) {
+        if (applicationManager403Error) {
             result.errors.push(applicationManager403Error);
-          } else {
+        } else {
             result.errors.push(`Cannot fetch Object Store: ${skipReason}. appId="${finalAppId}", apiInstanceId="${apiInstanceId}"`);
           }
         }
@@ -2037,7 +2037,7 @@ export async function GET(request: NextRequest) {
     debugLog(`[TASK-CALLSTACK]   - traceSpans.length: ${traceSpans?.length || 0}`);
     debugLog("[TASK-CALLSTACK] ========== END GET REQUEST (SUCCESS) ==========");
     debugLog("=".repeat(80));
-    
+
     return NextResponse.json({
       jobCard,
       entries,
