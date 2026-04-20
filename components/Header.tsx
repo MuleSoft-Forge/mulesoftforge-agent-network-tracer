@@ -4,7 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
-import { ChevronDown, LogOut, FileJson } from "lucide-react";
+import { ChevronDown, LogOut, FileJson, RefreshCw } from "lucide-react";
 import { REGIONS } from "@/lib/regions";
 import type { RegionOption } from "@/lib/regions";
 import { parseProfile, type Profile } from "@/lib/parsers";
@@ -259,6 +259,18 @@ export default function Header() {
                       >
                         <FileJson className="h-4 w-4 shrink-0" aria-hidden="true" />
                         View raw
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setMenuOpen(false);
+                          window.location.assign("/auth/sign-in?reauth=1");
+                        }}
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 focus:bg-gray-100 focus:outline-none"
+                      >
+                        <RefreshCw className="h-4 w-4 shrink-0" aria-hidden="true" />
+                        Refresh Anypoint permissions
                       </button>
                       <button
                         type="button"

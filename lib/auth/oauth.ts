@@ -16,7 +16,11 @@ export interface TokenResponse {
  * @param state - CSRF protection state parameter
  * @param redirectUri - Optional redirect URI (defaults to config value)
  */
-export function getAuthorizationUrl(state: string, redirectUri?: string): string {
+export function getAuthorizationUrl(
+  state: string,
+  redirectUri?: string,
+  options?: { prompt?: string }
+): string {
   const config = getOAuthConfig();
   const params = new URLSearchParams({
     client_id: config.clientId,
@@ -25,6 +29,9 @@ export function getAuthorizationUrl(state: string, redirectUri?: string): string
     scope: config.scopes,
     state,
   });
+  if (options?.prompt) {
+    params.set("prompt", options.prompt);
+  }
 
   const authUrl = `${getAuthorizationEndpoint()}?${params.toString()}`;
   debugLog("[OAuth] Requesting scopes:", config.scopes);

@@ -171,7 +171,7 @@ export interface LlmProxyPromptTopic {
 
 export interface LlmProxyPromptTopicsResponse {
   topics: LlmProxyPromptTopic[];
-  /** True when the Connected App session could not read the topics (xapi 401/403); UI should fall back to hardcoded chips. */
+  /** Reserved for future use if the API needs to signal auth failure separately. */
   unauthorized?: boolean;
 }
 

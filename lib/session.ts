@@ -19,6 +19,7 @@ const SessionDataSchema = z.object({
 
 export type SessionData = z.infer<typeof SessionDataSchema>;
 
+/** Iron-session encryption key for the auth cookie — not an Anypoint user password. Set `SESSION_SECRET` in production (e.g. Vercel). */
 const sessionOptions = {
   password: process.env.SESSION_SECRET || "change-me-to-a-random-secret-key-min-32-chars",
   cookieName: "ant_session",

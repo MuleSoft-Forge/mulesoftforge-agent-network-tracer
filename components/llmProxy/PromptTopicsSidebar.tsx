@@ -154,7 +154,7 @@ export default function PromptTopicsSidebar({
           {!loading && hasTopics && !anyUtterances && (
             <span
               className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700"
-              title="The Connected App session cannot read utterance bodies (xapi 403); showing topic names only."
+              title="Anypoint did not return utterance text for these topics (xapi). Showing topic names only; counts still reflect configured utterances."
             >
               names only
             </span>
@@ -232,11 +232,11 @@ export default function PromptTopicsSidebar({
                             type="button"
                             onClick={() => onSelect(t.name)}
                             className={`rounded-md border px-2 py-1.5 text-left text-xs transition-colors ${styles.utteranceBtn}`}
-                            title="No utterances available from the API; click to insert the topic name into the prompt."
+                            title="Utterance lines not returned for this topic; click to insert the topic name."
                           >
                             {t.name}
                             <span className="ml-1 text-[10px] opacity-60">
-                              (name only — edit in Anypoint to view utterances)
+                              (name only — when xapi returns utterances, lines appear here)
                             </span>
                           </button>
                         )}

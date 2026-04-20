@@ -13,13 +13,20 @@ function generateState(): string {
 }
 
 export async function GET(request: Request) {
-  // Check if already authenticated
-  if (await isAuthenticated()) {
+  const requestUrl = new URL(request.url);
+  /** After adding scopes in Anypoint, visit `/auth/sign-in?reauth=1` to run OAuth again (otherwise we redirect and skip consent). */
+  const forceReauth = requestUrl.searchParams.get("reauth") === "1";
+
+  if (forceReauth) {
+    const cleared = await getSession();
+    cleared.destroy();
+    await cleared.save();
+  } else if (await isAuthenticated()) {
     return NextResponse.redirect(new URL("/agent-network", request.url));
   }
-  
+
   const session = await getSession();
-  
+
   // Check if session was invalidated (server-side invalidation for corporate governance)
   if (session.invalidatedAt) {
     // Session was invalidated, clear it first to start fresh
@@ -30,8 +37,6 @@ export async function GET(request: Request) {
     session.invalidatedAt = undefined;
   }
 
-  // Get region from URL params (defaults to "us")
-  const requestUrl = new URL(request.url);
   const region = (requestUrl.searchParams.get("region") ?? "us") as RegionId;
 
   // Build redirect URI dynamically from request origin (matches token exchange)
@@ -44,8 +49,7 @@ export async function GET(request: Request) {
   session.oauthState = state;
   await session.save();
 
-  // Build authorization URL with dynamic redirect URI
-  const authUrl = getAuthorizationUrl(state, redirectUri);
+  const authUrl = getAuthorizationUrl(state, redirectUri, forceReauth ? { prompt: "consent" } : undefined);
   
   // Create redirect response and set region cookie for token exchange
   const response = NextResponse.redirect(authUrl);

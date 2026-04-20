@@ -1,5 +1,16 @@
 /**
- * OAuth configuration for Anypoint Platform Connected Apps
+ * OAuth configuration for Anypoint Platform Connected Apps.
+ *
+ * **Vercel / production:** Configure only the variables below. This application
+ * does **not** use Anypoint interactive user accounts (`ANYPOINT_USER_*`,
+ * `/accounts/login` with a password, etc.); those env vars are not read anywhere.
+ *
+ * `ANYPOINT_CLIENT_SECRET` is the OAuth **Connected App** client secret from
+ * Anypoint (the same credential type every OAuth app stores server-side), not
+ * a person’s platform password.
+ *
+ * Also required for sessions: `SESSION_SECRET` (iron-session cookie encryption;
+ * see `lib/session.ts`), and `ANYPOINT_REDIRECT_URI` matching your deployment URL.
  */
 
 import { DEFAULT_BASE_URL } from "@/lib/constants";
@@ -27,14 +38,12 @@ export function getOAuthConfig(): OAuthConfig {
     );
   }
 
-  // Match scopes shown in authorization dialog (from _old project)
-  // Added read:applications for Application Manager API access (needed for Hybrid deployment Object Store lookup)
-  // Added manage:store_data for Object Store partition access (needed for reading broker state)
-  // NOTE: If you get 403 errors from APIs, try testing different scopes. See AMC_COMMON_SCOPES_TO_TRY for Application Manager.
-  // Set ANYPOINT_SCOPES in .env.local (space-separated) to override. Object Store: manage:store_data, manage:store, read:store
+  // Default list aligns with a typical Connected App (Exchange, Monitoring, API Manager viewers,
+  // Object Store, Runtime Fabrics, AMC). Must match scopes enabled on the Connected App; use
+  // ANYPOINT_SCOPES to override (space-separated OAuth scope names, not UI labels).
   const scopes =
     process.env.ANYPOINT_SCOPES?.trim() ||
-    "profile read:exchange view:monitoring read:api_configuration read:api_policies manage:store_data read:applications";
+    "profile read:exchange view:monitoring read:api_configuration read:api_policies read:client_applications read:api_contracts manage:store_data read:runtime_fabrics read:applications manage:application_data read:full";
 
   return {
     clientId,

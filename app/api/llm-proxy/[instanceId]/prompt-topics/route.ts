@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loggedFetch, debugError, debugLog } from "@/lib/api-logger";
 import { requireAuth } from "@/lib/api/auth-middleware";
-import { getAnypointSessionToken } from "@/lib/llmProxy/anypointSession";
 import type {
   LlmProxyPromptTopic,
   LlmProxyPromptTopicsResponse,
@@ -19,13 +18,15 @@ export const dynamic = "force-dynamic";
  *
  * These give us topic NAMES + route mapping + deny/allow categorization.
  *
- * Secondary source (best-effort, often 403s for OAuth bearer tokens):
- *   GET /apimanager/xapi/v1/.../prompt-topics/{id}  -> utterance strings
+ * Secondary source (best-effort utterance lines): same path suffix
+ *   `.../organizations/{org}/environments/{env}/prompt-topics/{id}`
+ * is tried in order against:
+ *   - /apimanager/xapi/v1/… (documented)
+ *   - /gatewaymanager/api/v1/… (Flex Gateway Manager host path — experimental)
+ *   - /apimanager/api/v1/… (experimental)
  *
- * We only hit xapi when we have the IDs (from per-upstream metadata). If any
- * xapi call 401/403s we simply omit utterances for that topic; the sidebar
- * falls back to rendering the topic name as a single chip. Never returns the
- * made-up defaults that previously ran when xapi 403'd.
+ * Uses the Connected App OAuth access token (`requireAuth`). Enable
+ * ENABLE_API_LOGGING to see which base returned 200 vs 403/404 in server logs.
  */
 
 interface ApiV1TopicEntry {
@@ -97,6 +98,59 @@ function normalizeUtterances(raw: string | undefined): string[] {
     .filter((line) => line.length > 0);
 }
 
+/**
+ * Utterance text for a prompt topic ID is documented under API Manager xapi only.
+ * We also probe other Anypoint bases with the same path shape so you can see
+ * (via ENABLE_API_LOGGING / server logs) whether e.g. Flex Gateway Manager exposes it.
+ *
+ * Order: xapi first, then gatewaymanager (see Exchange "Flex Gateway Manager API"),
+ * then api/v1 (unlikely).
+ */
+async function fetchUtterancesForTopicId(
+  topicId: string,
+  controlPlaneBaseUrl: string,
+  orgSeg: string,
+  envSeg: string,
+  authHeader: string,
+  orgId: string,
+  envId: string
+): Promise<string[]> {
+  const headers: Record<string, string> = {
+    Authorization: authHeader,
+    Accept: "application/json",
+    "x-anypnt-org-id": orgId,
+    "x-anypnt-env-id": envId,
+  };
+  const idSeg = encodeURIComponent(topicId);
+  const suffix = `organizations/${orgSeg}/environments/${envSeg}/prompt-topics/${idSeg}`;
+  const candidates: { label: string; url: string }[] = [
+    { label: "apimanager-xapi", url: `${controlPlaneBaseUrl}/apimanager/xapi/v1/${suffix}` },
+    { label: "gatewaymanager", url: `${controlPlaneBaseUrl}/gatewaymanager/api/v1/${suffix}` },
+    { label: "apimanager-api-v1", url: `${controlPlaneBaseUrl}/apimanager/api/v1/${suffix}` },
+  ];
+
+  for (const { label, url } of candidates) {
+    try {
+      const res = await fetch(url, { headers });
+      if (!res.ok) {
+        debugLog(
+          `[LLM-PROXY/PROMPT-TOPICS] ${label} ${res.status} for ${topicId.slice(0, 8)}…`
+        );
+        continue;
+      }
+      const body = (await res.json()) as XapiPromptTopic;
+      const utterances = normalizeUtterances(body.utterances);
+      debugLog(
+        `[LLM-PROXY/PROMPT-TOPICS] ${label} 200 for ${topicId.slice(0, 8)}… (${utterances.length} lines)`
+      );
+      return utterances;
+    } catch (err) {
+      debugLog(`[LLM-PROXY/PROMPT-TOPICS] ${label} fetch error for ${topicId.slice(0, 8)}…`, err);
+    }
+  }
+  return [];
+}
+
 export async function GET(
   request: NextRequest,
   context: { params: Promise<{ instanceId: string }> }
@@ -121,7 +175,6 @@ export async function GET(
   const apiSeg = encodeURIComponent(instanceId);
 
   const apiBase = `${baseUrl}/apimanager/api/v1/organizations/${orgSeg}/environments/${envSeg}/apis/${apiSeg}`;
-  const xapiBase = `${baseUrl}/apimanager/xapi/v1/organizations/${orgSeg}/environments/${envSeg}`;
 
   try {
     const [policiesRes, upstreamsRes] = await Promise.all([
@@ -226,25 +279,6 @@ export async function GET(
       return NextResponse.json(empty);
     }
 
-    // Best-effort utterance fetch via xapi for topics that have IDs. xapi
-    // only accepts Anypoint user-session tokens (not Connected App OAuth
-    // bearer tokens); we try the session token first and fall back to the
-    // OAuth bearer just in case a future Anypoint release starts accepting
-    // it. Any non-200 just means "no utterances available"; we still return
-    // the topic name.
-    const sessionToken = await getAnypointSessionToken();
-    const xapiHeaders: Record<string, string> = {
-      Authorization: `Bearer ${sessionToken ?? accessToken}`,
-      Accept: "application/json",
-      "x-anypnt-org-id": orgId,
-      "x-anypnt-env-id": envId,
-    };
-    if (!sessionToken) {
-      debugLog(
-        "[LLM-PROXY/PROMPT-TOPICS] no ANYPOINT_USER_USERNAME/PASSWORD configured; xapi calls will likely 403"
-      );
-    }
-
     const idsToFetch = Array.from(
       new Set(drafts.map((d) => d.id).filter((id): id is string => Boolean(id)))
     );
@@ -252,25 +286,16 @@ export async function GET(
     if (idsToFetch.length > 0) {
       await Promise.all(
         idsToFetch.map(async (id) => {
-          try {
-            const res = await loggedFetch(
-              `${xapiBase}/prompt-topics/${encodeURIComponent(id)}`,
-              { headers: xapiHeaders }
-            );
-            if (!res.ok) {
-              debugLog(
-                `[LLM-PROXY/PROMPT-TOPICS] xapi ${res.status} for ${id.slice(0, 8)} — utterances unavailable`
-              );
-              return;
-            }
-            const body = (await res.json()) as XapiPromptTopic;
-            utterancesById.set(id, normalizeUtterances(body.utterances));
-          } catch (err) {
-            debugLog(
-              `[LLM-PROXY/PROMPT-TOPICS] xapi fetch error for ${id.slice(0, 8)}:`,
-              err
-            );
-          }
+          const utterances = await fetchUtterancesForTopicId(
+            id,
+            baseUrl,
+            orgSeg,
+            envSeg,
+            authHeader,
+            orgId,
+            envId
+          );
+          utterancesById.set(id, utterances);
         })
       );
     }
