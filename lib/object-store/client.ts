@@ -945,18 +945,11 @@ export async function fetchObjectStoreData(
   accessToken: string,
   deploymentType?: string,
   objectStoreRegion?: string,
-  taskStartTime?: string | number,
-  /**
-   * `target.deploymentSettings.persistentObjectStore` from AMC. When `false`
-   * we skip Object Store lookup entirely — the broker doesn't persist task
-   * state, so any partition-name match would belong to a different app.
-   * `undefined`/`true` → proceed as before.
-   */
-  persistentObjectStore?: boolean
+  taskStartTime?: string | number
 ): Promise<{
   available: boolean;
-  /** Status for API status table: ok, 403_forbidden, no_store, no_keys, not_persisted */
-  objectStoreStatus?: "ok" | "403_forbidden" | "no_store" | "no_keys" | "not_persisted";
+  /** Status for API status table: ok, 403_forbidden, no_store, no_keys */
+  objectStoreStatus?: "ok" | "403_forbidden" | "no_store" | "no_keys";
   /** Which partitions contributed data (for UI: "Tasks", "Conversations") */
   sourcesUsed?: ("tasks" | "conversations")[];
   /** Parsed reasoning from _tasks partition only (for split UI) */
@@ -979,23 +972,9 @@ export async function fetchObjectStoreData(
 }> {
   const errors: string[] = [];
 
-  // Fast bail-out: deployment explicitly has persistentObjectStore=false.
-  // Without this, findObjectStore's broker-partition-name fallback can latch
-  // onto an unrelated app's store, and the UI shows a misleading "Key not
-  // found" when the real answer is "this broker never writes to Object
-  // Store". Honest status = caller can render "Not persisted by this broker".
-  if (persistentObjectStore === false) {
-    debugLog(
-      `[ObjectStore] Deployment has persistentObjectStore=false → skipping lookup entirely`
-    );
-    return {
-      available: false,
-      objectStoreStatus: "not_persisted",
-      errors: [
-        "Broker deployment has persistentObjectStore=false — task state is not written to Object Store, so no LLM reasoning/tool-call trail is available here.",
-      ],
-    };
-  }
+  // Note: AMC `persistentObjectStore: false` means non-durable (e.g. no long-lived
+  // store attachment), but brokers can still write task state to ephemeral Object Store
+  // with ~24h TTL — we rely on tenant/deployment resolution + task age instead of skipping.
 
   // Check if task is less than 1 day old (Object Store entries expire after 1 day TTL)
   if (taskStartTime) {

@@ -138,11 +138,8 @@ async function fetchDeploymentDetail(
   monitoringSuggestions: ApiStatus["monitoringSuggestions"];
   deploymentApiStatus: "ok" | "403_forbidden";
   /**
-   * `target.deploymentSettings.persistentObjectStore`. `false` for deployments
-   * without Object Store provisioned (common for Hybrid). When false we skip
-   * the Object Store lookup entirely — otherwise the partition-name fallback
-   * can latch onto an unrelated app's store and produce a misleading
-   * "Key not found". `undefined` when we couldn't determine it.
+   * `target.deploymentSettings.persistentObjectStore` from AMC (diagnostic/logs only).
+   * `false` means non-durable store attachment; ephemeral Object Store (~24h) may still apply.
    */
   persistentObjectStore?: boolean;
 }> {
@@ -788,7 +785,7 @@ async function fetchObjectStoreInNoEntitlementMode(
 ): Promise<{
   objectStore: {
     available: boolean;
-    objectStoreStatus?: "ok" | "403_forbidden" | "no_store" | "no_keys" | "not_persisted";
+    objectStoreStatus?: "ok" | "403_forbidden" | "no_store" | "no_keys";
     fromTasks?: unknown;
     llmReasoning?: unknown;
     toolCallIds?: string[];
@@ -877,8 +874,7 @@ async function fetchObjectStoreInNoEntitlementMode(
       accessToken,
       undefined,
       objectStoreRegion,
-      jobCard.startTime,
-      deploymentDetail.persistentObjectStore
+      jobCard.startTime
     );
     const status: ApiStatus["objectStore"] =
       objectStoreData.objectStoreStatus ??
@@ -1764,7 +1760,7 @@ export async function GET(request: NextRequest) {
     // Fetch Object Store data if we have envId and deployment ID (brokerName can be empty - we'll still get no_store/403/no_keys from client)
     let objectStoreData: {
       available: boolean;
-      objectStoreStatus?: "ok" | "403_forbidden" | "no_store" | "no_keys" | "not_persisted";
+      objectStoreStatus?: "ok" | "403_forbidden" | "no_store" | "no_keys";
       fromTasks?: { steps: Array<{ step: string; content: string[] }>; rawReasoning: string[] };
       llmReasoning?: {
         steps?: Array<{ step: string; content: string[] }>;
@@ -1831,8 +1827,9 @@ export async function GET(request: NextRequest) {
           debugLog(`[TASK-CALLSTACK]   - deploymentType: ${deploymentType || "unknown"}`);
           debugLog(`[TASK-CALLSTACK]   - objectStoreRegion: ${objectStoreRegion ?? "(none)"}`);
           debugLog(`[TASK-CALLSTACK]   - taskStartTime: ${taskStartTime ?? "undefined"}`);
-          const persistentObjectStoreFlag = deploymentDetail?.persistentObjectStore;
-          debugLog(`[TASK-CALLSTACK]   - persistentObjectStore: ${persistentObjectStoreFlag ?? "undefined"}`);
+          debugLog(
+            `[TASK-CALLSTACK]   - persistentObjectStore (AMC diagnostic only): ${deploymentDetail?.persistentObjectStore ?? "undefined"}`
+          );
           const result = await fetchObjectStoreData(
           validatedOrgId,
           validatedEnvId,
@@ -1842,8 +1839,7 @@ export async function GET(request: NextRequest) {
             accessToken,
             deploymentType,
             objectStoreRegion,
-            taskStartTime,
-            persistentObjectStoreFlag
+            taskStartTime
           );
           debugLog(`[TASK-CALLSTACK] fetchObjectStoreData returned: available=${result.available}, objectStoreStatus=${result.objectStoreStatus ?? "undefined"}, errors=${result.errors?.length || 0}`);
           if (result.available) {

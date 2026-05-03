@@ -101,10 +101,6 @@ function apiStatusLabel(
       "403_forbidden": { label: "403 Forbidden", ok: false },
       no_store: { label: "No object store found", ok: false },
       no_keys: { label: "Object store found but no keys", ok: false },
-      not_persisted: {
-        label: "Not persisted by this broker (deployment has persistentObjectStore: false)",
-        ok: true,
-      },
       skipped: { label: "Skipped", ok: true },
       error: { label: "Error", ok: false },
     },

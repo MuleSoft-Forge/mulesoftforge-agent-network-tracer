@@ -86,8 +86,8 @@ export interface JobCard {
 export interface ApiStatus {
   /** Log search (Monitoring _msearch): 200 ok, 403 entitlement (Premium required), or 403/other */
   logSearch: "ok" | "403_entitlement" | "403_unauthorized" | "error";
-  /** Object Store: ok, 403, no store found, store found but no keys, not persisted (persistentObjectStore: false), skipped, or error */
-  objectStore: "ok" | "403_forbidden" | "no_store" | "no_keys" | "not_persisted" | "skipped" | "error";
+  /** Object Store: ok, 403, no store found, store found but no keys, skipped, or error */
+  objectStore: "ok" | "403_forbidden" | "no_store" | "no_keys" | "skipped" | "error";
   /** Deployment API (AMC): ok, 403 (e.g. Read Applications scope), not_used, or error */
   deploymentApi: "ok" | "403_forbidden" | "not_used" | "error";
   /** Trace spans (Observability spans:search): ok, 403, skipped (no traceId/envId), or error */
