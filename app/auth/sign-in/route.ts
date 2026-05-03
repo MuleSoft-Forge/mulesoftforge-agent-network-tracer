@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { NextResponse } from "next/server";
 import { getSession, isAuthenticated } from "@/lib/session";
 import { getAuthorizationUrl } from "@/lib/auth/oauth";
@@ -6,10 +7,11 @@ import type { RegionId } from "@/lib/regions";
 export const dynamic = "force-dynamic";
 
 /**
- * Generate a random state string for CSRF protection
+ * Generate a CSPRNG-backed state for OAuth CSRF protection.
+ * Must be unguessable — `Math.random()` is not (V8 exposes internal state).
  */
 function generateState(): string {
-  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+  return randomUUID();
 }
 
 export async function GET(request: Request) {

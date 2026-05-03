@@ -101,6 +101,10 @@ function apiStatusLabel(
       "403_forbidden": { label: "403 Forbidden", ok: false },
       no_store: { label: "No object store found", ok: false },
       no_keys: { label: "Object store found but no keys", ok: false },
+      not_persisted: {
+        label: "Not persisted by this broker (deployment has persistentObjectStore: false)",
+        ok: true,
+      },
       skipped: { label: "Skipped", ok: true },
       error: { label: "Error", ok: false },
     },
@@ -917,9 +921,10 @@ export default function TaskDetailsPanel({
     <div className="flex h-full flex-col">
       {isNoEntitlement && (
         <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800">
-          <span className="font-medium">No-entitlement mode</span>
+          <span className="font-medium">Log Search unavailable</span>
           {" — "}
-          Task details from runtime logs. Traces and some API metadata are not shown.
+          Showing task details from runtime logs. Trace spans and some API
+          metadata require Anypoint Monitoring Log Search.
         </div>
       )}
       <div className="border-b border-gray-200 bg-white px-4 py-3">

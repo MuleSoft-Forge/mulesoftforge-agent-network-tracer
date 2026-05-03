@@ -70,3 +70,18 @@ export function getCredentialsForRegion(regionId: RegionId): {
     baseUrl: option.baseUrl,
   };
 }
+
+/**
+ * Server-only: look up client id/secret by the session's baseUrl. Needed for
+ * refresh-token calls, where we don't retain the region id but do store the
+ * baseUrl in the iron-session cookie.
+ */
+export function getCredentialsForBaseUrl(baseUrl: string): {
+  clientId: string;
+  clientSecret: string;
+  baseUrl: string;
+} | null {
+  const match = REGIONS.find((r) => r.baseUrl === baseUrl);
+  if (!match) return null;
+  return getCredentialsForRegion(match.id);
+}

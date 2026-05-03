@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { debugError, debugLog } from "@/lib/api-logger";
 import { requireAuth } from "@/lib/api/auth-middleware";
+import { resolveAllowedUrl } from "@/lib/api/allowed-hosts";
 import { extractTextFiles } from "@/lib/zip-extract";
 
 export const dynamic = "force-dynamic";
@@ -26,9 +27,16 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "downloadURL is required", files: [] }, { status: 400 });
   }
 
-  const url = downloadURL.startsWith("http")
-    ? downloadURL
-    : `${baseUrl.replace(/\/$/, "")}${downloadURL.startsWith("/") ? "" : "/"}${downloadURL}`;
+  // Validate host before attaching the user's bearer token (prevents SSRF /
+  // token exfiltration via attacker-supplied URLs).
+  const safe = resolveAllowedUrl(downloadURL, baseUrl);
+  if (!safe) {
+    return NextResponse.json(
+      { error: "downloadURL host is not allowed", files: [] },
+      { status: 400 }
+    );
+  }
+  const url = safe.toString();
 
   try {
     const res = await fetch(url, {

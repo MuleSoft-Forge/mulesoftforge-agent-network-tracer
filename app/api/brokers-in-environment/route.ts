@@ -5,21 +5,14 @@ import { loggedFetch, debugLog, debugError } from "@/lib/api-logger";
 import { BrokersInEnvironmentRequestSchema } from "@/lib/schemas";
 import { requireAuth } from "@/lib/api/auth-middleware";
 import { validationError } from "@/lib/api/error-responses";
-import { DEFAULT_BASE_URL, DEFAULT_ACTIVITY_PERIOD_MINUTES } from "@/lib/constants";
 
 export const dynamic = "force-dynamic";
 
-/**
- * Check if an API instance exists in the given environment (Runtime Manager API).
- * Used to filter fabric instance IDs to the exact selected environment.
- */
-interface InstanceCheckResult {
-  exists: boolean;
-  agentNetworkGav?: { groupId: string; assetId: string; version: string };
-}
+interface Gav { groupId: string; assetId: string; version: string }
 
-function parseGav(urn: string): { groupId: string; assetId: string; version: string } | undefined {
+function parseGav(urn: string | null | undefined): Gav | undefined {
   // "urn:gav:groupId:assetId:version"
+  if (!urn || typeof urn !== "string") return undefined;
   const parts = urn.replace("urn:gav:", "").split(":");
   if (parts.length >= 3) {
     return { groupId: parts[0], assetId: parts[1], version: parts[2] };
@@ -27,36 +20,109 @@ function parseGav(urn: string): { groupId: string; assetId: string; version: str
   return undefined;
 }
 
-async function apiInstanceExistsInEnvironment(
-  baseUrl: string,
-  orgId: string,
-  environmentId: string,
-  apiInstanceId: string,
-  authHeader: string
-): Promise<InstanceCheckResult> {
-  const url = `${baseUrl}/apimanager/api/v1/organizations/${encodeURIComponent(orgId)}/environments/${encodeURIComponent(environmentId)}/apis/${encodeURIComponent(apiInstanceId)}`;
-  const res = await loggedFetch(url, {
-    method: "GET",
-    headers: { Authorization: authHeader },
-  });
-  if (!res.ok) return { exists: false };
-
-  try {
-    const data = (await res.json()) as { metadata?: { source?: string } };
-    const source = data?.metadata?.source;
-    const gav = source ? parseGav(source) : undefined;
-    return { exists: true, agentNetworkGav: gav };
-  } catch {
-    return { exists: true };
-  }
+/**
+ * Shape of an API Manager instance row (from /apimanager/api/v1/.../apis).
+ * Only the fields we actually need; the endpoint returns many more.
+ */
+interface ApiManagerInstance {
+  id?: number | string;
+  assetId?: string;
+  groupId?: string;
+  assetVersion?: string;
+  metadata?: { source?: string; [key: string]: unknown } | null;
+  apiAsset?: { assetId?: string | null; groupId?: string | null } | null;
 }
 
-/** Anypoint environment from GET .../organizations/{orgId}/environments (response.data[]. */
-interface AnypointEnv {
-  id?: string;
-  isProduction?: boolean;
-  type?: string;
-  [key: string]: unknown;
+interface ApiManagerAsset {
+  assetId?: string;
+  groupId?: string;
+  apis?: ApiManagerInstance[];
+}
+
+interface ApiManagerListResponse {
+  total?: number;
+  /** Newer shape: assets grouping API instances. */
+  assets?: ApiManagerAsset[];
+  /** Older shape: flat list. */
+  instances?: ApiManagerInstance[];
+}
+
+/**
+ * Fetch ALL API instances for (orgId, envId) from API Manager, following the
+ * `limit`/`offset` pager. This is the authoritative source for which
+ * instances are deployed in a given environment — fabric's
+ * `prod_instances_map` is observed to be incomplete for some orgs, which
+ * would cause the old code path to drop brokers entirely.
+ */
+async function listApiManagerInstances(
+  baseUrl: string,
+  orgId: string,
+  envId: string,
+  authHeader: string
+): Promise<ApiManagerInstance[]> {
+  const PAGE_SIZE = 500;
+  const results: ApiManagerInstance[] = [];
+  for (let offset = 0; ; offset += PAGE_SIZE) {
+    const url =
+      `${baseUrl}/apimanager/api/v1/organizations/${encodeURIComponent(orgId)}` +
+      `/environments/${encodeURIComponent(envId)}/apis` +
+      `?fullInfo=true&limit=${PAGE_SIZE}&offset=${offset}&sort=name&ascending=true`;
+    const res = await loggedFetch(url, { headers: { Authorization: authHeader } });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`API Manager list failed: ${res.status} ${text}`);
+    }
+    const body = (await res.json()) as ApiManagerListResponse;
+
+    const flat: ApiManagerInstance[] = [];
+    if (Array.isArray(body.assets)) {
+      for (const asset of body.assets) {
+        for (const inst of asset.apis ?? []) {
+          flat.push({
+            ...inst,
+            assetId: inst.assetId ?? asset.assetId,
+            groupId: inst.groupId ?? asset.groupId,
+          });
+        }
+      }
+    }
+    if (Array.isArray(body.instances)) flat.push(...body.instances);
+
+    results.push(...flat);
+
+    // Stop when the response returns fewer than a full page OR we've hit the
+    // reported total. Defensive: some API versions don't return `total`.
+    const pageCount = flat.length;
+    if (pageCount < PAGE_SIZE) break;
+    if (typeof body.total === "number" && results.length >= body.total) break;
+    // Safety guard against unbounded looping.
+    if (offset > 10_000) break;
+  }
+  return results;
+}
+
+/**
+ * For instances whose list entry did not include `metadata.source`, fetch the
+ * single-instance detail to recover the parent agent-network GAV. We only do
+ * this for broker instances we're about to return — NOT for every instance in
+ * the env. At most one call per broker (the first instance).
+ */
+async function fetchSingleInstanceGav(
+  baseUrl: string,
+  orgId: string,
+  envId: string,
+  apiInstanceId: string,
+  authHeader: string
+): Promise<Gav | undefined> {
+  const url = `${baseUrl}/apimanager/api/v1/organizations/${encodeURIComponent(orgId)}/environments/${encodeURIComponent(envId)}/apis/${encodeURIComponent(apiInstanceId)}`;
+  const res = await loggedFetch(url, { headers: { Authorization: authHeader } });
+  if (!res.ok) return undefined;
+  try {
+    const data = (await res.json()) as { metadata?: { source?: string } };
+    return parseGav(data?.metadata?.source);
+  } catch {
+    return undefined;
+  }
 }
 
 export async function GET(request: NextRequest) {
@@ -91,45 +157,42 @@ export async function GET(request: NextRequest) {
   }
   
   const { orgId: validatedOrgId, environmentId: validatedEnvironmentId } = parseResult.data;
-  
-  const activityPeriodMinutes = (() => {
-    const n = activityPeriodParam != null ? parseInt(activityPeriodParam, 10) : NaN;
-    if (!Number.isFinite(n) || n < 1) return DEFAULT_ACTIVITY_PERIOD_MINUTES;
-    return Math.min(Math.max(n, 1), 10080); // clamp 1–7 days
-  })();
+
+  // activityPeriod is accepted (for API compatibility) but not used: the list
+  // of brokers in an env doesn't depend on how far back we look at activity.
+  void activityPeriodParam;
 
   const authHeader = `Bearer ${accessToken}`;
 
   try {
-    // Resolve isProduction for the selected environment (fabric only has prod vs non-prod).
-    const envsRes = await loggedFetch(
-      `${baseUrl}/accounts/api/organizations/${encodeURIComponent(validatedOrgId)}/environments`,
-      { headers: { Authorization: authHeader } }
-    );
-    if (!envsRes.ok) {
-      const text = await envsRes.text();
-      return NextResponse.json(
-        { error: `Environments failed: ${envsRes.status} ${text}`, brokers: [] },
-        { status: envsRes.status }
-      );
-    }
-    const envsBody = (await envsRes.json()) as { data?: AnypointEnv[] };
-    const envs = Array.isArray(envsBody.data) ? envsBody.data : [];
-    const selectedEnv = envs.find(
-      (e: AnypointEnv) => e.id != null && String(e.id) === validatedEnvironmentId
-    );
-    const isProduction = selectedEnv?.isProduction === true;
+    // -----------------------------------------------------------------------
+    // Data sources (why two calls, not one):
+    //
+    //   (A) Visualizer fabric-network  → node metadata (name, icon, platform,
+    //       tags, version). Source of truth for WHAT to display.
+    //   (B) API Manager /apis          → authoritative instance IDs for the
+    //       selected env. Source of truth for WHAT IS DEPLOYED HERE.
+    //
+    // Previously we relied on fabric's `prod_instances_map`, but it has been
+    // observed to be incomplete for some orgs (fabric lists a broker node but
+    // has no entry for it in the map → broker disappears entirely, tasks
+    // can't be fetched). API Manager reliably returns every API instance
+    // deployed in an environment, so we inner-join fabric × API Manager on
+    // `assetId` to decide which brokers to return.
+    // -----------------------------------------------------------------------
 
-    // Single fabric call: instance IDs come from prod_instances_map / non_prod_instances_map.
-    // FabricGraphFilterDTO does not include activityPeriod; pass it to any Visualizer endpoint that does (e.g. node runtime, runtime-edges).
-    const fabricRes = await loggedFetch(
-      `${baseUrl}/visualizer/api/v2/organizations/${encodeURIComponent(validatedOrgId)}/fabric-network`,
-      {
-        method: "POST",
-        headers: { Authorization: authHeader, "Content-Type": "application/json" },
-        body: JSON.stringify({ orgIds: [validatedOrgId] }),
-      }
-    );
+    const [fabricRes, amInstances] = await Promise.all([
+      loggedFetch(
+        `${baseUrl}/visualizer/api/v2/organizations/${encodeURIComponent(validatedOrgId)}/fabric-network`,
+        {
+          method: "POST",
+          headers: { Authorization: authHeader, "Content-Type": "application/json" },
+          body: JSON.stringify({ orgIds: [validatedOrgId] }),
+        }
+      ),
+      listApiManagerInstances(baseUrl, validatedOrgId, validatedEnvironmentId, authHeader),
+    ]);
+
     if (!fabricRes.ok) {
       const text = await fabricRes.text();
       return NextResponse.json(
@@ -141,59 +204,84 @@ export async function GET(request: NextRequest) {
     const brokerNodes = (fabric.nodes ?? []).filter(
       (n: FabricNode) => String(n.type).toUpperCase() === "BROKER"
     );
-    const prodMap = fabric.prod_instances_map ?? {};
-    const nonProdMap = fabric.non_prod_instances_map ?? {};
 
-    debugLog("[BROKERS] Fabric data:", {
-      totalNodes: fabric.nodes?.length ?? 0,
+    // Group API Manager instances by assetId. Each entry collects every
+    // instance id for the asset in this env plus (if present on the list
+    // response) the parent agent-network GAV from metadata.source.
+    const instancesByAssetId = new Map<string, { ids: string[]; gav?: Gav }>();
+    for (const inst of amInstances) {
+      const assetId = inst.assetId ?? inst.apiAsset?.assetId ?? undefined;
+      if (!assetId || inst.id == null) continue;
+      const id = String(inst.id);
+      const existing = instancesByAssetId.get(assetId) ?? { ids: [] };
+      if (!existing.ids.includes(id)) existing.ids.push(id);
+      if (!existing.gav) existing.gav = parseGav(inst.metadata?.source);
+      instancesByAssetId.set(assetId, existing);
+    }
+
+    debugLog("[BROKERS] Sources:", {
+      totalFabricNodes: fabric.nodes?.length ?? 0,
       brokerNodesCount: brokerNodes.length,
-      isProduction,
-      prodMapKeys: Object.keys(prodMap).length,
-      nonProdMapKeys: Object.keys(nonProdMap).length,
+      apiManagerInstances: amInstances.length,
+      apiManagerAssetKeys: instancesByAssetId.size,
     });
 
+    // Inner-join fabric broker nodes with API Manager instances. Brokers the
+    // list endpoint doesn't return aren't deployed in this env — dropping
+    // them matches what the UI needs (the Tasks view can't do anything
+    // without an apiInstanceId).
     const brokers: BrokerInEnvironment[] = [];
+    const gavFallbackQueue: { broker: BrokerInEnvironment; firstInstanceId: string }[] = [];
 
     for (const node of brokerNodes) {
-      const nodeId = node.id ?? `${node.organizationId}:${node.assetId}`;
-      const rawInstanceIds: string[] = isProduction
-        ? (prodMap[nodeId] ?? []).filter((id): id is string => typeof id === "string" && id.length > 0)
-        : (nonProdMap[nodeId] ?? []).filter((id): id is string => typeof id === "string" && id.length > 0);
+      if (!node.assetId) continue;
+      const match = instancesByAssetId.get(node.assetId);
+      if (!match || match.ids.length === 0) continue;
 
-      if (rawInstanceIds.length === 0) continue;
+      const broker: BrokerInEnvironment = {
+        nodeId: node.id ?? `${node.organizationId}:${node.assetId}`,
+        assetId: node.assetId,
+        name: node.name ?? node.assetId,
+        organizationId: node.organizationId ?? "",
+        instanceIds: match.ids,
+        ...(match.gav ? { agentNetworkGav: match.gav } : {}),
+      };
+      brokers.push(broker);
 
-      // Restrict to the exact selected environment: check each instance via Runtime Manager.
-      const existenceChecks = await Promise.all(
-        rawInstanceIds.map((id) =>
-          apiInstanceExistsInEnvironment(
+      // If the list response didn't include `metadata.source` we'll try the
+      // per-instance detail endpoint once to recover the GAV. This matches
+      // old behaviour (which always fetched per-instance) but at most once
+      // per broker instead of once per instance.
+      if (!match.gav) {
+        gavFallbackQueue.push({ broker, firstInstanceId: match.ids[0] });
+      }
+    }
+
+    // Recover missing GAVs in parallel. Best-effort — if the call fails, the
+    // broker just won't have agentNetworkGav, and ExchangeVersionsPanel will
+    // surface "No agent-network asset linked to this broker".
+    if (gavFallbackQueue.length > 0) {
+      const recovered = await Promise.all(
+        gavFallbackQueue.map(({ firstInstanceId }) =>
+          fetchSingleInstanceGav(
             baseUrl,
             validatedOrgId,
             validatedEnvironmentId,
-            id,
+            firstInstanceId,
             authHeader
           )
         )
       );
-      const instanceIds = rawInstanceIds.filter((_, i) => existenceChecks[i].exists);
-
-      // Extract agent-network GAV from the first instance that has it
-      const agentNetworkGav = existenceChecks.find((c) => c.agentNetworkGav)?.agentNetworkGav;
-
-      if (instanceIds.length > 0) {
-        brokers.push({
-          nodeId,
-          assetId: node.assetId ?? "",
-          name: node.name ?? node.assetId ?? nodeId,
-          organizationId: node.organizationId ?? "",
-          instanceIds,
-          ...(agentNetworkGav ? { agentNetworkGav } : {}),
-        });
-      }
+      gavFallbackQueue.forEach(({ broker }, i) => {
+        const gav = recovered[i];
+        if (gav) broker.agentNetworkGav = gav;
+      });
     }
 
-    debugLog("[BROKERS] Returning brokers (filtered to env " + validatedEnvironmentId + "):", {
+    debugLog("[BROKERS] Returning brokers (env " + validatedEnvironmentId + "):", {
       count: brokers.length,
       brokerIds: brokers.map((b: BrokerInEnvironment) => b.nodeId),
+      gavFallbacksIssued: gavFallbackQueue.length,
     });
 
     return NextResponse.json({ brokers });

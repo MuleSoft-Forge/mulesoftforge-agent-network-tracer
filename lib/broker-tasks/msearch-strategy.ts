@@ -29,7 +29,12 @@ export async function fetchTasksViaMSearch(
 ): Promise<BrokerTasksResult | null> {
   const { orgId, apiInstanceId, accessToken, baseUrl, timeRangeMs, brokerAppName } = params;
 
-  const luceneQuery = `orgId=${orgId} AND taskId= AND apiInstanceId=${apiInstanceId}`;
+  // Fetch logs for this broker's apiInstanceId; the taskId is extracted from
+  // `_source.message` via regex in `parseHitsToAccumulators`, so we don't
+  // include a taskId clause here. (Previous version had `AND taskId=` with an
+  // empty right-hand side — Elasticsearch parsed that as "field taskId equals
+  // empty string" and returned 0 hits for every query.)
+  const luceneQuery = `orgId=${orgId} AND apiInstanceId=${apiInstanceId}`;
   const now = Date.now();
   const gte = now - timeRangeMs;
   debugLog(`[MSEARCH] Query: ${luceneQuery}`);

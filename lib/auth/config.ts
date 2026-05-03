@@ -63,14 +63,6 @@ export function getAuthorizationEndpoint(): string {
 }
 
 /**
- * Get OAuth token endpoint URL
- */
-export function getTokenEndpoint(): string {
-  const config = getOAuthConfig();
-  return `${config.baseUrl}/accounts/api/v2/oauth2/token`;
-}
-
-/**
  * Human-readable list of scopes to suggest when AMC returns 403 (single source of truth for 403 messages).
  * Application Manager API: read:applications (docs: allows GET .../deployments/**), read:deployments, manage:applications, view:applications, read:runtime
  */

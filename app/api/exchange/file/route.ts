@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loggedFetch, debugError } from "@/lib/api-logger";
 import { requireAuth } from "@/lib/api/auth-middleware";
+import { resolveAllowedUrl } from "@/lib/api/allowed-hosts";
 
 export const dynamic = "force-dynamic";
 
@@ -31,11 +32,17 @@ export async function GET(request: NextRequest) {
   let url: string;
 
   if (downloadURL) {
-    // Use the downloadURL directly — it's already a full path from the Exchange API
-    // It may be absolute or relative to baseUrl
-    url = downloadURL.startsWith("http")
-      ? downloadURL
-      : `${baseUrl.replace(/\/$/, "")}${downloadURL.startsWith("/") ? "" : "/"}${downloadURL}`;
+    // The user's bearer token is attached below, so `downloadURL` must be an
+    // Anypoint/Exchange host. Otherwise an attacker could craft a
+    // ?downloadURL=https://evil/ link and have the server leak the token.
+    const safe = resolveAllowedUrl(downloadURL, baseUrl);
+    if (!safe) {
+      return NextResponse.json(
+        { error: "downloadURL host is not allowed" },
+        { status: 400 }
+      );
+    }
+    url = safe.toString();
   } else if (organizationId && assetId && version && classifier && packaging) {
     url = `${baseUrl}/exchange/api/v2/assets/${encodeURIComponent(organizationId)}/${encodeURIComponent(assetId)}/${encodeURIComponent(version)}/files/${encodeURIComponent(classifier)}.${encodeURIComponent(packaging)}`;
   } else {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { debugError, debugLog } from "@/lib/api-logger";
 import { isAuthenticated } from "@/lib/session";
+import { isSafePublicUrl } from "@/lib/api/url-safety";
 import type { LlmProxyChatRequest } from "@/lib/llmProxy/types";
 
 export const dynamic = "force-dynamic";
@@ -52,6 +53,19 @@ export async function POST(request: NextRequest) {
   }
 
   const targetUrl = joinUrl(publicEndpoint, basePath, endpoint);
+
+  // SSRF guard: Flex Gateway LLM Proxies live on customer-controlled hosts, so
+  // we can't allowlist them. But we *can* refuse private/loopback hosts and
+  // non-https URLs — this stops the common attack (forge a request that points
+  // the server at 169.254.169.254 / 127.0.0.1 with user credentials attached).
+  const safety = isSafePublicUrl(targetUrl);
+  if (!safety.ok) {
+    return NextResponse.json(
+      { error: `publicEndpoint rejected: ${safety.reason}` },
+      { status: 400 }
+    );
+  }
+
   const wantsStream = Boolean((payload as Record<string, unknown>).stream);
 
   debugLog("[LLM-PROXY/CHAT] forwarding", {

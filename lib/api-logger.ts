@@ -9,7 +9,10 @@
  * unaffected (`NODE_ENV=development`).
  *
  * IMPORTANT: Never logs customer data - all sensitive fields are sanitized.
- * NOTE: access_token and refresh_token are logged (not redacted) for debugging/curl recreation.
+ * Tokens (Authorization bearer, access_token, refresh_token, client_secret) are
+ * redacted by default. For local debugging / curl recreation, set
+ * `DEBUG_INCLUDE_TOKENS=1` AND run with `NODE_ENV=development`. The opt-in is
+ * deliberately narrow so production logs never include tokens.
  */
 
 /** Deployed Vercel (serverless/edge) — not local `next dev` or typical `vercel dev`. */
@@ -50,6 +53,18 @@ export function isFullResponseLoggingEnabled(): boolean {
 }
 
 /**
+ * When true, tokens (Authorization, access_token, refresh_token, client_secret)
+ * are logged verbatim for curl/debug convenience. Requires BOTH
+ * `DEBUG_INCLUDE_TOKENS=1` and `NODE_ENV=development` — so a stray env var in
+ * a preview / staging / production deployment cannot leak tokens.
+ */
+function isTokenLoggingEnabled(): boolean {
+  if (process.env.NODE_ENV !== "development") return false;
+  const v = process.env.DEBUG_INCLUDE_TOKENS;
+  return v === "true" || v === "1";
+}
+
+/**
  * Local development only (client or server). Never logs in production builds (including Vercel).
  * Prefer this over raw `console.log` for noisy traces.
  */
@@ -68,6 +83,19 @@ function truncateForLog(body: unknown): unknown {
   const str = typeof body === "string" ? body : JSON.stringify(body);
   if (str.length <= FULL_RESPONSE_MAX_CHARS) return body;
   return str.slice(0, FULL_RESPONSE_MAX_CHARS) + `\n...[TRUNCATED ${str.length - FULL_RESPONSE_MAX_CHARS} more chars]`;
+}
+
+/**
+ * Canonical pipeline for logging a body: always sanitize (token + PII
+ * redaction), then — if DEBUG_FULL_RESPONSES is off — truncate any outer
+ * value that got too big. Callers should use this instead of combining
+ * `truncateForLog` and `sanitizeBody` ad-hoc; the previous ad-hoc form
+ * skipped redaction when DEBUG_FULL_RESPONSES was set.
+ */
+function prepareBodyForLog(body: unknown): unknown {
+  const fullLogging = isFullResponseLoggingEnabled();
+  const sanitized = sanitizeBody(body, 0, { preserveLargeStrings: fullLogging });
+  return fullLogging ? truncateForLog(sanitized) : sanitized;
 }
 
 /**
@@ -104,51 +132,77 @@ export function debugWarn(...args: unknown[]): void {
 }
 
 /**
- * Fields that contain customer data and should be sanitized
- * 
- * NOTE: access_token and refresh_token are NOT redacted - they're needed for debugging/curl recreation
+ * Body field names whose *contents* are customer data. Matched via
+ * `lowerKey.includes(field)` so e.g. `userMessage` matches `message`. These
+ * are only applied to request/response bodies, not headers — a header named
+ * `content-type` would otherwise get wrongly redacted by "content".
  */
-const SENSITIVE_FIELDS = [
-  "authorization",
-  "bearer",
-  "client_secret",
+const SENSITIVE_BODY_FIELDS = [
   "password",
   "email",
   "username",
-  "firstName",
-  "lastName",
+  "firstname",
+  "lastname",
   "message",
-  "userMessage",
+  "usermessage",
   "content",
   "body",
   "text",
   "input",
   "output",
   "reasoning",
-  "toolInput",
-  "toolOutput",
-  "a2aResponse",
-  "llmFinalResponse",
-  "llmReasoning",
+  "toolinput",
+  "tooloutput",
+  "a2aresponse",
+  "llmfinalresponse",
+  "llmreasoning",
 ] as const;
 
 /**
- * Sanitize headers to remove sensitive data
+ * Exact header names to redact. Exact match avoids false positives like
+ * `content-type` / `content-encoding` being caught by a substring match.
+ */
+const SENSITIVE_HEADERS = new Set<string>([
+  "cookie",
+  "set-cookie",
+  "x-api-key",
+]);
+
+/**
+ * Token field names (request bodies, response bodies, and Authorization-style
+ * headers). Tokens are redacted by default; `DEBUG_INCLUDE_TOKENS=1` in dev
+ * reverses this for local curl reproduction.
+ */
+const TOKEN_FIELDS = [
+  "authorization",
+  "bearer",
+  "access_token",
+  "refresh_token",
+  "id_token",
+  "client_secret",
+] as const;
+
+/**
+ * Sanitize headers. Token-style headers (Authorization, client_secret, etc.)
+ * are redacted unless token logging is explicitly enabled; an explicit small
+ * set of other headers (Cookie, X-Api-Key) is always redacted. Everything
+ * else — including `Content-Type`, `Content-Encoding`, CSP headers — is kept
+ * verbatim because those are not secrets and are useful for debugging.
  */
 function sanitizeHeaders(headers: HeadersInit): Record<string, string> {
   const sanitized: Record<string, string> = {};
-  const headerObj = headers instanceof Headers 
+  const headerObj = headers instanceof Headers
     ? Object.fromEntries(headers.entries())
     : Array.isArray(headers)
     ? Object.fromEntries(headers)
     : headers;
 
+  const tokensAllowed = isTokenLoggingEnabled();
   for (const [key, value] of Object.entries(headerObj)) {
     const lowerKey = key.toLowerCase();
-    if (lowerKey === "authorization") {
-      // Log full value for debugging/curl (do not redact)
-      sanitized[key] = String(value);
-    } else if (SENSITIVE_FIELDS.some((field) => lowerKey.includes(field))) {
+    if (TOKEN_FIELDS.some((field) => lowerKey.includes(field))) {
+      sanitized[key] = tokensAllowed ? String(value) : "[REDACTED]";
+    } else if (SENSITIVE_HEADERS.has(lowerKey)) {
       sanitized[key] = "[REDACTED]";
     } else {
       sanitized[key] = String(value);
@@ -159,62 +213,65 @@ function sanitizeHeaders(headers: HeadersInit): Record<string, string> {
 }
 
 /**
- * Sanitize request/response body to remove customer data
+ * Sanitize request/response body. Token fields are redacted unless token
+ * logging is explicitly enabled; customer-data fields are always redacted.
+ *
+ * When `options.preserveLargeStrings` is true (DEBUG_FULL_RESPONSES), long
+ * string values are kept intact — but redaction still runs. This split
+ * matters: without it, enabling DEBUG_FULL_RESPONSES also silently disabled
+ * token/PII redaction, which is a production-hazard-level bug.
  */
-function sanitizeBody(body: unknown, depth = 0): unknown {
-  // Prevent deep recursion
-  if (depth > 10) {
-    return "[MAX_DEPTH]";
-  }
-
-  if (body === null || body === undefined) {
-    return body;
-  }
+function sanitizeBody(
+  body: unknown,
+  depth = 0,
+  options: { preserveLargeStrings?: boolean } = {}
+): unknown {
+  if (depth > 10) return "[MAX_DEPTH]";
+  if (body === null || body === undefined) return body;
 
   if (typeof body === "string") {
-    // Try to parse as JSON first
     try {
       const parsed = JSON.parse(body);
-      return sanitizeBody(parsed, depth + 1);
+      return sanitizeBody(parsed, depth + 1, options);
     } catch {
-      // Not JSON, check if it looks like sensitive data
-      if (body.length > 1000) {
+      if (!options.preserveLargeStrings && body.length > 1000) {
         return `[LARGE_STRING:${body.length} chars]`;
       }
-      // Check for patterns that might indicate customer data
-      if (
-        SENSITIVE_FIELDS.some((field) =>
-          body.toLowerCase().includes(field.toLowerCase())
-        )
-      ) {
+      if (SENSITIVE_BODY_FIELDS.some((field) => body.toLowerCase().includes(field))) {
         return "[REDACTED]";
       }
       return body;
     }
   }
 
-  if (typeof body !== "object") {
-    return body;
-  }
+  if (typeof body !== "object") return body;
 
   if (Array.isArray(body)) {
-    return body.map((item) => sanitizeBody(item, depth + 1));
+    return body.map((item) => sanitizeBody(item, depth + 1, options));
   }
 
   const sanitized: Record<string, unknown> = {};
+  const tokensAllowed = isTokenLoggingEnabled();
   for (const [key, value] of Object.entries(body)) {
     const lowerKey = key.toLowerCase();
-    
-    // Skip sensitive fields entirely
-    if (SENSITIVE_FIELDS.some((field) => lowerKey.includes(field))) {
+
+    if (TOKEN_FIELDS.some((field) => lowerKey.includes(field))) {
+      sanitized[key] = tokensAllowed ? value : "[REDACTED]";
+      continue;
+    }
+
+    if (SENSITIVE_BODY_FIELDS.some((field) => lowerKey.includes(field))) {
       sanitized[key] = "[REDACTED]";
       continue;
     }
 
-    // Recursively sanitize nested objects
     if (typeof value === "object" && value !== null) {
-      sanitized[key] = sanitizeBody(value, depth + 1);
-    } else if (typeof value === "string" && value.length > 1000) {
+      sanitized[key] = sanitizeBody(value, depth + 1, options);
+    } else if (
+      !options.preserveLargeStrings &&
+      typeof value === "string" &&
+      value.length > 1000
+    ) {
       sanitized[key] = `[LARGE_STRING:${value.length} chars]`;
     } else {
       sanitized[key] = value;
@@ -302,7 +359,7 @@ export function logApiRequest(
   }
   
   const body = bodyToLog
-    ? (isFullResponseLoggingEnabled() ? truncateForLog(bodyToLog) : sanitizeBody(bodyToLog))
+    ? (prepareBodyForLog(bodyToLog))
     : undefined;
 
   const logEntry = {
@@ -337,9 +394,7 @@ export function logApiResponse(
   }
 
   const sanitizedHeaders = sanitizeHeaders(headers);
-  const sanitizedBody = body
-    ? (isFullResponseLoggingEnabled() ? truncateForLog(body) : sanitizeBody(body))
-    : undefined;
+  const sanitizedBody = body ? prepareBodyForLog(body) : undefined;
 
   const logEntry = {
     type: "API_RESPONSE",
@@ -382,9 +437,7 @@ export function logApiError(
       ? {
           status: response.status,
           statusText: response.statusText,
-          body: response.body
-            ? (isFullResponseLoggingEnabled() ? truncateForLog(response.body) : sanitizeBody(response.body))
-            : undefined,
+          body: response.body ? prepareBodyForLog(response.body) : undefined,
         }
       : undefined,
   };
@@ -400,7 +453,15 @@ export async function loggedFetch(
   options: RequestInit = {}
 ): Promise<Response> {
   const method = options.method || "GET";
-  
+
+  // Hot path: logging disabled → skip the buffer+rebuild round-trip entirely.
+  // Response buffering is expensive (whole body into RAM; Exchange zip downloads
+  // and monitoring search results can be megabytes) and is only useful when
+  // we're going to log the response body.
+  if (!isLoggingEnabled()) {
+    return fetch(url, options);
+  }
+
   // Log request
   logApiRequest(url, options);
 

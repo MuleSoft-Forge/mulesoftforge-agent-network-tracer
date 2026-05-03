@@ -1,8 +1,14 @@
 /**
- * OAuth 2.0 Authorization Code flow implementation
+ * OAuth 2.0 Authorization Code flow — helpers.
+ *
+ * The initial code-for-token exchange lives in `app/api/auth/token/route.ts`
+ * (it also fetches the profile for entitlements and seals the session cookie).
+ * This module hosts the `getAuthorizationUrl` builder and a standalone refresh
+ * helper used by `requireAuth` to keep long sessions alive.
  */
 
-import { getOAuthConfig, getAuthorizationEndpoint, getTokenEndpoint } from "./config";
+import { getOAuthConfig, getAuthorizationEndpoint } from "./config";
+import { getCredentialsForBaseUrl } from "@/lib/regions";
 import { loggedFetch, debugLog } from "@/lib/api-logger";
 
 export interface TokenResponse {
@@ -35,75 +41,31 @@ export function getAuthorizationUrl(
 
   const authUrl = `${getAuthorizationEndpoint()}?${params.toString()}`;
   debugLog("[OAuth] Requesting scopes:", config.scopes);
-  debugLog("[OAuth] Authorization URL scopes parameter:", params.get("scope"));
   return authUrl;
 }
 
 /**
- * Exchange authorization code for access and refresh tokens
+ * Refresh an Anypoint access token. Resolves the per-region client creds from
+ * the session's baseUrl so EU/CA/JP sessions refresh with the right client.
  */
-export async function exchangeCodeForToken(code: string): Promise<TokenResponse> {
-  const config = getOAuthConfig();
-
-  const body = JSON.stringify({
-    client_id: config.clientId,
-    client_secret: config.clientSecret,
-    grant_type: "authorization_code",
-    code,
-    redirect_uri: config.redirectUri,
-  });
-
-  const response = await loggedFetch(getTokenEndpoint(), {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body,
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Token exchange failed: ${response.status} ${text}`);
+export async function refreshAccessToken(
+  refreshToken: string,
+  baseUrl: string
+): Promise<TokenResponse> {
+  const creds = getCredentialsForBaseUrl(baseUrl);
+  if (!creds) {
+    throw new Error(`No OAuth client configured for baseUrl ${baseUrl}`);
   }
 
-  // API returns snake_case, convert to camelCase for our session
-  const data = (await response.json()) as {
-    access_token: string;
-    refresh_token: string;
-    expires_in: number;
-    token_type: string;
-    id_token?: string;
-  };
-
-  // Convert expires_in (seconds) to expiresAt (timestamp in milliseconds)
-  const expiresAt = Date.now() + data.expires_in * 1000;
-
-  return {
-    accessToken: data.access_token,
-    refreshToken: data.refresh_token,
-    expiresAt,
-  };
-}
-
-/**
- * Refresh access token using refresh token
- */
-export async function refreshAccessToken(refreshToken: string): Promise<TokenResponse> {
-  const config = getOAuthConfig();
-
-  const body = JSON.stringify({
-    client_id: config.clientId,
-    client_secret: config.clientSecret,
-    grant_type: "refresh_token",
-    refresh_token: refreshToken,
-  });
-
-  const response = await loggedFetch(getTokenEndpoint(), {
+  const response = await loggedFetch(`${creds.baseUrl}/accounts/api/v2/oauth2/token`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body,
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+      client_id: creds.clientId,
+      client_secret: creds.clientSecret,
+    }),
   });
 
   if (!response.ok) {
@@ -113,16 +75,15 @@ export async function refreshAccessToken(refreshToken: string): Promise<TokenRes
 
   const data = (await response.json()) as {
     access_token: string;
-    refresh_token: string;
+    refresh_token?: string;
     expires_in: number;
-    token_type: string;
   };
-
-  const expiresAt = Date.now() + data.expires_in * 1000;
 
   return {
     accessToken: data.access_token,
-    refreshToken: data.refresh_token,
-    expiresAt,
+    // Anypoint usually returns a fresh refresh token; fall back to the current
+    // one if it doesn't so we don't overwrite with undefined.
+    refreshToken: data.refresh_token ?? refreshToken,
+    expiresAt: Date.now() + data.expires_in * 1000,
   };
 }

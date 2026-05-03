@@ -13,11 +13,6 @@ export const TokenRequestSchema = z.object({
   code: z.string().min(1),
 });
 
-export const StateRequestSchema = z.object({
-  state: z.string().min(1).max(200),
-  region: z.string().optional(),
-});
-
 export const StateValidationSchema = z.object({
   state: z.string().min(1),
 });

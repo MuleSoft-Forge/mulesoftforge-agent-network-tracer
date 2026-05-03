@@ -30,14 +30,35 @@ export async function fetchTasksViaRuntimeLogs(
   const { orgId, apiInstanceId, accessToken, baseUrl, timeRangeMs, envId, brokerAppName } = params;
   debugLog("[RUNTIME-LOGS] Starting for apiInstanceId:", apiInstanceId);
 
+  // AMC `GET /logs?length=N&descending=true` returns the last N entries with
+  // no time filter. Apply the UI's activity window post-parse so e.g. a task
+  // from 48h ago doesn't appear when the user selected "last 24h".
+  const cutoffMs = Date.now() - timeRangeMs;
+  const withinWindow = (startTime: string): boolean => {
+    if (!startTime) return true; // unknown → keep; better than dropping silently
+    const t = new Date(startTime).getTime();
+    return Number.isFinite(t) ? t >= cutoffMs : true;
+  };
+  const filterAccumulators = (acc: BrokerTaskAccumulator[]): BrokerTaskAccumulator[] => {
+    const before = acc.length;
+    const out = acc.filter((t) => withinWindow(t.startTime));
+    if (before !== out.length) {
+      debugLog(
+        `[RUNTIME-LOGS] Filtered ${before - out.length}/${before} tasks outside time window (timeRangeMs=${timeRangeMs})`
+      );
+    }
+    return out;
+  };
+
   try {
     const environments = await listRuntimeEnvironments(baseUrl, orgId, accessToken);
 
     // Fast path: if we have the AMC app name + envId, try that deployment directly
     if (brokerAppName && envId && environments.some((e) => e.id === envId)) {
       const tasks = await tryDeploymentByName(baseUrl, orgId, envId, brokerAppName, apiInstanceId, accessToken);
-      if (tasks.length > 0) {
-        return { tasks: finaliseTasks(tasks), source: "runtime-logs", totalLogs: 0, mode: "no-entitlement" };
+      const inWindow = filterAccumulators(tasks);
+      if (inWindow.length > 0) {
+        return { tasks: finaliseTasks(inWindow), source: "runtime-logs", totalLogs: 0, mode: "no-entitlement" };
       }
     }
 
@@ -57,12 +78,13 @@ export async function fetchTasksViaRuntimeLogs(
       await tryEnvironmentApproaches(baseUrl, orgId, env.id, apiInstanceId, accessToken, brokerAppName, allTasks);
     }
 
-    if (Object.keys(allTasks).length === 0) {
-      debugLog("[RUNTIME-LOGS] No tasks found");
+    const inWindow = filterAccumulators(Object.values(allTasks));
+    if (inWindow.length === 0) {
+      debugLog("[RUNTIME-LOGS] No tasks found within time window");
       return { tasks: [], source: "runtime-logs", totalLogs: 0, mode: "no-entitlement" };
     }
 
-    const tasks = finaliseTasks(Object.values(allTasks));
+    const tasks = finaliseTasks(inWindow);
     debugLog("[RUNTIME-LOGS] Returning", tasks.length, "tasks");
     return { tasks, source: "runtime-logs", totalLogs: 0, mode: "no-entitlement" };
   } catch (error) {

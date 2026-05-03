@@ -6,6 +6,7 @@ import type { RegionId } from "@/lib/regions";
 import { loggedFetch, debugLog, debugError } from "@/lib/api-logger";
 import { sessionOptions, type SessionData } from "@/lib/session";
 import { TokenRequestSchema } from "@/lib/schemas";
+import { probeMsearchEntitlement } from "@/lib/api/msearch-probe";
 
 export async function POST(request: NextRequest) {
   try {
@@ -59,12 +60,12 @@ export async function POST(request: NextRequest) {
     const tokenData = await tokenResponse.json();
     const accessToken = tokenData.access_token as string;
 
-    // Fetch profile to derive entitlements (stable for duration of login)
-    // monitoringCenter.productSKU mapping (empirical):
-    //   1 = includes Log Search (_msearch API works)
-    //   3 = basic monitoring (no Log Search — _msearch returns 200 + empty)
-    //   other/unknown = assume no _msearch
-    let monitoringCenterEnabled = false;
+    // Decide _msearch (Log Search) availability. Historically we inferred this
+    // from `organization.entitlements.monitoringCenter.productSKU` — but
+    // that field doesn't reliably line up with whether the API actually
+    // works (observed: SKU 3 orgs that call _msearch successfully). Now we
+    // probe the endpoint directly and record the SKU alongside it purely for
+    // diagnostics.
     let monitoringProductSKU: number | undefined;
     try {
       const profileRes = await loggedFetch(`${creds.baseUrl}/accounts/api/profile`, {
@@ -76,12 +77,16 @@ export async function POST(request: NextRequest) {
           organization?: { entitlements?: { monitoringCenter?: { productSKU?: number } } };
         };
         monitoringProductSKU = profile?.organization?.entitlements?.monitoringCenter?.productSKU;
-        monitoringCenterEnabled = monitoringProductSKU === 1;
-        debugLog(`[AUTH-TOKEN] monitoringCenter.productSKU=${monitoringProductSKU} → monitoringCenterEnabled=${monitoringCenterEnabled}`);
       }
     } catch (profileError) {
-      debugError("Profile fetch after login failed (using monitoringCenterEnabled=false):", profileError);
+      debugError("Profile fetch after login failed:", profileError);
     }
+
+    const monitoringCenterEnabled = await probeMsearchEntitlement(creds.baseUrl, accessToken);
+    debugLog(
+      `[AUTH-TOKEN] monitoringCenter.productSKU=${monitoringProductSKU} ` +
+        `_msearch probe → monitoringCenterEnabled=${monitoringCenterEnabled}`
+    );
 
     // Prepare session data
     const sessionData: SessionData = {

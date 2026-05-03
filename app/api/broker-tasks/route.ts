@@ -53,7 +53,12 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    // Strategy A: _msearch — only when org has Log Search (productSKU === 1)
+    // Strategy A: _msearch — attempted when the login probe said Log Search
+    // is reachable. Even then, we fall through to runtime logs if _msearch
+    // returns 0 tasks: some orgs' _msearch endpoint answers HTTP 200 but the
+    // Elasticsearch index is empty (observed with monitoringCenter.productSKU
+    // 3 accounts — Premium tier needed to populate ES). The runtime-logs
+    // strategy reads AMC logs directly and finds tasks in that case.
     if (hasMsearch) {
       const msearchResult = await fetchTasksViaMSearch({
         orgId,
@@ -64,7 +69,7 @@ export async function POST(request: NextRequest) {
         brokerAppName,
       });
 
-      if (msearchResult) {
+      if (msearchResult && msearchResult.tasks.length > 0) {
         debugLog(`[BROKER-TASKS] msearch returned ${msearchResult.tasks.length} tasks`);
         debugLog("[BROKER-TASKS] ========== END (msearch) ==========");
         return NextResponse.json({
@@ -75,11 +80,17 @@ export async function POST(request: NextRequest) {
           filters: { apiInstanceId },
         });
       }
+      if (msearchResult) {
+        debugLog(
+          `[BROKER-TASKS] msearch returned 0 tasks (totalLogs=${msearchResult.totalLogs}) — falling through to runtime-logs`
+        );
+      }
     } else {
-      debugLog("[BROKER-TASKS] Skipping msearch (monitoringCenterEnabled=false, productSKU !== 1)");
+      debugLog("[BROKER-TASKS] Skipping msearch (monitoringCenterEnabled=false)");
     }
 
-    // Strategy B: runtime logs (no Log Search entitlement, or msearch signalled fallback)
+    // Strategy B: runtime logs (no Log Search entitlement, msearch signalled
+    // fallback, or msearch found zero tasks).
     debugLog("[BROKER-TASKS] Using runtime-logs strategy");
     const runtimeResult = await fetchTasksViaRuntimeLogs({
       orgId,

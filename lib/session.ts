@@ -3,25 +3,47 @@ import { cookies } from "next/headers";
 import type { IronSession } from "iron-session";
 import { z } from "zod";
 
-// Zod schema for runtime validation
-const SessionDataSchema = z.object({
-  accessToken: z.string().optional(),
-  refreshToken: z.string().optional(),
-  expiresAt: z.number().optional(),
-  baseUrl: z.string().url().optional(),
-  oauthState: z.string().optional(),
-  invalidatedAt: z.number().optional(),
-  /** True only when monitoringCenter.productSKU === 1 (Log Search / _msearch available). SKU 3 = basic monitoring (no Log Search). */
-  monitoringCenterEnabled: z.boolean().optional(),
-  /** Raw productSKU from profile for debugging. */
-  monitoringProductSKU: z.number().optional(),
-});
+// Zod schema for runtime validation. `accessToken` + `expiresAt` must travel
+// together: a session that has one but not the other is corrupted and should
+// be destroyed rather than silently flip to "expired".
+const SessionDataSchema = z
+  .object({
+    accessToken: z.string().min(1).optional(),
+    refreshToken: z.string().min(1).optional(),
+    expiresAt: z.number().int().positive().optional(),
+    baseUrl: z.string().url().optional(),
+    oauthState: z.string().min(1).optional(),
+    invalidatedAt: z.number().int().positive().optional(),
+    /** True when the _msearch probe at login returned 200. Anypoint's `productSKU` field on the profile is not a reliable signal — some SKU 3 orgs can call _msearch — so we probe directly. */
+    monitoringCenterEnabled: z.boolean().optional(),
+    /** Raw productSKU from profile; kept for diagnostics only, not used for gating. */
+    monitoringProductSKU: z.number().optional(),
+  })
+  .refine(
+    (d) => (d.accessToken ? d.expiresAt !== undefined : true),
+    { message: "accessToken requires expiresAt" }
+  )
+  .refine(
+    (d) => (d.accessToken ? d.baseUrl !== undefined : true),
+    { message: "accessToken requires baseUrl" }
+  );
 
 export type SessionData = z.infer<typeof SessionDataSchema>;
 
 /** Iron-session encryption key for the auth cookie — not an Anypoint user password. Set `SESSION_SECRET` in production (e.g. Vercel). */
+function resolveSessionPassword(): string {
+  const secret = process.env.SESSION_SECRET;
+  if (secret && secret.length >= 32) return secret;
+  if (process.env.NODE_ENV === "development") {
+    return "dev-only-session-secret-change-me-change-me";
+  }
+  throw new Error(
+    "SESSION_SECRET is required (min 32 chars) in non-development environments. Set it in your deployment (e.g. Vercel) environment variables."
+  );
+}
+
 const sessionOptions = {
-  password: process.env.SESSION_SECRET || "change-me-to-a-random-secret-key-min-32-chars",
+  password: resolveSessionPassword(),
   cookieName: "ant_session",
   cookieOptions: {
     secure: process.env.NODE_ENV === "production",

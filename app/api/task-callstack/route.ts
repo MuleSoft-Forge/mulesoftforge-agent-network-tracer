@@ -38,6 +38,18 @@ Current scopes being requested: ${currentScopes}`;
 type DeploymentTypeHint = "HY" | "CH" | string | undefined;
 
 /**
+ * Read `target.deploymentSettings.persistentObjectStore` from an AMC
+ * deployment object if present. Returns `undefined` when the shape doesn't
+ * match (Hybrid API surface uses different keys).
+ */
+function readPersistentObjectStoreFlag(deployment: unknown): boolean | undefined {
+  const flag = (deployment as {
+    target?: { deploymentSettings?: { persistentObjectStore?: unknown } };
+  })?.target?.deploymentSettings?.persistentObjectStore;
+  return typeof flag === "boolean" ? flag : undefined;
+}
+
+/**
  * Fetch deployment detail via Hybrid (Runtime Manager) API. Used for HY deployments where AMC v2 returns 400 (e.g. ProviderType.RR).
  * Returns monitoring categories from application config if present; no region (Hybrid is not CloudHub).
  */
@@ -125,6 +137,14 @@ async function fetchDeploymentDetail(
   region?: string;
   monitoringSuggestions: ApiStatus["monitoringSuggestions"];
   deploymentApiStatus: "ok" | "403_forbidden";
+  /**
+   * `target.deploymentSettings.persistentObjectStore`. `false` for deployments
+   * without Object Store provisioned (common for Hybrid). When false we skip
+   * the Object Store lookup entirely — otherwise the partition-name fallback
+   * can latch onto an unrelated app's store and produce a misleading
+   * "Key not found". `undefined` when we couldn't determine it.
+   */
+  persistentObjectStore?: boolean;
 }> {
   debugLog("[fetchDeploymentDetail] ========== START ==========");
   debugLog(`[fetchDeploymentDetail] Input parameters:`);
@@ -185,8 +205,9 @@ async function fetchDeploymentDetail(
               const deployment = (await getRes.json()) as Record<string, unknown>;
               const region = getObjectStoreRegionFromDeployment(deployment as Parameters<typeof getObjectStoreRegionFromDeployment>[0]) ?? undefined;
               const monitoringSuggestions = getMonitoringLogCategoriesFromDeployment(deployment);
-              debugLog(`[fetchDeploymentDetail] AMC GET by id (from name): region=${region ?? "undefined"}, brokerLogger=${monitoringSuggestions.brokerLogger}, insecureLogging=${monitoringSuggestions.insecureLogging}`);
-              return { region, monitoringSuggestions, deploymentApiStatus: "ok" as const };
+              const persistentObjectStore = readPersistentObjectStoreFlag(deployment);
+              debugLog(`[fetchDeploymentDetail] AMC GET by id (from name): region=${region ?? "undefined"}, brokerLogger=${monitoringSuggestions.brokerLogger}, insecureLogging=${monitoringSuggestions.insecureLogging}, persistentObjectStore=${persistentObjectStore}`);
+              return { region, monitoringSuggestions, deploymentApiStatus: "ok" as const, persistentObjectStore };
             }
           }
         }
@@ -235,9 +256,10 @@ async function fetchDeploymentDetail(
   }
   debugLog(`[fetchDeploymentDetail] Calling getMonitoringLogCategoriesFromDeployment with AMC deployment object...`);
   const monitoringSuggestions = getMonitoringLogCategoriesFromDeployment(deployment);
-  debugLog(`[fetchDeploymentDetail] getMonitoringLogCategoriesFromDeployment returned: brokerLogger=${monitoringSuggestions.brokerLogger}, insecureLogging=${monitoringSuggestions.insecureLogging}`);
+  const persistentObjectStore = readPersistentObjectStoreFlag(deployment);
+  debugLog(`[fetchDeploymentDetail] getMonitoringLogCategoriesFromDeployment returned: brokerLogger=${monitoringSuggestions.brokerLogger}, insecureLogging=${monitoringSuggestions.insecureLogging}, persistentObjectStore=${persistentObjectStore}`);
   debugLog("[fetchDeploymentDetail] ========== END (AMC) ==========");
-  return { region, monitoringSuggestions, deploymentApiStatus: "ok" };
+  return { region, monitoringSuggestions, deploymentApiStatus: "ok", persistentObjectStore };
 }
 
 
@@ -766,7 +788,7 @@ async function fetchObjectStoreInNoEntitlementMode(
 ): Promise<{
   objectStore: {
     available: boolean;
-    objectStoreStatus?: "ok" | "403_forbidden" | "no_store" | "no_keys";
+    objectStoreStatus?: "ok" | "403_forbidden" | "no_store" | "no_keys" | "not_persisted";
     fromTasks?: unknown;
     llmReasoning?: unknown;
     toolCallIds?: string[];
@@ -842,7 +864,10 @@ async function fetchObjectStoreInNoEntitlementMode(
   const objectStoreRegion = deploymentDetail.region;
 
   try {
-    debugLog("[NO-ENTITLEMENT] Attempting Object Store fetch - orgId, envId, taskId, brokerName, deploymentId", orgId, envId, taskId, brokerName, deploymentId);
+    debugLog(
+      "[NO-ENTITLEMENT] Attempting Object Store fetch - orgId, envId, taskId, brokerName, deploymentId, persistentObjectStore",
+      orgId, envId, taskId, brokerName, deploymentId, deploymentDetail.persistentObjectStore
+    );
     const objectStoreData = await fetchObjectStoreData(
       orgId,
       envId,
@@ -852,7 +877,8 @@ async function fetchObjectStoreInNoEntitlementMode(
       accessToken,
       undefined,
       objectStoreRegion,
-      jobCard.startTime
+      jobCard.startTime,
+      deploymentDetail.persistentObjectStore
     );
     const status: ApiStatus["objectStore"] =
       objectStoreData.objectStoreStatus ??
@@ -1220,11 +1246,19 @@ export async function GET(request: NextRequest) {
       : { total: 0, hits: [] as unknown[], raw: {}, error: "MONITORING_CENTER_PREMIUM_REQUIRED" as const };
 
     if (!hasMsearch) {
-      debugLog("[TASK-CALLSTACK] Skipping msearch (monitoringCenterEnabled=false, productSKU !== 1)");
+      debugLog("[TASK-CALLSTACK] Skipping msearch (monitoringCenterEnabled=false)");
     }
-    
-    // No-entitlement mode: get task details from runtime logs
-    if (phase1.error === "MONITORING_CENTER_PREMIUM_REQUIRED") {
+
+    // No-entitlement mode: get task details from runtime logs.
+    // Triggered by either an explicit Premium-required signal OR msearch
+    // reaching the endpoint but finding nothing (observed with productSKU 3
+    // orgs whose _msearch returns 200 + empty because Premium is required to
+    // populate the ES index).
+    const msearchHadNoHits = hasMsearch && !phase1.error && (phase1.hits?.length ?? 0) === 0;
+    if (phase1.error === "MONITORING_CENTER_PREMIUM_REQUIRED" || msearchHadNoHits) {
+      if (msearchHadNoHits) {
+        debugLog("[TASK-CALLSTACK] msearch returned 0 hits — falling through to runtime logs");
+      }
       debugLog("[TASK-CALLSTACK] Decision: Premium required, entering no-entitlement mode");
       debugLog("[NO-ENTITLEMENT] Premium required, getting task details from runtime logs");
       const runtimeLogsResult = await getTaskDetailsFromRuntimeLogs(
@@ -1730,7 +1764,7 @@ export async function GET(request: NextRequest) {
     // Fetch Object Store data if we have envId and deployment ID (brokerName can be empty - we'll still get no_store/403/no_keys from client)
     let objectStoreData: {
       available: boolean;
-      objectStoreStatus?: "ok" | "403_forbidden" | "no_store" | "no_keys";
+      objectStoreStatus?: "ok" | "403_forbidden" | "no_store" | "no_keys" | "not_persisted";
       fromTasks?: { steps: Array<{ step: string; content: string[] }>; rawReasoning: string[] };
       llmReasoning?: {
         steps?: Array<{ step: string; content: string[] }>;
@@ -1797,6 +1831,8 @@ export async function GET(request: NextRequest) {
           debugLog(`[TASK-CALLSTACK]   - deploymentType: ${deploymentType || "unknown"}`);
           debugLog(`[TASK-CALLSTACK]   - objectStoreRegion: ${objectStoreRegion ?? "(none)"}`);
           debugLog(`[TASK-CALLSTACK]   - taskStartTime: ${taskStartTime ?? "undefined"}`);
+          const persistentObjectStoreFlag = deploymentDetail?.persistentObjectStore;
+          debugLog(`[TASK-CALLSTACK]   - persistentObjectStore: ${persistentObjectStoreFlag ?? "undefined"}`);
           const result = await fetchObjectStoreData(
           validatedOrgId,
           validatedEnvId,
@@ -1806,7 +1842,8 @@ export async function GET(request: NextRequest) {
             accessToken,
             deploymentType,
             objectStoreRegion,
-            taskStartTime
+            taskStartTime,
+            persistentObjectStoreFlag
           );
           debugLog(`[TASK-CALLSTACK] fetchObjectStoreData returned: available=${result.available}, objectStoreStatus=${result.objectStoreStatus ?? "undefined"}, errors=${result.errors?.length || 0}`);
           if (result.available) {
