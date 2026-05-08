@@ -1,6 +1,6 @@
 "use client";
 
-import { useReducer, useRef } from "react";
+import { useReducer, useRef, useEffect, useState } from "react";
 import AgentNetworkCanvas from "@/components/AgentNetworkCanvas";
 import BrokerUrlBar from "@/components/invoke/BrokerUrlBar";
 import ConversationPanel from "@/components/invoke/ConversationPanel";
@@ -13,6 +13,7 @@ import {
 import { getSkills } from "@/lib/invoke/discovery";
 import { buildInvokeGraph } from "@/lib/invoke/graph-builder";
 import type { CanonicalGraph } from "@/lib/agent-network-types";
+import type { BrokerInEnvironment } from "@/lib/visualizer/brokers-in-environment-types";
 
 const MIN_SIDEBAR = 280;
 const MAX_SIDEBAR = 580;
@@ -27,10 +28,31 @@ const SIDEBAR_TABS = [
 interface InvokeTabProps {
   /** Canonical graph from the current platform broker selection (if any). */
   canonicalGraph?: CanonicalGraph | null;
+  /** Broker selected in the left sidebar — used to auto-populate the URL bar. */
+  selectedBroker?: BrokerInEnvironment | null;
+  orgId?: string;
 }
 
-export default function InvokeTab({ canonicalGraph }: InvokeTabProps) {
+export default function InvokeTab({ canonicalGraph, selectedBroker, orgId }: InvokeTabProps) {
   const [state, dispatch] = useReducer(invokeReducer, INITIAL_INVOKE_STATE);
+  const [suggestedUrl, setSuggestedUrl] = useState<string | null>(null);
+
+  // When the sidebar broker changes, resolve its A2A URL from Exchange.
+  useEffect(() => {
+    if (!selectedBroker || !orgId) {
+      setSuggestedUrl(null);
+      return;
+    }
+    let cancelled = false;
+    const params = new URLSearchParams({ orgId, assetId: selectedBroker.assetId });
+    fetch(`/api/invoke/broker-url?${params.toString()}`)
+      .then((r) => r.json())
+      .then((data: { url?: string | null }) => {
+        if (!cancelled && data.url) setSuggestedUrl(data.url);
+      })
+      .catch(() => {/* best-effort */});
+    return () => { cancelled = true; };
+  }, [selectedBroker?.assetId, orgId]);
 
   // Drag-to-resize sidebar
   const sidebarWidthRef = useRef(DEFAULT_SIDEBAR);
@@ -126,6 +148,7 @@ export default function InvokeTab({ canonicalGraph }: InvokeTabProps) {
           processing={state.isProcessing}
           currentStep={state.currentStep}
           agentCard={state.agentCard}
+          suggestedUrl={suggestedUrl}
           dispatch={dispatch}
         />
 

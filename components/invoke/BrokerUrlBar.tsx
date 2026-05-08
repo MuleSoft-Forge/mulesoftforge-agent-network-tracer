@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, KeyboardEvent } from "react";
+import { useState, useRef, useEffect, KeyboardEvent } from "react";
 import type { AgentCard } from "@/lib/invoke/types";
 import { fetchAgentCard } from "@/lib/invoke/discovery";
 import type { InvokeAction } from "@/lib/invoke/types";
@@ -12,6 +12,8 @@ interface BrokerUrlBarProps {
   processing: boolean;
   currentStep: string;
   agentCard: AgentCard | null;
+  /** URL resolved from Exchange when a broker is selected in the sidebar. */
+  suggestedUrl?: string | null;
   dispatch: Dispatch<InvokeAction>;
 }
 
@@ -21,9 +23,16 @@ export default function BrokerUrlBar({
   processing,
   currentStep,
   agentCard,
+  suggestedUrl,
   dispatch,
 }: BrokerUrlBarProps) {
   const [inputUrl, setInputUrl] = useState(url);
+
+  // Pre-fill the input whenever a new suggestion arrives and the broker is not
+  // already loaded (don't overwrite an active session).
+  useEffect(() => {
+    if (!loaded && suggestedUrl) setInputUrl(suggestedUrl);
+  }, [suggestedUrl, loaded]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -133,7 +142,7 @@ export default function BrokerUrlBar({
           value={inputUrl}
           onChange={(e) => setInputUrl(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="https://…/broker-path/"
+          placeholder={suggestedUrl ? suggestedUrl : "https://…/broker-path/"}
           disabled={loading}
           className="flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs text-gray-900 placeholder-gray-400 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-60"
         />
