@@ -20,6 +20,8 @@ const MAX_ZOOM = 3;
 const ZOOM_SENSITIVITY = 0.001;
 const CANVAS_SIZE = 2000; // Large canvas for freeform movement
 
+export type InvokeNodeStatus = "idle" | "active" | "complete" | "error";
+
 interface AgentNetworkCanvasProps {
   graph: CanonicalGraph | null;
   edgeStyle?: EdgeStyle;
@@ -29,6 +31,10 @@ interface AgentNetworkCanvasProps {
   nodeFilters?: NodeFilters;
   onNodeFiltersChange?: (filters: NodeFilters) => void;
   className?: string;
+  /** Optional: per-node status driven by the Invoke flow engine */
+  nodeStatuses?: Record<string, InvokeNodeStatus>;
+  /** Optional: the node currently being processed (drives edge animation) */
+  activeNodeId?: string | null;
 }
 
 const BEND_OFFSET = 48;
@@ -49,6 +55,8 @@ export default function AgentNetworkCanvas({
   nodeFilters = { showAgents: true, showMCPServers: true, showLLM: true },
   onNodeFiltersChange,
   className = "",
+  nodeStatuses = {},
+  activeNodeId = null,
 }: AgentNetworkCanvasProps) {
   // All hooks must be called before any conditional returns
   const [viewBox, setViewBox] = useState({ x: 0, y: 0, width: CANVAS_SIZE, height: CANVAS_SIZE });
@@ -567,6 +575,15 @@ export default function AgentNetworkCanvas({
           <filter id="node-shadow" x="-20%" y="-20%" width="140%" height="140%">
             <feDropShadow dx="0" dy="2" stdDeviation="3" floodColor="#000" floodOpacity="0.12" />
           </filter>
+          <filter id="node-active-glow" x="-40%" y="-40%" width="180%" height="180%">
+            <feDropShadow dx="0" dy="0" stdDeviation="6" floodColor="#5e66f9" floodOpacity="0.55" />
+          </filter>
+          <filter id="node-complete-glow" x="-40%" y="-40%" width="180%" height="180%">
+            <feDropShadow dx="0" dy="0" stdDeviation="4" floodColor="#059669" floodOpacity="0.45" />
+          </filter>
+          <filter id="node-error-glow" x="-40%" y="-40%" width="180%" height="180%">
+            <feDropShadow dx="0" dy="0" stdDeviation="4" floodColor="#dc2626" floodOpacity="0.5" />
+          </filter>
           <marker
             id="arrow"
             markerWidth={8}
@@ -586,6 +603,16 @@ export default function AgentNetworkCanvas({
             orient="auto"
           >
             <path d="M0,0 L8,4 L0,8 Z" fill="#dc2626" />
+          </marker>
+          <marker
+            id="arrow-invoke"
+            markerWidth={8}
+            markerHeight={8}
+            refX={6}
+            refY={4}
+            orient="auto"
+          >
+            <path d="M0,0 L8,4 L0,8 Z" fill="#5e66f9" />
           </marker>
         </defs>
         {filteredEdges.map((e: CanonicalEdge) => {
@@ -615,9 +642,20 @@ export default function AgentNetworkCanvas({
           const isHovered = hoveredEdgeId === e.id;
           const dimmed = hoveredEdgeId !== null && !isHovered;
           const edgeOpacity = dimmed ? 0.25 : 1;
-          const edgeStroke = e.active ? "#dc2626" : "#94a3b8";
-          const markerEnd = e.active ? "url(#arrow-active)" : "url(#arrow)";
-          const strokeW = (isHovered ? 2.2 : 1.5) + (e.active ? 0.5 : 0);
+          const isInvokeActive =
+            activeNodeId !== null &&
+            (e.source === activeNodeId || e.target === activeNodeId);
+          const edgeStroke = e.active
+            ? "#dc2626"
+            : isInvokeActive
+            ? "#5e66f9"
+            : "#94a3b8";
+          const markerEnd = e.active
+            ? "url(#arrow-active)"
+            : isInvokeActive
+            ? "url(#arrow-invoke)"
+            : "url(#arrow)";
+          const strokeW = (isHovered ? 2.2 : 1.5) + (e.active || isInvokeActive ? 0.8 : 0);
           
           if (edgeStyle === "bent") {
             const dx = x2 - x1;
@@ -633,7 +671,6 @@ export default function AgentNetworkCanvas({
                 onMouseLeave={() => setHoveredEdgeId(null)}
                 className="cursor-pointer"
               >
-                {/* Invisible wide stroke for easier hover */}
                 <path d={d} fill="none" stroke="transparent" strokeWidth={14} />
                 <path
                   d={d}
@@ -641,8 +678,19 @@ export default function AgentNetworkCanvas({
                   stroke={edgeStroke}
                   strokeWidth={strokeW}
                   markerEnd={markerEnd}
+                  strokeDasharray={isInvokeActive ? "8 4" : undefined}
                   style={{ opacity: edgeOpacity }}
-                />
+                >
+                  {isInvokeActive && (
+                    <animate
+                      attributeName="stroke-dashoffset"
+                      from="36"
+                      to="0"
+                      dur="0.8s"
+                      repeatCount="indefinite"
+                    />
+                  )}
+                </path>
               </g>
             );
           }
@@ -662,8 +710,19 @@ export default function AgentNetworkCanvas({
                 stroke={edgeStroke}
                 strokeWidth={strokeW}
                 markerEnd={markerEnd}
+                strokeDasharray={isInvokeActive ? "8 4" : undefined}
                 style={{ opacity: edgeOpacity }}
-              />
+              >
+                {isInvokeActive && (
+                  <animate
+                    attributeName="stroke-dashoffset"
+                    from="36"
+                    to="0"
+                    dur="0.8s"
+                    repeatCount="indefinite"
+                  />
+                )}
+              </line>
             </g>
           );
         })}
@@ -671,6 +730,7 @@ export default function AgentNetworkCanvas({
           const pos = positions.get(n.id);
           if (!pos) return null;
           const isDragging = draggedNodeId === n.id;
+          const invokeStatus = nodeStatuses[n.id];
           const hasIcon = !!n.icon;
           const defaultIconByType: Record<string, string> = {
             MCP: "/mcp-icon-default.png",
@@ -713,13 +773,64 @@ export default function AgentNetworkCanvas({
                 width={NODE_WIDTH}
                 height={NODE_HEIGHT}
                 rx={8}
-                fill="white"
-                stroke={typeColor(n.type)}
-                strokeWidth={isDragging ? 3 : hoveredNodeId === n.id ? 2.5 : 2}
-                filter={hoveredNodeId === n.id || isDragging ? "url(#node-shadow)" : undefined}
+                fill={
+                  invokeStatus === "complete"
+                    ? "#f0fdf4"
+                    : invokeStatus === "error"
+                    ? "#fef2f2"
+                    : "white"
+                }
+                stroke={
+                  invokeStatus === "active"
+                    ? "#5e66f9"
+                    : invokeStatus === "complete"
+                    ? "#059669"
+                    : invokeStatus === "error"
+                    ? "#dc2626"
+                    : typeColor(n.type)
+                }
+                strokeWidth={invokeStatus === "active" ? 2.5 : isDragging ? 3 : hoveredNodeId === n.id ? 2.5 : 2}
+                filter={
+                  invokeStatus === "active"
+                    ? "url(#node-active-glow)"
+                    : invokeStatus === "complete"
+                    ? "url(#node-complete-glow)"
+                    : invokeStatus === "error"
+                    ? "url(#node-error-glow)"
+                    : hoveredNodeId === n.id || isDragging
+                    ? "url(#node-shadow)"
+                    : undefined
+                }
                 className={isDragging ? "cursor-grabbing" : "cursor-move"}
                 style={{ opacity: isDragging ? 0.8 : 1 }}
               />
+              {/* Invoke active: pulsing outer ring */}
+              {invokeStatus === "active" && (
+                <rect
+                  x={pos.x - 4}
+                  y={pos.y - 4}
+                  width={NODE_WIDTH + 8}
+                  height={NODE_HEIGHT + 8}
+                  rx={12}
+                  fill="none"
+                  stroke="#5e66f9"
+                  strokeWidth={2}
+                  className="pointer-events-none"
+                >
+                  <animate
+                    attributeName="opacity"
+                    values="0.8;0.1;0.8"
+                    dur="1.2s"
+                    repeatCount="indefinite"
+                  />
+                  <animate
+                    attributeName="stroke-width"
+                    values="2;4;2"
+                    dur="1.2s"
+                    repeatCount="indefinite"
+                  />
+                </rect>
+              )}
               {/* Selection ring */}
               {selectedNodeId === n.id && (
                 <rect

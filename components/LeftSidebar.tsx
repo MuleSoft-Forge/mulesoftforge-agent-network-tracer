@@ -26,7 +26,7 @@ function getStoredExpanded(): boolean {
   }
 }
 
-export type ViewMode = "activity" | "exchange" | "llmProxy";
+export type ViewMode = "invoke" | "activity" | "exchange" | "llmProxy";
 
 interface LeftSidebarProps {
   viewMode?: ViewMode;

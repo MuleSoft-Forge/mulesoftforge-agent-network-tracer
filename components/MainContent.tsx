@@ -11,6 +11,7 @@ import ExchangeDiffSummary from "@/components/ExchangeDiffSummary";
 import ExchangeFileDiff from "@/components/ExchangeFileDiff";
 import type { ExchangeFileEntry } from "@/components/ExchangeFileDiff";
 import LlmProxyTab from "@/components/llmProxy/LlmProxyTab";
+import InvokeTab from "@/components/invoke/InvokeTab";
 import { useDebugViewer } from "@/components/debug/useDebugViewer";
 import { useBrokersList } from "@/components/main-content/useBrokersList";
 import { useFabricGraph } from "@/components/main-content/useFabricGraph";
@@ -91,7 +92,7 @@ export default function MainContent() {
       const prev = prevOrgEnvRef.current;
       const changed =
         (prev.orgId !== newOrgId || prev.envId !== newEnvId) && prev.orgId && prev.envId;
-      if (changed) {
+    if (changed) {
         setBrokers([]);
         setSelectedBroker(null);
         setError(null);
@@ -102,6 +103,7 @@ export default function MainContent() {
     },
     [setBrokers, setSelectedBroker, setError]
   );
+  
 
   // Brokers don't depend on activity period (only tasks do), so we just clear errors here.
   const handleActivityPeriodChange = useCallback(
@@ -131,12 +133,11 @@ export default function MainContent() {
   const handleViewModeChange = useCallback(
     (mode: ViewMode) => {
       setViewMode(mode);
-      // Every non-activity mode clears the task selection; Exchange owns its own reset.
       if (mode === "exchange") {
         setSelectedTaskId(null);
         setTasksMode(null);
         exchange.reset();
-      } else if (mode === "llmProxy") {
+      } else if (mode === "llmProxy" || mode === "invoke") {
         setSelectedTaskId(null);
         setTasksMode(null);
         exchange.reset({ keepTab: true });
@@ -224,6 +225,19 @@ export default function MainContent() {
           <div className="flex items-center gap-2">
             <button
               type="button"
+              onClick={() => handleViewModeChange("invoke")}
+              className={`rounded-anypoint-button px-3 py-1.5 text-sm font-medium transition-all duration-200 ease-[cubic-bezier(0.46,0.03,0.52,0.96)] ${
+                viewMode === "invoke"
+                  ? "bg-gradient-to-r from-primary to-purple-600 text-white shadow-md hover:shadow-lg"
+                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+              }`}
+              aria-label="Invoke broker"
+              aria-pressed={viewMode === "invoke"}
+            >
+              Invoke
+            </button>
+            <button
+              type="button"
               onClick={() => handleViewModeChange("activity")}
               className={`rounded-anypoint-button px-3 py-1.5 text-sm font-medium transition-all duration-200 ease-[cubic-bezier(0.46,0.03,0.52,0.96)] ${
                 viewMode === "activity"
@@ -273,7 +287,10 @@ export default function MainContent() {
           )}
         </div>
         
-        {viewMode === "llmProxy" ? (
+        {viewMode === "invoke" ? (
+          /* ===== INVOKE MODE ===== */
+          <InvokeTab canonicalGraph={graph} />
+        ) : viewMode === "llmProxy" ? (
           /* ===== LLM PROXY MODE ===== */
           <LlmProxyTab orgId={orgId} envId={envId} />
         ) : viewMode === "activity" ? (
