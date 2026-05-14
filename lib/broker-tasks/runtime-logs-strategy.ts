@@ -378,6 +378,13 @@ async function tryEnvironmentApproaches(
 // Log text → task accumulators
 // ---------------------------------------------------------------------------
 
+const BROKER_ERROR_PATTERNS = [
+  /task-listener.*failed to send response/i,
+  /AGENTS-BROKER:TOOL_ERROR/i,
+  /MonoDeferContextual/,
+  /Did not observe any item or terminal signal/,
+];
+
 function parseLogsForTasks(logsText: string, targetApiInstanceId: string): BrokerTaskAccumulator[] {
   const tasks: Record<string, BrokerTaskAccumulator> = {};
   const logLines = logsText.split("\n").filter((line: string) => line.trim().length > 0);
@@ -398,11 +405,22 @@ function parseLogsForTasks(logsText: string, targetApiInstanceId: string): Broke
     "gi"
   );
 
+  const unmatchedErrors: Array<{ msg: string; ts: string }> = [];
+
   for (const line of logLines) {
     let apiInstanceMatch = apiInstanceRegex.test(line);
     if (!apiInstanceMatch) {
       apiInstanceMatch = jsonApiInstanceRegex.test(line);
-      if (!apiInstanceMatch) continue;
+      if (!apiInstanceMatch) {
+        if (BROKER_ERROR_PATTERNS.some(re => re.test(line))) {
+          const tsMatch = line.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)/);
+          unmatchedErrors.push({
+            msg: line,
+            ts: tsMatch ? tsMatch[1] : new Date().toISOString(),
+          });
+        }
+        continue;
+      }
       jsonApiInstanceRegex.lastIndex = 0;
     }
     apiInstanceRegex.lastIndex = 0;
@@ -472,6 +490,55 @@ function parseLogsForTasks(logsText: string, targetApiInstanceId: string): Broke
     }
   }
 
+  if (unmatchedErrors.length > 0) {
+    const errorTasks = groupBrokerErrors(unmatchedErrors, targetApiInstanceId);
+    for (const et of errorTasks) {
+      if (!tasks[et.taskId]) tasks[et.taskId] = et;
+    }
+    debugLog(`[RUNTIME-LOGS] Found ${errorTasks.length} error-only broker run(s) without taskId`);
+  }
+
   debugLog("[RUNTIME-LOGS] Parsed", Object.keys(tasks).length, "tasks from", logLines.length, "lines");
   return Object.values(tasks);
+}
+
+function groupBrokerErrors(
+  errors: Array<{ msg: string; ts: string }>,
+  fallbackApiInstanceId: string
+): BrokerTaskAccumulator[] {
+  if (errors.length === 0) return [];
+  errors.sort((a, b) => a.ts.localeCompare(b.ts));
+
+  const groups: Array<typeof errors> = [];
+  let current = [errors[0]];
+  for (let i = 1; i < errors.length; i++) {
+    const gap = new Date(errors[i].ts).getTime() - new Date(errors[i - 1].ts).getTime();
+    if (gap <= 5_000) {
+      current.push(errors[i]);
+    } else {
+      groups.push(current);
+      current = [errors[i]];
+    }
+  }
+  groups.push(current);
+
+  return groups.map((g) => {
+    const syntheticId = `err-${new Date(g[0].ts).getTime()}`;
+    const firstMsg = g[0].msg;
+    const errorSnippet = firstMsg.length > 120 ? firstMsg.slice(0, 120) + "…" : firstMsg;
+    return {
+      taskId: syntheticId,
+      contextId: "",
+      broker: "broker (error)",
+      firstTool: `ERROR: ${errorSnippet}`,
+      startTime: g[0].ts,
+      endTime: g[g.length - 1].ts,
+      maxIteration: 0,
+      toolsUsed: new Set<string>(),
+      appId: "",
+      apiInstanceId: fallbackApiInstanceId,
+      logCount: g.length,
+      status: "error" as const,
+    };
+  });
 }

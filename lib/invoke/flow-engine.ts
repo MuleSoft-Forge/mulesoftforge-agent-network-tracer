@@ -1,7 +1,7 @@
 import type { Dispatch } from "react";
 import type { CanonicalGraph } from "@/lib/agent-network-types";
-import type { InvokeAction, InvokeMessage, TraceEvent, TraceEventType } from "./types";
-import { findBrokerNodeId, findCanonicalNodeForSkill } from "./graph-builder";
+import type { InvokeAction, InvokeMessage } from "./types";
+import { findBrokerNodeId } from "./graph-builder";
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -11,10 +11,6 @@ function newMsg(
   attribution?: InvokeMessage["attribution"]
 ): InvokeMessage {
   return { id: crypto.randomUUID(), role, content, attribution, timestamp: new Date() };
-}
-
-function newTrace(type: TraceEventType, message: string, data?: unknown): TraceEvent {
-  return { id: crypto.randomUUID(), timestamp: new Date(), type, message, data };
 }
 
 // ── A2A response extraction ───────────────────────────────────────────────────
@@ -123,21 +119,15 @@ function synthesize(results: { name: string; text: string }[], query: string): s
   return `Data from ${results.length} agents for "${query.slice(0, 60)}${query.length > 60 ? "…" : ""}":\n\n${parts}\n\nAll systems nominal.`;
 }
 
-// ── Real broker call (direct from browser) ───────────────────────────────────
+// ── Real broker call (via same-origin server proxy) ──────────────────────────
 
 export async function callRealBroker(
   userMessage: string,
   brokerUrl: string,
   graph: CanonicalGraph,
   preferredNodeId: string | undefined,
-  dispatch: Dispatch<InvokeAction>,
-  verbosity: "low" | "medium" | "high"
+  dispatch: Dispatch<InvokeAction>
 ): Promise<void> {
-  const trace = (type: TraceEventType, message: string, data?: unknown) => {
-    if (verbosity === "low" && type === "routing") return;
-    dispatch({ type: "ADD_TRACE", event: newTrace(type, message, data) });
-  };
-
   const brokerId = findBrokerNodeId(graph);
   const targetNodeIds = detectTargetNodeIds(userMessage, graph, preferredNodeId);
   const targetNodes = graph.nodes.filter((n) => targetNodeIds.includes(n.id));
@@ -149,27 +139,17 @@ export async function callRealBroker(
     dispatch({ type: "SET_NODE_STATUS", nodeId: brokerId, status: "active" });
     dispatch({ type: "SET_ACTIVE_NODE", nodeId: brokerId });
   }
-  trace("api_call", `POST ${brokerUrl}`);
 
   let responseText = "";
   let callError = "";
 
   try {
-    const res = await fetch(brokerUrl, {
+    const res = await fetch("/api/invoke/broker", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: crypto.randomUUID(),
-        method: "message/send",
-        params: {
-          message: {
-            role: "user",
-            kind: "message",
-            parts: [{ kind: "text", text: userMessage }],
-            messageId: crypto.randomUUID(),
-          },
-        },
+        brokerUrl,
+        message: userMessage,
       }),
     });
 
@@ -187,7 +167,6 @@ export async function callRealBroker(
 
   if (callError) {
     if (brokerId) dispatch({ type: "SET_NODE_STATUS", nodeId: brokerId, status: "error" });
-    trace("error", `Error: ${callError}`);
     dispatch({
       type: "ADD_MESSAGE",
       message: newMsg("error", `Broker call failed: ${callError}`),
@@ -205,10 +184,8 @@ export async function callRealBroker(
     dispatch({ type: "SET_CURRENT_STEP", step: `${n.label} handling…` });
     dispatch({ type: "SET_NODE_STATUS", nodeId: n.id, status: "active" });
     dispatch({ type: "SET_ACTIVE_NODE", nodeId: n.id });
-    trace("api_call", `${n.label}: handling request`);
     await delay(400);
     dispatch({ type: "SET_NODE_STATUS", nodeId: n.id, status: "complete" });
-    trace("response", `${n.label}: response returned`);
     await delay(150);
   }
 
@@ -217,7 +194,6 @@ export async function callRealBroker(
     dispatch({ type: "SET_NODE_STATUS", nodeId: brokerId, status: "active" });
     dispatch({ type: "SET_ACTIVE_NODE", nodeId: brokerId });
   }
-  trace("routing", "Synthesising final response…");
   await delay(300);
   if (brokerId) dispatch({ type: "SET_NODE_STATUS", nodeId: brokerId, status: "complete" });
 
@@ -229,7 +205,6 @@ export async function callRealBroker(
       targetNodes.map((n) => ({ name: n.label, nodeType: n.type }))
     ),
   });
-  trace("response", "Response delivered.");
 
   dispatch({ type: "SET_PROCESSING", value: false });
   dispatch({ type: "SET_ACTIVE_NODE", nodeId: null });
@@ -237,23 +212,16 @@ export async function callRealBroker(
   dispatch({ type: "RESET_NODE_STATUSES" });
 }
 
-// ── Simulation ────────────────────────────────────────────────────────────────
+// ── Simulation (no broker URL) ──────────────────────────────────────────────
+
+const SIM_STEP_MS = 400;
 
 export async function runSimulation(
   userMessage: string,
   graph: CanonicalGraph,
   preferredNodeId: string | undefined,
-  dispatch: Dispatch<InvokeAction>,
-  simulateLatency: boolean,
-  simulateErrors: boolean,
-  verbosity: "low" | "medium" | "high"
+  dispatch: Dispatch<InvokeAction>
 ): Promise<void> {
-  const step = simulateLatency ? 550 : 80;
-  const trace = (type: TraceEventType, message: string, data?: unknown) => {
-    if (verbosity === "low" && type === "routing") return;
-    dispatch({ type: "ADD_TRACE", event: newTrace(type, message, data) });
-  };
-
   const brokerId = findBrokerNodeId(graph);
   const targetNodeIds = detectTargetNodeIds(userMessage, graph, preferredNodeId);
   const targetNodes = graph.nodes.filter((n) => targetNodeIds.includes(n.id));
@@ -261,40 +229,29 @@ export async function runSimulation(
   dispatch({ type: "SET_PROCESSING", value: true, step: "Sending query…" });
   dispatch({ type: "RESET_NODE_STATUSES" });
 
-  await delay(step * 0.6);
+  await delay(SIM_STEP_MS * 0.6);
 
   dispatch({ type: "SET_CURRENT_STEP", step: "Broker routing…" });
   if (brokerId) {
     dispatch({ type: "SET_NODE_STATUS", nodeId: brokerId, status: "active" });
     dispatch({ type: "SET_ACTIVE_NODE", nodeId: brokerId });
   }
-  trace("routing", "Analysing intent and selecting target agents…");
-  await delay(step);
+  await delay(SIM_STEP_MS);
 
-  if (simulateErrors && Math.random() < 0.1) {
-    trace("error", "Rate limit encountered — retrying…");
-    await delay(step * 0.5);
-  }
-
-  trace(
-    "routing",
-    `Routing to: ${targetNodes.map((n) => n.label).join(", ")}`,
-    { targets: targetNodeIds }
-  );
+  dispatch({ type: "SET_CURRENT_STEP", step: `Routing to ${targetNodes.map((n) => n.label).join(", ")}…` });
+  await delay(SIM_STEP_MS * 0.5);
 
   const results: { name: string; text: string }[] = [];
   for (const n of targetNodes) {
     dispatch({ type: "SET_CURRENT_STEP", step: `${n.label} running…` });
     dispatch({ type: "SET_NODE_STATUS", nodeId: n.id, status: "active" });
     dispatch({ type: "SET_ACTIVE_NODE", nodeId: n.id });
-    trace("api_call", `${n.label}: processing request`);
-    await delay(step * 1.2);
+    await delay(SIM_STEP_MS * 1.2);
 
     const text = getSimulatedResponse(n.label, userMessage);
-    trace("response", text);
     dispatch({ type: "SET_NODE_STATUS", nodeId: n.id, status: "complete" });
     results.push({ name: n.label, text });
-    await delay(step * 0.25);
+    await delay(SIM_STEP_MS * 0.25);
   }
 
   dispatch({ type: "SET_CURRENT_STEP", step: "Synthesising…" });
@@ -302,8 +259,7 @@ export async function runSimulation(
     dispatch({ type: "SET_NODE_STATUS", nodeId: brokerId, status: "active" });
     dispatch({ type: "SET_ACTIVE_NODE", nodeId: brokerId });
   }
-  trace("routing", "All agents responded. Synthesising final answer…");
-  await delay(step * 0.8);
+  await delay(SIM_STEP_MS * 0.8);
   if (brokerId) dispatch({ type: "SET_NODE_STATUS", nodeId: brokerId, status: "complete" });
 
   const finalResponse = synthesize(results, userMessage);
@@ -315,7 +271,6 @@ export async function runSimulation(
       targetNodes.map((n) => ({ name: n.label, nodeType: n.type }))
     ),
   });
-  trace("response", "Final response delivered.");
 
   dispatch({ type: "SET_PROCESSING", value: false });
   dispatch({ type: "SET_ACTIVE_NODE", nodeId: null });
@@ -329,25 +284,12 @@ export async function handleSend(
   brokerUrl: string,
   graph: CanonicalGraph,
   preferredNodeId: string | undefined,
-  dispatch: Dispatch<InvokeAction>,
-  opts: {
-    simulateLatency: boolean;
-    simulateErrors: boolean;
-    verbosity: "low" | "medium" | "high";
-  }
+  dispatch: Dispatch<InvokeAction>
 ): Promise<void> {
   dispatch({ type: "ADD_MESSAGE", message: newMsg("user", userMessage) });
 
   if (brokerUrl.trim()) {
-    return callRealBroker(userMessage, brokerUrl, graph, preferredNodeId, dispatch, opts.verbosity);
+    return callRealBroker(userMessage, brokerUrl, graph, preferredNodeId, dispatch);
   }
-  return runSimulation(
-    userMessage,
-    graph,
-    preferredNodeId,
-    dispatch,
-    opts.simulateLatency,
-    opts.simulateErrors,
-    opts.verbosity
-  );
+  return runSimulation(userMessage, graph, preferredNodeId, dispatch);
 }

@@ -684,6 +684,28 @@ export default function TaskDetails({ orgId, taskId, envId, apiInstanceId, skipT
     );
   }
 
+  // Synthetic error tasks (err-*) have no real callstack — show error info
+  if (taskId.startsWith("err-")) {
+    const ts = parseInt(taskId.replace("err-", ""), 10);
+    const when = Number.isFinite(ts) ? new Date(ts).toLocaleString() : "Unknown time";
+    return (
+      <div className="flex h-full flex-col items-center justify-center px-4">
+        <div className="rounded-lg border border-red-200 bg-red-50 p-5 max-w-lg">
+          <p className="text-sm font-semibold text-red-900 mb-2">Broker Error</p>
+          <p className="text-xs text-red-800 mb-3">
+            The broker attempted to run at <span className="font-medium">{when}</span> but
+            failed before completing a task. No call stack is available for error-only runs.
+          </p>
+          <p className="text-xs text-gray-600">
+            This typically means the broker received a request but timed out or encountered an
+            internal error (e.g. <code className="text-[11px] bg-red-100 px-1 rounded">MonoDeferContextual</code> timeout)
+            before it could dispatch to an agent or execute any tools.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   // Handle case when resource is null (shouldn't happen if taskId exists, but type-safe)
   if (!taskResource) {
     return null;

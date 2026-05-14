@@ -5,6 +5,7 @@ import type { AgentCard } from "@/lib/invoke/types";
 import { fetchAgentCard } from "@/lib/invoke/discovery";
 import type { InvokeAction } from "@/lib/invoke/types";
 import type { Dispatch } from "react";
+import { urlContainsIngressPlaceholder } from "@/lib/invoke/ingress-gateway-url";
 
 interface BrokerUrlBarProps {
   url: string;
@@ -15,6 +16,8 @@ interface BrokerUrlBarProps {
   /** URL resolved from Exchange when a broker is selected in the sidebar. */
   suggestedUrl?: string | null;
   dispatch: Dispatch<InvokeAction>;
+  /** When set, `${ingressgw.url}` in the bar can be expanded via API Manager before Load. */
+  resolveContext?: { orgId: string; envId: string; apiInstanceId: string };
 }
 
 export default function BrokerUrlBar({
@@ -25,6 +28,7 @@ export default function BrokerUrlBar({
   agentCard,
   suggestedUrl,
   dispatch,
+  resolveContext,
 }: BrokerUrlBarProps) {
   const [inputUrl, setInputUrl] = useState(url);
 
@@ -38,14 +42,45 @@ export default function BrokerUrlBar({
   const [refreshing, setRefreshing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  async function resolveIngressUrlIfNeeded(candidate: string): Promise<string> {
+    if (!urlContainsIngressPlaceholder(candidate) || !resolveContext) {
+      return candidate;
+    }
+    const params = new URLSearchParams({
+      orgId: resolveContext.orgId,
+      envId: resolveContext.envId,
+      apiInstanceId: resolveContext.apiInstanceId,
+      resolveUrl: candidate,
+    });
+    const res = await fetch(`/api/invoke/broker-url?${params.toString()}`);
+    const data = (await res.json()) as {
+      url?: string | null;
+      message?: string;
+      error?: string;
+    };
+    if (!res.ok || !data.url) {
+      throw new Error(
+        data.message ?? data.error ?? "Could not resolve gateway URL from API Manager (${ingressgw.url})."
+      );
+    }
+    return data.url;
+  }
+
   async function handleLoad(bustCache = false) {
-    const trimmed = inputUrl.trim();
+    let trimmed = inputUrl.trim();
     if (!trimmed || loading) return;
     setLoading(true);
     setError(null);
     try {
+      trimmed = await resolveIngressUrlIfNeeded(trimmed);
+      setInputUrl(trimmed);
+
       const card = await fetchAgentCard(trimmed, { bustCache });
-      dispatch({ type: "SET_BROKER", url: trimmed, card });
+      let resolvedUrl = card?.url?.trim() || trimmed;
+      if (urlContainsIngressPlaceholder(resolvedUrl) && resolveContext) {
+        resolvedUrl = await resolveIngressUrlIfNeeded(resolvedUrl);
+      }
+      dispatch({ type: "SET_BROKER", url: resolvedUrl, card });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load broker");
     } finally {
@@ -58,8 +93,16 @@ export default function BrokerUrlBar({
     setRefreshing(true);
     setError(null);
     try {
-      const card = await fetchAgentCard(url, { bustCache: true });
-      dispatch({ type: "SET_BROKER", url, card });
+      let fetchUrl = url;
+      if (urlContainsIngressPlaceholder(fetchUrl) && resolveContext) {
+        fetchUrl = await resolveIngressUrlIfNeeded(fetchUrl);
+      }
+      const card = await fetchAgentCard(fetchUrl, { bustCache: true });
+      let resolvedUrl = card?.url?.trim() || fetchUrl;
+      if (urlContainsIngressPlaceholder(resolvedUrl) && resolveContext) {
+        resolvedUrl = await resolveIngressUrlIfNeeded(resolvedUrl);
+      }
+      dispatch({ type: "SET_BROKER", url: resolvedUrl, card });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Refresh failed");
     } finally {
@@ -165,7 +208,7 @@ export default function BrokerUrlBar({
       {error && <p className="text-[11px] text-red-500">{error}</p>}
       <p className="text-[11px] text-gray-400">
         Fetches the agent card via <code className="font-mono">/.well-known/agent-card.json</code>.
-        A2A calls go directly from your browser.
+        A2A calls are proxied via this app server to avoid CORS.
       </p>
     </div>
   );

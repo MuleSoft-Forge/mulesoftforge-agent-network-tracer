@@ -26,6 +26,8 @@ export const BrokerTasksRequestSchema = z.object({
   apiInstanceId: z.string().min(1).max(200),
   envId: z.string().min(1).max(100).optional(),
   timeRangeMs: z.number().int().positive().max(7 * 24 * 3600 * 1000).optional(),
+  /** When true, response includes `msearchDiagnostics` (probe totals + sample fields/previews). */
+  includeMsearchDiagnostics: z.boolean().optional(),
 });
 
 export const BrokerTasksResponseSchema = z.object({

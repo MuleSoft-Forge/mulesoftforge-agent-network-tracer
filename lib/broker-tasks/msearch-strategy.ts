@@ -8,7 +8,13 @@
 
 import { debugLog } from "@/lib/api-logger";
 import { msearch } from "@/lib/api/msearch";
-import type { BrokerTaskAccumulator, BrokerTask, BrokerTasksResult } from "./types";
+import type { MSearchResult } from "@/lib/api/msearch";
+import type {
+  BrokerTaskAccumulator,
+  BrokerTasksResult,
+  MsearchDiagnostics,
+  MsearchProbeSummary,
+} from "./types";
 import { finaliseTasks } from "./types";
 
 export interface MSearchStrategyParams {
@@ -19,6 +25,51 @@ export interface MSearchStrategyParams {
   timeRangeMs: number;
   /** If set, only hits whose _source.appId matches are kept (post-filter). */
   brokerAppName?: string;
+  /** Run org-wide + wildcard probes and attach `msearchDiagnostics` (extra _msearch calls). */
+  includeDiagnostics?: boolean;
+}
+
+function probeSummary(lucene: string, result: MSearchResult): MsearchProbeSummary {
+  if (result.error) {
+    return { lucene, total: 0, returned: 0, error: result.error };
+  }
+  const first = result.hits[0] as { _source?: Record<string, unknown> } | undefined;
+  const src = first?._source;
+  const msg = src?.message;
+  return {
+    lucene,
+    total: result.total,
+    returned: result.hits.length,
+    ...(typeof result.shardFailures === "number" && result.shardFailures > 0
+      ? { shardFailures: result.shardFailures }
+      : {}),
+    ...(src && { sampleSourceKeys: Object.keys(src) }),
+    ...(typeof msg === "string" ? { messagePreview: msg.slice(0, 400) } : {}),
+    ...(src?.appId != null ? { sampleAppId: String(src.appId) } : {}),
+    ...(src?.apiInstanceId != null ? { sampleApiInstanceId: src.apiInstanceId as string | number } : {}),
+  };
+}
+
+/** Summary for the paginated filtered query (sample fields from first hit). */
+function summarizeFilteredQuery(
+  lucene: string,
+  esTotal: number,
+  hitsFetched: number,
+  hits: unknown[]
+): MsearchProbeSummary & { hitsFetched: number } {
+  const first = hits[0] as { _source?: Record<string, unknown> } | undefined;
+  const src = first?._source;
+  const msg = src?.message;
+  return {
+    lucene,
+    total: esTotal,
+    returned: hits.length,
+    hitsFetched,
+    ...(src && { sampleSourceKeys: Object.keys(src) }),
+    ...(typeof msg === "string" ? { messagePreview: msg.slice(0, 400) } : {}),
+    ...(src?.appId != null ? { sampleAppId: String(src.appId) } : {}),
+    ...(src?.apiInstanceId != null ? { sampleApiInstanceId: src.apiInstanceId as string | number } : {}),
+  };
 }
 
 /**
@@ -27,68 +78,103 @@ export interface MSearchStrategyParams {
 export async function fetchTasksViaMSearch(
   params: MSearchStrategyParams
 ): Promise<BrokerTasksResult | null> {
-  const { orgId, apiInstanceId, accessToken, baseUrl, timeRangeMs, brokerAppName } = params;
+  const { orgId, apiInstanceId, accessToken, baseUrl, timeRangeMs, brokerAppName, includeDiagnostics } =
+    params;
 
-  // Fetch logs for this broker's apiInstanceId; the taskId is extracted from
-  // `_source.message` via regex in `parseHitsToAccumulators`, so we don't
-  // include a taskId clause here. (Previous version had `AND taskId=` with an
-  // empty right-hand side — Elasticsearch parsed that as "field taskId equals
-  // empty string" and returned 0 hits for every query.)
-  const luceneQuery = `orgId=${orgId} AND apiInstanceId=${apiInstanceId}`;
   const now = Date.now();
   const gte = now - timeRangeMs;
-  debugLog(`[MSEARCH] Query: ${luceneQuery}`);
   debugLog(`[MSEARCH] baseUrl=${baseUrl} token=${accessToken.slice(0, 8)}… timeRange=${timeRangeMs}ms (${new Date(gte).toISOString()} → ${new Date(now).toISOString()})`);
 
-  const PAGE_SIZE = 1000;
-  const MAX_PAGES = 20;
-  const allHits: unknown[] = [];
-  let totalFromApi = 0;
+  let orgOnlyQuery: MsearchProbeSummary | undefined;
+  let wildcardQuery: MsearchProbeSummary | undefined;
 
-  for (let page = 0; page < MAX_PAGES; page++) {
-    const from = page * PAGE_SIZE;
-    const pageResult = await msearch(orgId, luceneQuery, { size: PAGE_SIZE, from, timeRangeMs }, accessToken, baseUrl);
-
-    if (pageResult.error === "MONITORING_CENTER_PREMIUM_REQUIRED") {
+  if (includeDiagnostics) {
+    const orgQ = `orgId=${orgId}`;
+    const orgRes = await msearch(orgId, orgQ, { size: 3, from: 0, timeRangeMs }, accessToken, baseUrl);
+    if (orgRes.error === "MONITORING_CENTER_PREMIUM_REQUIRED") {
       debugLog("[MSEARCH] Monitoring Center Premium required — signalling fallback");
       return null;
     }
+    orgOnlyQuery = probeSummary(orgQ, orgRes);
+    debugLog(
+      `[MSEARCH] DIAG org-only: total=${orgOnlyQuery.total} returned=${orgOnlyQuery.returned} keys=${(orgOnlyQuery.sampleSourceKeys ?? []).join(",")}`
+    );
 
-    totalFromApi = pageResult.total;
-    const hits = pageResult.hits ?? [];
-    allHits.push(...hits);
-
-    if (page === 0) {
-      const shardNote =
-        typeof pageResult.shardFailures === "number" && pageResult.shardFailures > 0
-          ? `, shardFailures=${pageResult.shardFailures}`
-          : "";
-      debugLog(`[MSEARCH] Page 0: ${hits.length} hits, total=${totalFromApi}${shardNote}`);
+    const wildRes = await msearch(orgId, "*", { size: 3, from: 0, timeRangeMs }, accessToken, baseUrl);
+    if (wildRes.error === "MONITORING_CENTER_PREMIUM_REQUIRED") {
+      debugLog("[MSEARCH] Monitoring Center Premium required (wildcard probe) — signalling fallback");
+      return null;
     }
-
-    if (hits.length < PAGE_SIZE || allHits.length >= totalFromApi) break;
-    debugLog(`[MSEARCH] Page ${page + 1}: ${allHits.length}/${totalFromApi} hits so far`);
+    wildcardQuery = probeSummary("*", wildRes);
+    debugLog(
+      `[MSEARCH] DIAG wildcard *: total=${wildcardQuery.total} returned=${wildcardQuery.returned} keys=${(wildcardQuery.sampleSourceKeys ?? []).join(",")}`
+    );
   }
 
-  // Debug: log unique appId values from all hits so we can see what the monitoring API returns
-  if (brokerAppName !== undefined && allHits.length > 0) {
-    const appIdCounts: Record<string, number> = {};
-    for (const h of allHits) {
-      const src = (h as { _source?: { appId?: string } })._source;
-      const id = src?.appId ?? "(no appId)";
-      appIdCounts[id] = (appIdCounts[id] || 0) + 1;
-    }
-    debugLog(`[MSEARCH] Unique appId values in ${allHits.length} hits: ${JSON.stringify(appIdCounts)}`);
-    debugLog(`[MSEARCH] Filtering for brokerAppName="${brokerAppName}"`);
-    // Log a sample hit so we can see the full _source structure
-    const sampleHit = allHits[0] as { _source?: Record<string, unknown> };
-    if (sampleHit?._source) {
-      const sampleKeys = Object.keys(sampleHit._source);
-      debugLog(`[MSEARCH] Sample hit _source keys: ${sampleKeys.join(", ")}`);
-      debugLog(`[MSEARCH] Sample hit _source.appId="${sampleHit._source.appId}", _source.message="${String(sampleHit._source.message ?? "").substring(0, 200)}"`);
+  // --- Dual query strategy ---
+  // Query 1: the original apiInstanceId filter (picks up gateway + broker logs
+  //          that mention this API instance anywhere in the document).
+  // Query 2: appId=<brokerAppName> (picks up all broker runtime logs including
+  //          errors that don't mention apiInstanceId). Only used when we have
+  //          a resolved brokerAppName.
+  // De-duplicate by ES _id so we don't double-count.
+  const queries: { label: string; lucene: string }[] = [
+    { label: "apiInstanceId", lucene: `orgId=${orgId} AND apiInstanceId=${apiInstanceId}` },
+  ];
+  if (brokerAppName) {
+    queries.push({ label: "appId", lucene: `orgId=${orgId} AND appId=${brokerAppName}` });
+  }
+
+  const PAGE_SIZE = 1000;
+  const MAX_PAGES = 20;
+  const seenDocIds = new Set<string>();
+  const allHits: unknown[] = [];
+  let totalFromApi = 0;
+  let primaryLucene = queries[0].lucene;
+
+  for (const q of queries) {
+    debugLog(`[MSEARCH] Query (${q.label}): ${q.lucene}`);
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const from = page * PAGE_SIZE;
+      const pageResult = await msearch(orgId, q.lucene, { size: PAGE_SIZE, from, timeRangeMs }, accessToken, baseUrl);
+
+      if (pageResult.error === "MONITORING_CENTER_PREMIUM_REQUIRED") {
+        debugLog("[MSEARCH] Monitoring Center Premium required — signalling fallback");
+        return null;
+      }
+
+      if (q.label === "apiInstanceId") totalFromApi = pageResult.total;
+      const hits = pageResult.hits ?? [];
+      let newCount = 0;
+      for (const h of hits) {
+        const docId = (h as { _id?: string })._id ?? "";
+        if (docId && seenDocIds.has(docId)) continue;
+        if (docId) seenDocIds.add(docId);
+        allHits.push(h);
+        newCount++;
+      }
+
+      if (page === 0) {
+        const shardNote =
+          typeof pageResult.shardFailures === "number" && pageResult.shardFailures > 0
+            ? `, shardFailures=${pageResult.shardFailures}`
+            : "";
+        debugLog(`[MSEARCH] (${q.label}) Page 0: ${hits.length} hits (${newCount} new), total=${pageResult.total}${shardNote}`);
+      }
+
+      if (hits.length < PAGE_SIZE || (page + 1) * PAGE_SIZE >= pageResult.total) break;
+      debugLog(`[MSEARCH] (${q.label}) Page ${page + 1}: ${newCount} new, ${allHits.length} cumulative`);
     }
   }
 
+  primaryLucene = queries.map(q => q.lucene).join(" | ");
+  const filteredQuerySummary = summarizeFilteredQuery(primaryLucene, totalFromApi, allHits.length, allHits);
+  debugLog(
+    `[MSEARCH] Combined: ${allHits.length} unique hits from ${queries.length} queries`
+  );
+
+  // Post-filter: keep only broker-app hits when we have a name.
+  // Gateway proxy logs (appId=_api_version_*) are noise for task discovery.
   const hitsToUse =
     brokerAppName !== undefined
       ? allHits.filter((h: unknown) => {
@@ -99,21 +185,43 @@ export async function fetchTasksViaMSearch(
 
   if (brokerAppName && hitsToUse.length !== allHits.length) {
     debugLog(`[MSEARCH] Post-filtered by appId=${brokerAppName}: ${allHits.length} -> ${hitsToUse.length}`);
-    if (hitsToUse.length === 0) {
-      debugLog(`[MSEARCH] WARNING: All hits filtered out! The broker's appId in monitoring logs does not match brokerAppName="${brokerAppName}"`);
-      debugLog(`[MSEARCH] This likely means the _msearch hits belong to a gateway/proxy app, not the broker's CloudHub deployment`);
-    }
   }
 
-  const accumulators = parseHitsToAccumulators(hitsToUse);
+  const accumulators = parseHitsToAccumulators(hitsToUse, apiInstanceId);
+  const uniqueTaskIdsParsed = Object.keys(accumulators).length;
   const tasks = finaliseTasks(Object.values(accumulators), apiInstanceId);
 
-  debugLog(`[MSEARCH] ${Object.keys(accumulators).length} unique taskIds, ${tasks.length} after apiInstanceId filter`);
+  debugLog(`[MSEARCH] ${uniqueTaskIdsParsed} unique taskIds, ${tasks.length} after apiInstanceId filter`);
+
+  const msearchDiagnostics: MsearchDiagnostics | undefined = includeDiagnostics
+    ? {
+        timeRangeIso: { from: new Date(gte).toISOString(), to: new Date(now).toISOString() },
+        filteredQuery: filteredQuerySummary,
+        orgOnlyQuery,
+        wildcardQuery,
+        ...(brokerAppName !== undefined
+          ? {
+              brokerAppPostFilter: {
+                brokerAppName,
+                beforeHits: allHits.length,
+                afterHits: hitsToUse.length,
+              },
+            }
+          : {}),
+        uniqueTaskIdsParsed,
+        queriesUsed: queries.map(q => q.label),
+      }
+    : undefined;
+
+  if (includeDiagnostics && msearchDiagnostics) {
+    debugLog(`[MSEARCH] DIAG JSON: ${JSON.stringify(msearchDiagnostics)}`);
+  }
 
   return {
     tasks,
     source: "msearch",
     totalLogs: totalFromApi,
+    ...(msearchDiagnostics ? { msearchDiagnostics } : {}),
   };
 }
 
@@ -130,14 +238,87 @@ const RE = {
   apiInstance: /apiInstanceId=(\d+)/,
 };
 
-function parseHitsToAccumulators(hits: unknown[]): Record<string, BrokerTaskAccumulator> {
+const BROKER_ERROR_PATTERNS = [
+  /task-listener.*failed to send response/i,
+  /AGENTS-BROKER:TOOL_ERROR/i,
+  /MonoDeferContextual/,
+  /Did not observe any item or terminal signal/,
+];
+
+function isBrokerErrorHit(msg: string): boolean {
+  return BROKER_ERROR_PATTERNS.some(re => re.test(msg));
+}
+
+/**
+ * Groups consecutive error hits (within 5 s of each other) into a single
+ * synthetic "failed task" entry, so the UI shows them as broker runs.
+ */
+function groupErrorHits(
+  hits: Array<{ msg: string; ts: string; appId: string }>,
+  fallbackApiInstanceId: string
+): Record<string, BrokerTaskAccumulator> {
+  if (hits.length === 0) return {};
+
+  hits.sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
+
+  const groups: Array<typeof hits> = [];
+  let current = [hits[0]];
+  for (let i = 1; i < hits.length; i++) {
+    const gap = new Date(hits[i].ts).getTime() - new Date(hits[i - 1].ts).getTime();
+    if (gap <= 5_000) {
+      current.push(hits[i]);
+    } else {
+      groups.push(current);
+      current = [hits[i]];
+    }
+  }
+  groups.push(current);
+
+  const result: Record<string, BrokerTaskAccumulator> = {};
+  for (const g of groups) {
+    const syntheticId = `err-${new Date(g[0].ts).getTime()}`;
+    const firstMsg = g[0].msg;
+    const errorSnippet = firstMsg.length > 120 ? firstMsg.slice(0, 120) + "…" : firstMsg;
+    result[syntheticId] = {
+      taskId: syntheticId,
+      contextId: "",
+      broker: "broker (error)",
+      firstTool: `ERROR: ${errorSnippet}`,
+      startTime: g[0].ts,
+      endTime: g[g.length - 1].ts,
+      maxIteration: 0,
+      toolsUsed: new Set(),
+      appId: g[0].appId,
+      apiInstanceId: fallbackApiInstanceId,
+      logCount: g.length,
+      status: "error",
+    };
+  }
+  return result;
+}
+
+function parseHitsToAccumulators(
+  hits: unknown[],
+  fallbackApiInstanceId: string
+): Record<string, BrokerTaskAccumulator> {
   const tasks: Record<string, BrokerTaskAccumulator> = {};
+  const unmatchedErrors: Array<{ msg: string; ts: string; appId: string }> = [];
 
   for (const h of hits) {
     const hit = h as { _source?: { message?: string; timestamp?: string; appId?: string } };
     const msg = (hit._source?.message as string) || "";
     const tid = (msg.match(RE.task) || [])[1];
-    if (!tid) continue;
+
+    if (!tid) {
+      if (isBrokerErrorHit(msg)) {
+        unmatchedErrors.push({
+          msg,
+          ts: (hit._source?.timestamp as string) || new Date().toISOString(),
+          appId: (hit._source?.appId as string) || "",
+        });
+      }
+      continue;
+    }
 
     if (!tasks[tid]) {
       tasks[tid] = {
@@ -190,5 +371,10 @@ function parseHitsToAccumulators(hits: unknown[]): Record<string, BrokerTaskAccu
     if (appId && !task.appId) task.appId = appId;
   }
 
-  return tasks;
+  const errorTasks = groupErrorHits(unmatchedErrors, fallbackApiInstanceId);
+  if (Object.keys(errorTasks).length > 0) {
+    debugLog(`[MSEARCH] Found ${Object.keys(errorTasks).length} error-only broker run(s) without taskId`);
+  }
+
+  return { ...tasks, ...errorTasks };
 }

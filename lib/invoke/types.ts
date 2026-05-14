@@ -1,5 +1,4 @@
 export type NodeStatus = "idle" | "active" | "complete" | "error";
-export type TraceEventType = "routing" | "api_call" | "response" | "error";
 
 export interface AgentSkill {
   id: string;
@@ -35,19 +34,8 @@ export interface InvokeMessage {
   timestamp: Date;
 }
 
-export interface TraceEvent {
-  id: string;
-  timestamp: Date;
-  type: TraceEventType;
-  message: string;
-  data?: unknown;
-}
-
-export type SidebarTab = "chat" | "trace" | "settings";
-
 export interface InvokeState {
   messages: InvokeMessage[];
-  traceEvents: TraceEvent[];
   isProcessing: boolean;
   currentStep: string;
   nodeStatuses: Record<string, NodeStatus>;
@@ -55,31 +43,20 @@ export interface InvokeState {
   agentCard: AgentCard | null;
   brokerUrl: string;
   brokerLoaded: boolean;
-  simulateLatency: boolean;
-  simulateErrors: boolean;
-  verbosity: "low" | "medium" | "high";
-  sidebarTab: SidebarTab;
 }
 
 export type InvokeAction =
   | { type: "SET_BROKER"; url: string; card: AgentCard | null }
   | { type: "RESET_BROKER" }
   | { type: "ADD_MESSAGE"; message: InvokeMessage }
-  | { type: "ADD_TRACE"; event: TraceEvent }
   | { type: "SET_NODE_STATUS"; nodeId: string; status: NodeStatus }
   | { type: "SET_ACTIVE_NODE"; nodeId: string | null }
   | { type: "RESET_NODE_STATUSES" }
   | { type: "SET_PROCESSING"; value: boolean; step?: string }
-  | { type: "SET_CURRENT_STEP"; step: string }
-  | { type: "SET_SIMULATE_LATENCY"; value: boolean }
-  | { type: "SET_SIMULATE_ERRORS"; value: boolean }
-  | { type: "SET_VERBOSITY"; value: "low" | "medium" | "high" }
-  | { type: "SET_SIDEBAR_TAB"; tab: SidebarTab }
-  | { type: "CLEAR_TRACE" };
+  | { type: "SET_CURRENT_STEP"; step: string };
 
 export const INITIAL_INVOKE_STATE: InvokeState = {
   messages: [],
-  traceEvents: [],
   isProcessing: false,
   currentStep: "",
   nodeStatuses: {},
@@ -87,10 +64,6 @@ export const INITIAL_INVOKE_STATE: InvokeState = {
   agentCard: null,
   brokerUrl: "",
   brokerLoaded: false,
-  simulateLatency: true,
-  simulateErrors: false,
-  verbosity: "medium",
-  sidebarTab: "chat",
 };
 
 export function invokeReducer(state: InvokeState, action: InvokeAction): InvokeState {
@@ -102,23 +75,15 @@ export function invokeReducer(state: InvokeState, action: InvokeAction): InvokeS
         agentCard: action.card,
         brokerLoaded: true,
         messages: [],
-        traceEvents: [],
         nodeStatuses: {},
         activeNodeId: null,
         currentStep: "",
         isProcessing: false,
       };
     case "RESET_BROKER":
-      return {
-        ...INITIAL_INVOKE_STATE,
-        simulateLatency: state.simulateLatency,
-        simulateErrors: state.simulateErrors,
-        verbosity: state.verbosity,
-      };
+      return { ...INITIAL_INVOKE_STATE };
     case "ADD_MESSAGE":
       return { ...state, messages: [...state.messages, action.message] };
-    case "ADD_TRACE":
-      return { ...state, traceEvents: [...state.traceEvents, action.event] };
     case "SET_NODE_STATUS":
       return {
         ...state,
@@ -136,16 +101,6 @@ export function invokeReducer(state: InvokeState, action: InvokeAction): InvokeS
       };
     case "SET_CURRENT_STEP":
       return { ...state, currentStep: action.step };
-    case "SET_SIMULATE_LATENCY":
-      return { ...state, simulateLatency: action.value };
-    case "SET_SIMULATE_ERRORS":
-      return { ...state, simulateErrors: action.value };
-    case "SET_VERBOSITY":
-      return { ...state, verbosity: action.value };
-    case "SET_SIDEBAR_TAB":
-      return { ...state, sidebarTab: action.tab };
-    case "CLEAR_TRACE":
-      return { ...state, traceEvents: [] };
     default: {
       const _exhaustive: never = action;
       return state;

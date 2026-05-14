@@ -4,8 +4,6 @@ import { useReducer, useRef, useEffect, useState } from "react";
 import AgentNetworkCanvas from "@/components/AgentNetworkCanvas";
 import BrokerUrlBar from "@/components/invoke/BrokerUrlBar";
 import ConversationPanel from "@/components/invoke/ConversationPanel";
-import TracePanel from "@/components/invoke/TracePanel";
-import SettingsPanel from "@/components/invoke/SettingsPanel";
 import {
   invokeReducer,
   INITIAL_INVOKE_STATE,
@@ -14,16 +12,11 @@ import { getSkills } from "@/lib/invoke/discovery";
 import { buildInvokeGraph } from "@/lib/invoke/graph-builder";
 import type { CanonicalGraph } from "@/lib/agent-network-types";
 import type { BrokerInEnvironment } from "@/lib/visualizer/brokers-in-environment-types";
+import { urlContainsIngressPlaceholder } from "@/lib/invoke/ingress-gateway-url";
 
 const MIN_SIDEBAR = 280;
 const MAX_SIDEBAR = 580;
 const DEFAULT_SIDEBAR = 380;
-
-const SIDEBAR_TABS = [
-  { id: "chat" as const, label: "Chat" },
-  { id: "trace" as const, label: "Trace" },
-  { id: "settings" as const, label: "Settings" },
-];
 
 interface InvokeTabProps {
   /** Canonical graph from the current platform broker selection (if any). */
@@ -31,9 +24,11 @@ interface InvokeTabProps {
   /** Broker selected in the left sidebar — used to auto-populate the URL bar. */
   selectedBroker?: BrokerInEnvironment | null;
   orgId?: string;
+  /** Required with selected broker to resolve `${ingressgw.url}` from API Manager. */
+  envId?: string;
 }
 
-export default function InvokeTab({ canonicalGraph, selectedBroker, orgId }: InvokeTabProps) {
+export default function InvokeTab({ canonicalGraph, selectedBroker, orgId, envId }: InvokeTabProps) {
   const [state, dispatch] = useReducer(invokeReducer, INITIAL_INVOKE_STATE);
   const [suggestedUrl, setSuggestedUrl] = useState<string | null>(null);
 
@@ -45,14 +40,20 @@ export default function InvokeTab({ canonicalGraph, selectedBroker, orgId }: Inv
     }
     let cancelled = false;
     const params = new URLSearchParams({ orgId, assetId: selectedBroker.assetId });
+    if (envId) params.set("envId", envId);
+    const inst = selectedBroker.instanceIds?.[0];
+    if (inst) params.set("apiInstanceId", inst);
     fetch(`/api/invoke/broker-url?${params.toString()}`)
       .then((r) => r.json())
       .then((data: { url?: string | null }) => {
-        if (!cancelled && data.url) setSuggestedUrl(data.url);
+        if (cancelled || !data.url) return;
+        // Don't pre-fill unresolved Exchange placeholders (needs env + instance for substitution).
+        if (urlContainsIngressPlaceholder(data.url)) return;
+        setSuggestedUrl(data.url);
       })
       .catch(() => {/* best-effort */});
     return () => { cancelled = true; };
-  }, [selectedBroker?.assetId, orgId]);
+  }, [selectedBroker?.assetId, selectedBroker?.instanceIds, orgId, envId]);
 
   // Drag-to-resize sidebar
   const sidebarWidthRef = useRef(DEFAULT_SIDEBAR);
@@ -150,50 +151,27 @@ export default function InvokeTab({ canonicalGraph, selectedBroker, orgId }: Inv
           agentCard={state.agentCard}
           suggestedUrl={suggestedUrl}
           dispatch={dispatch}
+          resolveContext={
+            orgId && envId && selectedBroker?.instanceIds?.[0]
+              ? { orgId, envId, apiInstanceId: selectedBroker.instanceIds[0] }
+              : undefined
+          }
         />
 
-        {/* Tab bar */}
-        <div className="flex items-center gap-1 border-b border-gray-200 bg-white px-2 py-1.5 shrink-0">
-          {SIDEBAR_TABS.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => dispatch({ type: "SET_SIDEBAR_TAB", tab: tab.id })}
-              className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
-                state.sidebarTab === tab.id
-                  ? "bg-primary text-white"
-                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-              }`}
-            >
-              {tab.label}
-              {tab.id === "trace" && state.traceEvents.length > 0 && (
-                <span className="ml-1.5 rounded-full bg-white/25 px-1.5 text-[10px] tabular-nums">
-                  {state.traceEvents.length}
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-
-        {/* Tab content */}
         <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
-          {!state.brokerLoaded && state.sidebarTab === "chat" ? (
+          {!state.brokerLoaded ? (
             <div className="flex flex-1 items-center justify-center p-4 text-center">
               <p className="text-xs text-gray-400">
                 Enter a broker URL above and click <strong>Load</strong> to begin.
               </p>
             </div>
-          ) : state.sidebarTab === "chat" ? (
+          ) : (
             <ConversationPanel
               state={state}
               skills={skills}
               displayGraph={displayGraph ?? buildInvokeGraph(state.agentCard, state.brokerUrl)}
               dispatch={dispatch}
             />
-          ) : state.sidebarTab === "trace" ? (
-            <TracePanel events={state.traceEvents} dispatch={dispatch} />
-          ) : (
-            <SettingsPanel state={state} dispatch={dispatch} />
           )}
         </div>
       </div>

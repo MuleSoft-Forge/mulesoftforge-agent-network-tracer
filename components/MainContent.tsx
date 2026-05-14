@@ -289,7 +289,7 @@ export default function MainContent() {
         
         {viewMode === "invoke" ? (
           /* ===== INVOKE MODE ===== */
-          <InvokeTab canonicalGraph={graph} selectedBroker={selectedBroker} orgId={orgId} />
+          <InvokeTab canonicalGraph={graph} selectedBroker={selectedBroker} orgId={orgId} envId={envId} />
         ) : viewMode === "llmProxy" ? (
           /* ===== LLM PROXY MODE ===== */
           <LlmProxyTab orgId={orgId} envId={envId} />

@@ -94,7 +94,7 @@ export default function ConversationPanel({
   displayGraph,
   dispatch,
 }: ConversationPanelProps) {
-  const { messages, isProcessing, currentStep, brokerUrl, simulateLatency, simulateErrors, verbosity } = state;
+  const { messages, isProcessing, currentStep, brokerUrl } = state;
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -121,11 +121,7 @@ export default function ConversationPanel({
     const preferredNodeId = skillId
       ? findCanonicalNodeForSkill(skillId, displayGraph)
       : undefined;
-    await handleSend(msg, brokerUrl, displayGraph, preferredNodeId, dispatch, {
-      simulateLatency,
-      simulateErrors,
-      verbosity,
-    });
+    await handleSend(msg, brokerUrl, displayGraph, preferredNodeId, dispatch);
   }
 
   function handleKey(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -236,7 +232,7 @@ export default function ConversationPanel({
             </svg>
           </button>
         </div>
-        <p className="text-[10px] text-gray-400 mt-1 text-center">Shift+Enter for new line · A2A calls go direct from browser</p>
+        <p className="text-[10px] text-gray-400 mt-1 text-center">Shift+Enter for new line · A2A calls are proxied server-side</p>
       </div>
     </div>
   );

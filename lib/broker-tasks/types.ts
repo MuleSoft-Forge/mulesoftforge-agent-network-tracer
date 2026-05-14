@@ -17,6 +17,8 @@ export interface BrokerTaskAccumulator {
   appId: string;
   apiInstanceId: string;
   logCount: number;
+  /** Synthetic error-only runs get "error"; normal runs are undefined. */
+  status?: "error";
 }
 
 /** Serialised task returned to the client. */
@@ -33,6 +35,40 @@ export interface BrokerTask {
   appId: string;
   apiInstanceId: string;
   logCount: number;
+  status?: "error";
+}
+
+/** Single _msearch probe — totals + one-hit summary (no full document dump). */
+export interface MsearchProbeSummary {
+  lucene: string;
+  total: number;
+  returned: number;
+  shardFailures?: number;
+  error?: string;
+  sampleSourceKeys?: string[];
+  /** Truncated for safe inspection */
+  messagePreview?: string;
+  sampleAppId?: string;
+  sampleApiInstanceId?: string | number;
+}
+
+/**
+ * What Elasticsearch actually returned for org-wide / wildcard / filtered queries
+ * (so you can tell “no data in index” vs “data exists but taskId parse failed” vs
+ * “apiInstanceId filter too narrow”).
+ */
+export interface MsearchDiagnostics {
+  timeRangeIso: { from: string; to: string };
+  filteredQuery: MsearchProbeSummary & { hitsFetched: number };
+  /** `orgId=<uuid>` only — any monitoring log for the org in the window */
+  orgOnlyQuery?: MsearchProbeSummary;
+  /** Lucene `*` — sample of any log in the time window (confirms the index is non-empty) */
+  wildcardQuery?: MsearchProbeSummary;
+  brokerAppPostFilter?: { brokerAppName?: string; beforeHits: number; afterHits: number };
+  /** Distinct taskIds extracted from messages after post-filter (before apiInstanceId final filter) */
+  uniqueTaskIdsParsed: number;
+  /** Which Lucene strategies were used (e.g. ["apiInstanceId", "appId"]) */
+  queriesUsed?: string[];
 }
 
 /** Unified result from either strategy. */
@@ -41,6 +77,7 @@ export interface BrokerTasksResult {
   source: "msearch" | "runtime-logs";
   totalLogs: number;
   mode?: "no-entitlement";
+  msearchDiagnostics?: MsearchDiagnostics;
 }
 
 /** Convert accumulator → serialised task, computing duration. */
@@ -49,7 +86,9 @@ export function finaliseTasks(
   filterApiInstanceId?: string
 ): BrokerTask[] {
   const filtered = filterApiInstanceId
-    ? accumulators.filter((t) => t.apiInstanceId === filterApiInstanceId)
+    ? accumulators.filter(
+        (t) => t.apiInstanceId === filterApiInstanceId || t.status === "error"
+      )
     : accumulators;
 
   return filtered
@@ -77,6 +116,7 @@ export function finaliseTasks(
         appId: t.appId,
         apiInstanceId: t.apiInstanceId,
         logCount: t.logCount,
+        ...(t.status ? { status: t.status } : {}),
       };
     })
     .sort((a, b) => (b.startTime || "").localeCompare(a.startTime || ""));

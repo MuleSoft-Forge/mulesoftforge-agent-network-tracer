@@ -17,6 +17,7 @@ export interface Task {
   maxIteration: number;
   toolsUsed: string[];
   appId: string;
+  status?: "error";
 }
 
 interface TasksListProps {
@@ -60,12 +61,21 @@ export default function TasksList({
       "Log Search - Advanced package or a Titanium subscription to Anypoint Platform Required - Elasticsearch log search APIs - Enhanced raw storage (up to 128TB based on configuration) - Advanced logs and traces - LLM reasoning logs (for Agent Broker monitoring)";
 
     const timeRangeMs = ACTIVITY_PERIODS[activityPeriod] * 60 * 1000;
-    const body: { orgId: string; apiInstanceId: string; envId?: string; timeRangeMs: number } = {
+    const body: {
+      orgId: string;
+      apiInstanceId: string;
+      envId?: string;
+      timeRangeMs: number;
+      includeMsearchDiagnostics?: boolean;
+    } = {
       orgId,
       apiInstanceId,
       timeRangeMs,
     };
     if (envId) body.envId = envId;
+    if (process.env.NODE_ENV === "development") {
+      body.includeMsearchDiagnostics = true;
+    }
     fetch("/api/broker-tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -153,6 +163,7 @@ export default function TasksList({
       {apiInstanceId && (
         <ul className="flex-1 space-y-0 overflow-y-auto max-h-[420px] scrollbar-thin pr-1">
           {tasks.map((task) => {
+            const isError = task.status === "error";
             const tools = Array.isArray(task.toolsUsed) ? task.toolsUsed : [];
             const toolNames = tools
               .map((t) => (typeof t === "string" ? t.replace(/^[a-zA-Z0-9]+_/, "") : String(t)))
@@ -160,23 +171,35 @@ export default function TasksList({
             const startTimeStr = task.startTime
               ? new Date(task.startTime).toLocaleString()
               : "?";
+            const errorSnippet = isError && task.firstTool
+              ? task.firstTool.replace(/^ERROR:\s*/, "").slice(0, 80)
+              : null;
             return (
               <li
                 key={task.taskId}
                 onClick={() => handleTaskClick(task.taskId)}
-                className={`cursor-pointer border-b border-gray-100 px-2 py-2 text-xs transition-colors hover:bg-blue-50 ${
+                className={`cursor-pointer border-b border-gray-100 px-2 py-2 text-xs transition-colors ${
+                  isError ? "hover:bg-red-50" : "hover:bg-blue-50"
+                } ${
                   selectedTaskId === task.taskId
-                    ? "bg-blue-100 border-l-2 border-l-blue-600"
+                    ? isError
+                      ? "bg-red-100 border-l-2 border-l-red-500"
+                      : "bg-blue-100 border-l-2 border-l-blue-600"
                     : ""
                 }`}
               >
-                <div className="font-mono text-xs text-blue-600">
-                  {task.taskId}
+                <div className={`font-mono text-xs ${isError ? "text-red-600" : "text-blue-600"}`}>
+                  {isError ? "⚠ Error" : task.taskId}
                 </div>
                 <div className="mt-0.5 text-[10px] text-gray-600">
-                  {startTimeStr} • {task.maxIteration} iter
+                  {startTimeStr}{isError ? "" : ` • ${task.maxIteration} iter`}
                 </div>
-                {toolNames && (
+                {errorSnippet && (
+                  <div className="mt-0.5 text-[10px] text-red-500 truncate">
+                    {errorSnippet}
+                  </div>
+                )}
+                {!isError && toolNames && (
                   <div className="mt-0.5 text-[10px] text-gray-500">
                     {toolNames}
                   </div>
