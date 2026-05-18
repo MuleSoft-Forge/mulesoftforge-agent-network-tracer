@@ -6,6 +6,7 @@ import type { CanonicalGraph } from "@/lib/agent-network-types";
 import { handleSend } from "@/lib/invoke/flow-engine";
 import { skillPromptText } from "@/lib/invoke/discovery";
 import { findCanonicalNodeForSkill } from "@/lib/invoke/graph-builder";
+import { useImeComposition } from "@/lib/ime-composition";
 
 interface ConversationPanelProps {
   state: InvokeState;
@@ -98,6 +99,7 @@ export default function ConversationPanel({
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const { compositionProps, isComposing } = useImeComposition();
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -125,7 +127,7 @@ export default function ConversationPanel({
   }
 
   function handleKey(e: KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey && !isComposing(e)) {
       e.preventDefault();
       onSend();
     }
@@ -216,6 +218,7 @@ export default function ConversationPanel({
             value={input}
             onChange={(e) => { setInput(e.target.value); adjustHeight(e.target); }}
             onKeyDown={handleKey}
+            {...compositionProps}
             placeholder="Ask the broker…"
             disabled={isProcessing}
             style={{ height: "auto", minHeight: "36px", maxHeight: "180px" }}

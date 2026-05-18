@@ -28,6 +28,7 @@ import {
   extractResponsesDelta,
 } from "@/lib/llmProxy/sse";
 import { devLog } from "@/lib/api-logger";
+import { useImeComposition } from "@/lib/ime-composition";
 import type {
   ChatMessage,
   LlmProxyChatEndpoint,
@@ -89,6 +90,7 @@ export default function ChatPlayground({ proxy, onRouteTrace }: ChatPlaygroundPr
   const [ctx, setCtx] = useState<{ orgId: string; envId: string }>({ orgId: "", envId: "" });
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const { compositionProps, isComposing } = useImeComposition();
 
   // Fetch detail whenever the proxy changes.
   useEffect(() => {
@@ -807,11 +809,16 @@ export default function ChatPlayground({ proxy, onRouteTrace }: ChatPlaygroundPr
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                if (
+                  e.key === "Enter" &&
+                  (e.metaKey || e.ctrlKey) &&
+                  !isComposing(e)
+                ) {
                   e.preventDefault();
                   void sendMessage();
                 }
               }}
+              {...compositionProps}
               rows={2}
               placeholder="Send a message. Cmd/Ctrl+Enter to send."
               className="flex-1 resize-none rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"

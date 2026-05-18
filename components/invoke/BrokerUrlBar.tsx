@@ -6,6 +6,7 @@ import { fetchAgentCard } from "@/lib/invoke/discovery";
 import type { InvokeAction } from "@/lib/invoke/types";
 import type { Dispatch } from "react";
 import { urlContainsIngressPlaceholder } from "@/lib/invoke/ingress-gateway-url";
+import { useImeComposition } from "@/lib/ime-composition";
 
 interface BrokerUrlBarProps {
   url: string;
@@ -41,6 +42,7 @@ export default function BrokerUrlBar({
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const { compositionProps, isComposing } = useImeComposition();
 
   async function resolveIngressUrlIfNeeded(candidate: string): Promise<string> {
     if (!urlContainsIngressPlaceholder(candidate) || !resolveContext) {
@@ -111,7 +113,7 @@ export default function BrokerUrlBar({
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLInputElement>) {
-    if (e.key === "Enter") handleLoad();
+    if (e.key === "Enter" && !isComposing(e)) handleLoad();
   }
 
   if (loaded) {
@@ -185,6 +187,7 @@ export default function BrokerUrlBar({
           value={inputUrl}
           onChange={(e) => setInputUrl(e.target.value)}
           onKeyDown={handleKeyDown}
+          {...compositionProps}
           placeholder={suggestedUrl ? suggestedUrl : "https://…/broker-path/"}
           disabled={loading}
           className="flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs text-gray-900 placeholder-gray-400 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-60"
