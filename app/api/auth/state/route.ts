@@ -33,7 +33,10 @@ export async function PUT(request: NextRequest) {
       );
     }
 
+    // Consume the state and mark that *this* session passed CSRF validation, so
+    // /api/auth/token will only redeem the code for the same browser session.
     session.oauthState = undefined;
+    session.oauthStateValidatedAt = Date.now();
     await session.save();
 
     return NextResponse.json({ valid: true });

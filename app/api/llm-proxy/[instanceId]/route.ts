@@ -184,7 +184,7 @@ export async function GET(
     if (!instRes.ok) {
       const text = await instRes.text();
       return NextResponse.json(
-        { error: `Instance failed: ${instRes.status} ${text}` },
+        { error: `Instance failed: ${instRes.status} ${text.slice(0, 200)}` },
         { status: instRes.status }
       );
     }

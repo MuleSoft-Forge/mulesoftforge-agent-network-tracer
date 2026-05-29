@@ -13,6 +13,8 @@ const SessionDataSchema = z
     expiresAt: z.number().int().positive().optional(),
     baseUrl: z.string().url().optional(),
     oauthState: z.string().min(1).optional(),
+    /** Set when the OAuth `state` was validated in this session; gates the token exchange so an intercepted code can't be redeemed out-of-band. */
+    oauthStateValidatedAt: z.number().int().positive().optional(),
     invalidatedAt: z.number().int().positive().optional(),
     /** True when the _msearch probe at login returned 200. Anypoint's `productSKU` field on the profile is not a reliable signal — some SKU 3 orgs can call _msearch — so we probe directly. */
     monitoringCenterEnabled: z.boolean().optional(),
@@ -79,7 +81,7 @@ export async function getSession(): Promise<IronSession<SessionData>> {
 export async function isAuthenticated(): Promise<boolean> {
   try {
     const session = await getSession();
-    const { accessToken, expiresAt, invalidatedAt } = session;
+    const { accessToken, expiresAt, refreshToken, invalidatedAt } = session;
     
     // Check invalidation first (corporate governance)
     if (invalidatedAt) return false;
@@ -88,7 +90,12 @@ export async function isAuthenticated(): Promise<boolean> {
     if (!accessToken || !expiresAt) return false;
     
     // Add 5-minute buffer for token refresh
-    return expiresAt > Date.now() + 5 * 60 * 1000;
+    if (expiresAt > Date.now() + 5 * 60 * 1000) return true;
+    
+    // Within/past the buffer we're still authenticated as long as we have a
+    // refresh token — requireAuth() will transparently refresh on the next API
+    // call. This keeps the UI and API routes consistent near expiry.
+    return !!refreshToken;
   } catch {
     return false;
   }
@@ -107,9 +114,11 @@ export async function getSessionStatus() {
       return { authenticated: false };
     }
     
-    const { accessToken, expiresAt } = session;
+    const { accessToken, expiresAt, refreshToken } = session;
     const fiveMinBuffer = 5 * 60 * 1000;
-    const isAuth = !!(accessToken && expiresAt && expiresAt > Date.now() + fiveMinBuffer);
+    const isAuth =
+      !!(accessToken && expiresAt) &&
+      (expiresAt > Date.now() + fiveMinBuffer || !!refreshToken);
     
     return {
       authenticated: isAuth,

@@ -65,3 +65,42 @@ export function isSafePublicUrl(
 
   return { ok: true, url };
 }
+
+/** Thrown by `safeFetch` when an initial URL or a redirect target fails the SSRF guard. */
+export class SsrfBlockedError extends Error {
+  constructor(reason: string) {
+    super(`Blocked by SSRF guard: ${reason}`);
+    this.name = "SsrfBlockedError";
+  }
+}
+
+/**
+ * Fetch a user-supplied URL while keeping the SSRF guard intact across redirects.
+ *
+ * `isSafePublicUrl` only validates the *initial* hostname; a public URL can
+ * still 3xx-redirect to `127.0.0.1` / `169.254.169.254`. This follows redirects
+ * manually and re-validates every hop, so the guard cannot be bypassed.
+ */
+export async function safeFetch(
+  initialUrl: string,
+  init: RequestInit = {},
+  opts: { allowHttp?: boolean; maxRedirects?: number } = {}
+): Promise<Response> {
+  const maxRedirects = opts.maxRedirects ?? 5;
+  let currentUrl = initialUrl;
+
+  for (let hop = 0; hop <= maxRedirects; hop++) {
+    const safety = isSafePublicUrl(currentUrl, { allowHttp: opts.allowHttp });
+    if (!safety.ok) throw new SsrfBlockedError(safety.reason);
+
+    const res = await fetch(currentUrl, { ...init, redirect: "manual" });
+
+    const isRedirect = res.status >= 300 && res.status < 400;
+    const location = res.headers.get("location");
+    if (!isRedirect || !location) return res;
+
+    currentUrl = new URL(location, currentUrl).toString();
+  }
+
+  throw new SsrfBlockedError("Too many redirects");
+}

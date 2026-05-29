@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { debugError, debugLog } from "@/lib/api-logger";
 import { requireAuth } from "@/lib/api/auth-middleware";
-import { extractTextFiles } from "@/lib/zip-extract";
+import { extractTextFiles, readBodyWithLimit } from "@/lib/zip-extract";
 
 export const dynamic = "force-dynamic";
 
@@ -68,8 +68,13 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const arrayBuffer = await res.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
+    const buffer = await readBodyWithLimit(res);
+    if (!buffer) {
+      return NextResponse.json(
+        { error: "Zip exceeds maximum allowed size", files: [] },
+        { status: 413 }
+      );
+    }
 
     debugLog(`[maven-files] Downloaded zip: ${buffer.length} bytes`);
 

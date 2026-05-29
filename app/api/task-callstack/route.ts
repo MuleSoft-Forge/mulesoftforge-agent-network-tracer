@@ -12,6 +12,16 @@ import { resolveDeploymentContext, type TaskCallstackState } from "@/lib/deploym
 export const dynamic = "force-dynamic";
 
 /**
+ * Escape a value that will be embedded inside a Lucene double-quoted phrase
+ * (e.g. `"${taskId}"`). Prevents query injection by neutralizing the quote and
+ * backslash characters that would otherwise break out of the phrase. Newlines
+ * are stripped for good measure.
+ */
+function escapeLucenePhrase(value: string): string {
+  return value.replace(/[\\"]/g, "\\$&").replace(/[\r\n]+/g, " ");
+}
+
+/**
  * AMC 403: The token is allowed to list deployments but not to read deployment detail or
  * specs (and thus not logs). Mulesoft docs: scope "Read Applications" (read:applications)
  * allows GET /organizations/{{org}}/environments/{{envId}}/deployments/** — the org must
@@ -1222,7 +1232,7 @@ export async function GET(request: NextRequest) {
 
   try {
     // Phase 1: search by taskId — only when org has Log Search (productSKU === 1)
-    let phase1Query = `orgId=${validatedOrgId} AND "${validatedTaskId}"`;
+    let phase1Query = `orgId=${validatedOrgId} AND "${escapeLucenePhrase(validatedTaskId)}"`;
     const phase1 = hasMsearch
       ? await (async () => {
           debugLog("[TASK-CALLSTACK] Step 4: Phase 1 - Searching logs by taskId...");
@@ -1447,7 +1457,7 @@ export async function GET(request: NextRequest) {
     let phase2Query: string | null = null;
     if (traceId) {
       debugLog(`[TASK-CALLSTACK] Decision: traceId found, proceeding with phase 2 search`);
-      phase2Query = `orgId=${validatedOrgId} AND ("${traceId}" OR "${validatedTaskId}")`;
+      phase2Query = `orgId=${validatedOrgId} AND ("${escapeLucenePhrase(traceId)}" OR "${escapeLucenePhrase(validatedTaskId)}")`;
       debugLog(`[TASK-CALLSTACK] Phase 2 query: ${phase2Query}`);
       const phase2 = await msearch(validatedOrgId, phase2Query, { timeRangeMs: timeRange }, accessToken, baseUrl);
       debugLog(`[TASK-CALLSTACK] Phase 2 result: ${phase2.hits?.length || 0} hits, error: ${phase2.error || "none"}`);

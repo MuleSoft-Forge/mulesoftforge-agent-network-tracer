@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loggedFetch, debugLog, debugError } from "@/lib/api-logger";
 import { requireAuth } from "@/lib/api/auth-middleware";
+import { resolveAllowedUrl } from "@/lib/api/allowed-hosts";
 import {
   pickPublicIngressOriginFromApiManagerInstance,
   substituteIngressGatewayPlaceholder,
@@ -132,7 +133,16 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ url: null, reason: "no_download_url" });
     }
 
-    const fileRes = await loggedFetch(fileUrl, { headers: { Authorization: authHeader } });
+    // Validate the download host before attaching the user's bearer token —
+    // a compromised Exchange asset could otherwise point `downloadURL` /
+    // `externalLink` at an attacker host and exfiltrate the OAuth token.
+    const safeFileUrl = resolveAllowedUrl(fileUrl, baseUrl);
+    if (!safeFileUrl) {
+      debugLog("[BROKER-URL] a2a-card download host not allowlisted:", fileUrl);
+      return NextResponse.json({ url: null, reason: "download_host_not_allowed" });
+    }
+
+    const fileRes = await loggedFetch(safeFileUrl.toString(), { headers: { Authorization: authHeader } });
     if (!fileRes.ok) {
       return NextResponse.json({ url: null, reason: "download_failed" });
     }

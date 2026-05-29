@@ -4,9 +4,12 @@ import { cookies } from "next/headers";
 import { getCredentialsForRegion } from "@/lib/regions";
 import type { RegionId } from "@/lib/regions";
 import { loggedFetch, debugLog, debugError } from "@/lib/api-logger";
-import { sessionOptions, type SessionData } from "@/lib/session";
+import { getSession, sessionOptions, type SessionData } from "@/lib/session";
 import { TokenRequestSchema } from "@/lib/schemas";
 import { probeMsearchEntitlement } from "@/lib/api/msearch-probe";
+
+/** How long after CSRF-state validation a code may still be redeemed. */
+const STATE_VALIDATION_TTL_MS = 10 * 60 * 1000;
 
 export async function POST(request: NextRequest) {
   try {
@@ -21,6 +24,18 @@ export async function POST(request: NextRequest) {
     }
     
     const { code } = parseResult.data;
+
+    // Bind code redemption to the session that just passed OAuth state (CSRF)
+    // validation. Without this, an intercepted `code` could be redeemed by any
+    // party with a simple POST, bypassing the callback's state check.
+    const session = await getSession();
+    const validatedAt = session.oauthStateValidatedAt ?? 0;
+    if (!validatedAt || Date.now() - validatedAt > STATE_VALIDATION_TTL_MS) {
+      return NextResponse.json(
+        { message: "OAuth state was not validated for this session" },
+        { status: 400 }
+      );
+    }
     
     const cookieStore = await cookies();
     const region = (cookieStore.get("anypoint_signin_region")?.value ?? "us") as RegionId;

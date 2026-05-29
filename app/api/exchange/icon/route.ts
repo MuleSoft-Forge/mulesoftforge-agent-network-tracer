@@ -27,6 +27,17 @@ export async function GET(request: NextRequest) {
   
   const { path: validatedPath } = parseResult.data;
   const pathNormalized = validatedPath.startsWith("/") ? validatedPath : `/${validatedPath}`;
+
+  // Restrict this proxy to Exchange asset/icon paths. Without this, any signed-in
+  // user could proxy arbitrary control-plane paths (e.g. /accounts, /apimanager)
+  // with their own token via the `path` param.
+  if (!pathNormalized.startsWith("/exchange/")) {
+    return NextResponse.json(
+      { error: "path must be an Exchange path (starting with /exchange/)" },
+      { status: 400 }
+    );
+  }
+
   const url = `${baseUrl.replace(/\/$/, "")}${pathNormalized}`;
 
   try {

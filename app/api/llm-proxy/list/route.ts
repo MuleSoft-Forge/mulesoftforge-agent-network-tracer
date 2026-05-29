@@ -272,7 +272,7 @@ export async function GET(request: NextRequest) {
       const text = await res.text();
       debugError("[LLM-PROXY/LIST] API error:", res.status, text);
       return NextResponse.json(
-        { error: `LLM Proxies list failed: ${res.status} ${text}`, total: 0, instances: [] },
+        { error: `LLM Proxies list failed: ${res.status} ${text.slice(0, 200)}`, total: 0, instances: [] },
         { status: res.status }
       );
     }

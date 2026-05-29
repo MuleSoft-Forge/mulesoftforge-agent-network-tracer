@@ -30,6 +30,13 @@ async function proxyRequest(
   if (authResult instanceof NextResponse) return authResult;
   
   const { baseUrl, accessToken } = authResult;
+
+  // Guard against path-traversal pivots out of /visualizer/api/ (e.g. `..`
+  // segments that could rewrite the URL onto other Anypoint APIs).
+  if (params.path.some((seg) => seg === ".." || seg === "." || seg.includes("\\"))) {
+    return NextResponse.json({ error: "Invalid path" }, { status: 400 });
+  }
+
   const path = params.path.join("/");
   const url = `${baseUrl}/visualizer/api/${path}`;
 
@@ -54,7 +61,7 @@ async function proxyRequest(
     if (!res.ok) {
       const text = await res.text();
       return NextResponse.json(
-        { error: `Visualizer API failed: ${res.status} ${text}` },
+        { error: `Visualizer API failed: ${res.status} ${text.slice(0, 200)}` },
         { status: res.status }
       );
     }

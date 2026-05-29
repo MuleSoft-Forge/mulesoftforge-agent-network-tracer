@@ -10,6 +10,50 @@ interface ZipEntry {
   content: string;
 }
 
+/** Zip-bomb / DoS guards. Decompression happens in-memory, so we cap aggressively. */
+const MAX_ENTRIES = 2000;
+const MAX_ENTRY_DECOMPRESSED_BYTES = 16 * 1024 * 1024; // 16 MB per file
+const MAX_TOTAL_DECOMPRESSED_BYTES = 64 * 1024 * 1024; // 64 MB total
+
+/** Max compressed zip we will pull into memory before extracting. */
+export const MAX_ZIP_DOWNLOAD_BYTES = 50 * 1024 * 1024; // 50 MB
+
+/**
+ * Read a fetch Response body into a Buffer, refusing payloads larger than
+ * `maxBytes`. Checks the advertised Content-Length first, then enforces the cap
+ * while streaming (so a lying/absent header can't blow past the limit). Returns
+ * null when the limit is exceeded.
+ */
+export async function readBodyWithLimit(
+  res: Response,
+  maxBytes: number = MAX_ZIP_DOWNLOAD_BYTES
+): Promise<Buffer | null> {
+  const declared = Number(res.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > maxBytes) return null;
+
+  if (!res.body) {
+    const buf = Buffer.from(await res.arrayBuffer());
+    return buf.length > maxBytes ? null : buf;
+  }
+
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    if (value) {
+      total += value.length;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {});
+        return null;
+      }
+      chunks.push(value);
+    }
+  }
+  return Buffer.concat(chunks);
+}
+
 function readUint16LE(buf: Buffer, offset: number): number {
   return buf[offset] | (buf[offset + 1] << 8);
 }
@@ -43,9 +87,10 @@ export function extractTextFiles(zipBuffer: Buffer): ZipEntry[] {
   if (eocdOffset === -1) return entries;
 
   const cdOffset = readUint32LE(zipBuffer, eocdOffset + 16);
-  const cdEntries = readUint16LE(zipBuffer, eocdOffset + 10);
+  const cdEntries = Math.min(readUint16LE(zipBuffer, eocdOffset + 10), MAX_ENTRIES);
 
   let offset = cdOffset;
+  let totalDecompressed = 0;
 
   for (let i = 0; i < cdEntries; i++) {
     if (offset + 46 > zipBuffer.length) break;
@@ -71,6 +116,9 @@ export function extractTextFiles(zipBuffer: Buffer): ZipEntry[] {
     const textExts = new Set(["yaml", "yml", "json", "xml", "raml", "txt", "md", "properties", "cfg", "conf"]);
     if (!textExts.has(ext)) continue;
 
+    // Skip entries that declare an oversized uncompressed payload (zip-bomb guard).
+    if (uncompressedSize > MAX_ENTRY_DECOMPRESSED_BYTES) continue;
+
     // Read from local file header
     if (localHeaderOffset + 30 > zipBuffer.length) continue;
     if (readUint32LE(zipBuffer, localHeaderOffset) !== 0x04034b50) continue;
@@ -86,18 +134,25 @@ export function extractTextFiles(zipBuffer: Buffer): ZipEntry[] {
     let content: string;
     try {
       if (compressionMethod === 0) {
-        // Stored (no compression)
+        // Stored (no compression) — cap to the per-entry budget.
+        if (compressedData.length > MAX_ENTRY_DECOMPRESSED_BYTES) continue;
         content = compressedData.toString("utf-8");
       } else if (compressionMethod === 8) {
-        // Deflated
-        const decompressed = inflateRawSync(compressedData);
+        // Deflated — `maxOutputLength` makes inflate throw if a lying header
+        // tries to expand past the cap, defeating zip bombs.
+        const decompressed = inflateRawSync(compressedData, {
+          maxOutputLength: MAX_ENTRY_DECOMPRESSED_BYTES,
+        });
         content = decompressed.toString("utf-8");
       } else {
         continue; // Unsupported compression
       }
     } catch {
-      continue; // Skip files that fail to decompress
+      continue; // Skip files that fail to decompress (or exceed the cap)
     }
+
+    totalDecompressed += Buffer.byteLength(content, "utf-8");
+    if (totalDecompressed > MAX_TOTAL_DECOMPRESSED_BYTES) break;
 
     entries.push({ filename, content });
   }

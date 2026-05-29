@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isSafePublicUrl } from "@/lib/api/url-safety";
+import { isSafePublicUrl, safeFetch, SsrfBlockedError } from "@/lib/api/url-safety";
+import { isAuthenticated } from "@/lib/session";
+
+/** Cap how much upstream broker error text we echo back to the client. */
+function truncate(text: string, max = 500): string {
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
 
 export const dynamic = "force-dynamic";
 // On Vercel this hints the maximum route execution window.
@@ -35,6 +41,10 @@ function extractErrorSummary(parsed: unknown, fallback: string): string {
  * This route -> brokerUrl (server-to-server)
  */
 export async function POST(req: NextRequest) {
+  if (!(await isAuthenticated())) {
+    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  }
+
   const brokerTimeoutMs = resolveBrokerTimeoutMs();
   try {
     const body = (await req.json()) as { brokerUrl?: string; message?: string };
@@ -76,15 +86,19 @@ export async function POST(req: NextRequest) {
     const normalizedUrl = new URL(safety.url.toString());
     normalizedUrl.pathname = normalizedUrl.pathname.replace(/\/{2,}/g, "/");
 
-    const upstream = await fetch(normalizedUrl.toString(), {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
+    const upstream = await safeFetch(
+      normalizedUrl.toString(),
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(upstreamBody),
+        signal: AbortSignal.timeout(brokerTimeoutMs),
       },
-      body: JSON.stringify(upstreamBody),
-      signal: AbortSignal.timeout(brokerTimeoutMs),
-    });
+      { allowHttp: false }
+    );
 
     const raw = await upstream.text();
     let parsed: unknown = null;
@@ -99,7 +113,7 @@ export async function POST(req: NextRequest) {
         {
           error: extractErrorSummary(parsed, `Broker returned ${upstream.status}`),
           upstreamStatus: upstream.status,
-          detail: raw,
+          detail: truncate(raw),
         },
         { status: upstream.status }
       );
@@ -107,13 +121,19 @@ export async function POST(req: NextRequest) {
 
     if (parsed === null) {
       return NextResponse.json(
-        { error: "Broker returned non-JSON response", detail: raw },
+        { error: "Broker returned non-JSON response", detail: truncate(raw) },
         { status: 502 }
       );
     }
 
     return NextResponse.json(parsed);
   } catch (error) {
+    if (error instanceof SsrfBlockedError) {
+      return NextResponse.json(
+        { error: "Broker URL resolves to a disallowed address" },
+        { status: 400 }
+      );
+    }
     const detail = error instanceof Error ? error.message : "Unknown error";
     const isTimeout =
       error instanceof Error &&

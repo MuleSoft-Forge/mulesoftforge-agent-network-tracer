@@ -55,7 +55,27 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "No agent-network asset found", assetId: null }, { status: 404 });
     }
 
-    const match = filtered[0];
+    // Rank candidates deterministically rather than blindly taking the first
+    // search hit: prefer assets whose id/name actually references a network and
+    // that share the broker's groupId, so multi-match searches don't resolve to
+    // an unrelated asset.
+    const score = (a: { groupId: string; assetId: string; name?: string }): number => {
+      let s = 0;
+      const hay = `${a.assetId} ${a.name ?? ""}`.toLowerCase();
+      if (/(agent[-_ ]?network|network)/.test(hay)) s += 2;
+      if (hay.includes(brokerAssetId.toLowerCase())) s += 1;
+      return s;
+    };
+    const ranked = [...filtered].sort((a, b) => score(b) - score(a));
+    if (ranked.length > 1) {
+      debugLog(
+        `[agent-network-asset] ${ranked.length} candidates; picked "${ranked[0].assetId}" (others: ${ranked
+          .slice(1)
+          .map((a) => a.assetId)
+          .join(", ")})`
+      );
+    }
+    const match = ranked[0];
     const detailUrl = `${baseUrl}/exchange/api/v2/assets/${encodeURIComponent(match.groupId)}/${encodeURIComponent(match.assetId)}`;
     const detailRes = await fetch(detailUrl, { headers: authHeader });
 

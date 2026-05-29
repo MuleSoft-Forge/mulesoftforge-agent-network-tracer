@@ -41,7 +41,12 @@ export async function POST(request: NextRequest) {
     monitoringProductSKU: session.monitoringProductSKU ?? null,
   });
 
-  const body = await request.json();
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
   const parseResult = BrokerTasksRequestSchema.safeParse(body);
   if (!parseResult.success) return validationError(parseResult.error);
 

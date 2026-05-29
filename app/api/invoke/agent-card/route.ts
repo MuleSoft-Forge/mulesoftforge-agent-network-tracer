@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isSafePublicUrl } from "@/lib/api/url-safety";
+import { isSafePublicUrl, safeFetch } from "@/lib/api/url-safety";
+import { isAuthenticated } from "@/lib/session";
 
 interface AgentCard {
   name?: string;
@@ -10,7 +11,28 @@ interface AgentCard {
   capabilities?: unknown;
 }
 
-const cache = new Map<string, AgentCard>();
+const CACHE_TTL_MS = 5 * 60 * 1000;
+const CACHE_MAX_ENTRIES = 500;
+const cache = new Map<string, { card: AgentCard; expiresAt: number }>();
+
+function cacheGet(key: string): AgentCard | null {
+  const hit = cache.get(key);
+  if (!hit) return null;
+  if (hit.expiresAt <= Date.now()) {
+    cache.delete(key);
+    return null;
+  }
+  return hit.card;
+}
+
+function cacheSet(key: string, card: AgentCard): void {
+  // Bound memory: drop the oldest entry once we hit the cap (Map preserves insertion order).
+  if (cache.size >= CACHE_MAX_ENTRIES) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) cache.delete(oldest);
+  }
+  cache.set(key, { card, expiresAt: Date.now() + CACHE_TTL_MS });
+}
 
 function isAgentCard(data: unknown): data is AgentCard {
   if (!data || typeof data !== "object" || Array.isArray(data)) return false;
@@ -61,11 +83,15 @@ function buildGetCandidates(brokerUrl: string): string[] {
 
 async function tryGet(endpoint: string): Promise<AgentCard | null> {
   try {
-    const res = await fetch(endpoint, {
-      method: "GET",
-      headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(5000),
-    });
+    const res = await safeFetch(
+      endpoint,
+      {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(5000),
+      },
+      { allowHttp: false }
+    );
     if (!res.ok) return null;
     const ct = res.headers.get("content-type") ?? "";
     if (!ct.includes("application/json") && !ct.includes("text/")) return null;
@@ -88,12 +114,16 @@ async function tryPost(brokerUrl: string): Promise<AgentCard | null> {
   ];
   for (const body of bodies) {
     try {
-      const res = await fetch(brokerUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body,
-        signal: AbortSignal.timeout(8000),
-      });
+      const res = await safeFetch(
+        brokerUrl,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body,
+          signal: AbortSignal.timeout(8000),
+        },
+        { allowHttp: false }
+      );
       if (!res.ok) continue;
       let parsed: unknown;
       try {
@@ -109,6 +139,10 @@ async function tryPost(brokerUrl: string): Promise<AgentCard | null> {
 }
 
 export async function GET(req: NextRequest) {
+  if (!(await isAuthenticated())) {
+    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  }
+
   const brokerUrl = req.nextUrl.searchParams.get("url");
   if (!brokerUrl) {
     return NextResponse.json({ error: "Missing url param" }, { status: 400 });
@@ -120,22 +154,23 @@ export async function GET(req: NextRequest) {
   }
 
   const bust = req.nextUrl.searchParams.get("refresh") === "1";
-  if (!bust && cache.has(brokerUrl)) {
-    return NextResponse.json(cache.get(brokerUrl));
+  if (!bust) {
+    const cached = cacheGet(brokerUrl);
+    if (cached) return NextResponse.json(cached);
   }
 
   const candidates = buildGetCandidates(brokerUrl);
   for (const endpoint of candidates) {
     const card = await tryGet(endpoint);
     if (card) {
-      cache.set(brokerUrl, card);
+      cacheSet(brokerUrl, card);
       return NextResponse.json(card);
     }
   }
 
   const card = await tryPost(brokerUrl);
   if (card) {
-    cache.set(brokerUrl, card);
+    cacheSet(brokerUrl, card);
     return NextResponse.json(card);
   }
 

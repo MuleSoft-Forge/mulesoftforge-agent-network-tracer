@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { debugError, debugLog } from "@/lib/api-logger";
 import { isAuthenticated } from "@/lib/session";
-import { isSafePublicUrl } from "@/lib/api/url-safety";
+import { isSafePublicUrl, safeFetch, SsrfBlockedError } from "@/lib/api/url-safety";
 import type { LlmProxyChatRequest } from "@/lib/llmProxy/types";
 
 export const dynamic = "force-dynamic";
@@ -75,7 +75,7 @@ export async function POST(request: NextRequest) {
   });
 
   try {
-    const upstream = await fetch(targetUrl, {
+    const upstream = await safeFetch(targetUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -113,7 +113,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           error: errorSummary,
-          detail: text,
+          detail: text.slice(0, 1000),
           upstreamJson,
           upstreamStatus: upstream.status,
           upstreamContentType: contentType || undefined,
@@ -149,6 +149,12 @@ export async function POST(request: NextRequest) {
     const text = await upstream.text();
     return NextResponse.json({ data: text, headers: proxyHeaders });
   } catch (error) {
+    if (error instanceof SsrfBlockedError) {
+      return NextResponse.json(
+        { error: "LLM Proxy URL resolves to a disallowed address" },
+        { status: 400 }
+      );
+    }
     debugError("[LLM-PROXY/CHAT] proxy error", error);
     const message = error instanceof Error ? error.message : "Unknown proxy error";
     return NextResponse.json(

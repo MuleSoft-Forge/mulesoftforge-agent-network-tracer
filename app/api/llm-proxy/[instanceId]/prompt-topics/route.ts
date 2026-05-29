@@ -326,6 +326,11 @@ export async function GET(
     return NextResponse.json(body);
   } catch (error) {
     debugError("[LLM-PROXY/PROMPT-TOPICS] Fetch error:", error);
-    return NextResponse.json({ topics: [] }, { status: 200 });
+    // Surface the failure with a real error status (the client still reads
+    // `topics` defensively) instead of masking it as an empty 200 response.
+    return NextResponse.json(
+      { topics: [], error: "Failed to load prompt topics" },
+      { status: 502 }
+    );
   }
 }

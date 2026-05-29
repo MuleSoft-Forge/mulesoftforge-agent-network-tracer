@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { hasSessionCookie } from "@/lib/auth/middleware-session";
+import { hasValidSession } from "@/lib/auth/middleware-session";
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -25,7 +25,7 @@ export async function middleware(request: NextRequest) {
 
   // Protect /agent-network (routes under /(app) are handled by this path)
   if (pathname.startsWith("/agent-network")) {
-    if (!hasSessionCookie(request)) {
+    if (!(await hasValidSession(request))) {
       // Redirect to sign-in with return URL
       const signInUrl = new URL("/auth/sign-in", request.url);
       signInUrl.searchParams.set("redirect", pathname);
@@ -36,7 +36,7 @@ export async function middleware(request: NextRequest) {
 
   // Protect API routes (except /api/auth/*)
   if (pathname.startsWith("/api/") && !pathname.startsWith("/api/auth/")) {
-    if (!hasSessionCookie(request)) {
+    if (!(await hasValidSession(request))) {
       return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
     }
     return NextResponse.next();

@@ -48,8 +48,10 @@ export const BrokerTasksResponseSchema = z.object({
 // ============================================================================
 
 export const TaskCallstackRequestSchema = z.object({
-  orgId: z.string().min(1),
-  taskId: z.string().min(1),
+  // orgId is interpolated UNQUOTED into Lucene `orgId=...` clauses, so it must
+  // be strictly constrained to prevent query injection.
+  orgId: z.string().min(1).max(100).regex(/^[a-zA-Z0-9_-]+$/),
+  taskId: z.string().min(1).max(256),
   apiInstanceId: z.string().min(1).optional(),
   envId: z.string().min(1).optional(),
   skipTraces: z
