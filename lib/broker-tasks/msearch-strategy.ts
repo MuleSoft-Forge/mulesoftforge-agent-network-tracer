@@ -23,10 +23,19 @@ export interface MSearchStrategyParams {
   accessToken: string;
   baseUrl: string;
   timeRangeMs: number;
+  /** Anypoint environment id — routes the _msearch query (X-ANYPNT-ENV-ID). */
+  envId?: string;
   /** If set, only hits whose _source.appId matches are kept (post-filter). */
   brokerAppName?: string;
   /** Run org-wide + wildcard probes and attach `msearchDiagnostics` (extra _msearch calls). */
   includeDiagnostics?: boolean;
+}
+
+function msearchSignalsFallback(result: MSearchResult): boolean {
+  return (
+    result.error === "MONITORING_CENTER_PREMIUM_REQUIRED" ||
+    result.error === "MSEARCH_UNAVAILABLE"
+  );
 }
 
 function probeSummary(lucene: string, result: MSearchResult): MsearchProbeSummary {
@@ -78,7 +87,7 @@ function summarizeFilteredQuery(
 export async function fetchTasksViaMSearch(
   params: MSearchStrategyParams
 ): Promise<BrokerTasksResult | null> {
-  const { orgId, apiInstanceId, accessToken, baseUrl, timeRangeMs, brokerAppName, includeDiagnostics } =
+  const { orgId, apiInstanceId, accessToken, baseUrl, timeRangeMs, envId, brokerAppName, includeDiagnostics } =
     params;
 
   const now = Date.now();
@@ -90,9 +99,9 @@ export async function fetchTasksViaMSearch(
 
   if (includeDiagnostics) {
     const orgQ = `orgId=${orgId}`;
-    const orgRes = await msearch(orgId, orgQ, { size: 3, from: 0, timeRangeMs }, accessToken, baseUrl);
-    if (orgRes.error === "MONITORING_CENTER_PREMIUM_REQUIRED") {
-      debugLog("[MSEARCH] Monitoring Center Premium required — signalling fallback");
+    const orgRes = await msearch(orgId, orgQ, { size: 3, from: 0, timeRangeMs, envId }, accessToken, baseUrl);
+    if (msearchSignalsFallback(orgRes)) {
+      debugLog(`[MSEARCH] ${orgRes.error} — signalling fallback`);
       return null;
     }
     orgOnlyQuery = probeSummary(orgQ, orgRes);
@@ -100,9 +109,9 @@ export async function fetchTasksViaMSearch(
       `[MSEARCH] DIAG org-only: total=${orgOnlyQuery.total} returned=${orgOnlyQuery.returned} keys=${(orgOnlyQuery.sampleSourceKeys ?? []).join(",")}`
     );
 
-    const wildRes = await msearch(orgId, "*", { size: 3, from: 0, timeRangeMs }, accessToken, baseUrl);
-    if (wildRes.error === "MONITORING_CENTER_PREMIUM_REQUIRED") {
-      debugLog("[MSEARCH] Monitoring Center Premium required (wildcard probe) — signalling fallback");
+    const wildRes = await msearch(orgId, "*", { size: 3, from: 0, timeRangeMs, envId }, accessToken, baseUrl);
+    if (msearchSignalsFallback(wildRes)) {
+      debugLog(`[MSEARCH] ${wildRes.error} (wildcard probe) — signalling fallback`);
       return null;
     }
     wildcardQuery = probeSummary("*", wildRes);
@@ -136,10 +145,10 @@ export async function fetchTasksViaMSearch(
     debugLog(`[MSEARCH] Query (${q.label}): ${q.lucene}`);
     for (let page = 0; page < MAX_PAGES; page++) {
       const from = page * PAGE_SIZE;
-      const pageResult = await msearch(orgId, q.lucene, { size: PAGE_SIZE, from, timeRangeMs }, accessToken, baseUrl);
+      const pageResult = await msearch(orgId, q.lucene, { size: PAGE_SIZE, from, timeRangeMs, envId }, accessToken, baseUrl);
 
-      if (pageResult.error === "MONITORING_CENTER_PREMIUM_REQUIRED") {
-        debugLog("[MSEARCH] Monitoring Center Premium required — signalling fallback");
+      if (msearchSignalsFallback(pageResult)) {
+        debugLog(`[MSEARCH] ${pageResult.error} — signalling fallback`);
         return null;
       }
 

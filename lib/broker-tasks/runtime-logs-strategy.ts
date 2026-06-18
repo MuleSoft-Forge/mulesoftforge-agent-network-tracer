@@ -22,12 +22,15 @@ export interface RuntimeLogsStrategyParams {
   timeRangeMs: number;
   envId?: string;
   brokerAppName?: string;
+  /** When true, org has Log Search — do not tag responses as no-entitlement. */
+  logSearchEntitled?: boolean;
 }
 
 export async function fetchTasksViaRuntimeLogs(
   params: RuntimeLogsStrategyParams
 ): Promise<BrokerTasksResult> {
-  const { orgId, apiInstanceId, accessToken, baseUrl, timeRangeMs, envId, brokerAppName } = params;
+  const { orgId, apiInstanceId, accessToken, baseUrl, timeRangeMs, envId, brokerAppName, logSearchEntitled = false } = params;
+  const resultMode = logSearchEntitled ? undefined : ("no-entitlement" as const);
   debugLog("[RUNTIME-LOGS] Starting for apiInstanceId:", apiInstanceId);
 
   // AMC `GET /logs?length=N&descending=true` returns the last N entries with
@@ -58,7 +61,7 @@ export async function fetchTasksViaRuntimeLogs(
       const tasks = await tryDeploymentByName(baseUrl, orgId, envId, brokerAppName, apiInstanceId, accessToken);
       const inWindow = filterAccumulators(tasks);
       if (inWindow.length > 0) {
-        return { tasks: finaliseTasks(inWindow), source: "runtime-logs", totalLogs: 0, mode: "no-entitlement" };
+        return { tasks: finaliseTasks(inWindow), source: "runtime-logs", totalLogs: 0, mode: resultMode };
       }
     }
 
@@ -81,15 +84,15 @@ export async function fetchTasksViaRuntimeLogs(
     const inWindow = filterAccumulators(Object.values(allTasks));
     if (inWindow.length === 0) {
       debugLog("[RUNTIME-LOGS] No tasks found within time window");
-      return { tasks: [], source: "runtime-logs", totalLogs: 0, mode: "no-entitlement" };
+      return { tasks: [], source: "runtime-logs", totalLogs: 0, mode: resultMode };
     }
 
     const tasks = finaliseTasks(inWindow);
     debugLog("[RUNTIME-LOGS] Returning", tasks.length, "tasks");
-    return { tasks, source: "runtime-logs", totalLogs: 0, mode: "no-entitlement" };
+    return { tasks, source: "runtime-logs", totalLogs: 0, mode: resultMode };
   } catch (error) {
     debugError("[RUNTIME-LOGS] Error:", error);
-    return { tasks: [], source: "runtime-logs", totalLogs: 0, mode: "no-entitlement" };
+    return { tasks: [], source: "runtime-logs", totalLogs: 0, mode: resultMode };
   }
 }
 

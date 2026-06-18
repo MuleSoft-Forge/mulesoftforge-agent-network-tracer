@@ -6,7 +6,7 @@ import type { RegionId } from "@/lib/regions";
 import { loggedFetch, debugLog, debugError } from "@/lib/api-logger";
 import { getSession, sessionOptions, type SessionData } from "@/lib/session";
 import { TokenRequestSchema } from "@/lib/schemas";
-import { probeMsearchEntitlement } from "@/lib/api/msearch-probe";
+import { probeLogSearch } from "@/lib/api/log-search";
 
 /** How long after CSRF-state validation a code may still be redeemed. */
 const STATE_VALIDATION_TTL_MS = 10 * 60 * 1000;
@@ -75,13 +75,12 @@ export async function POST(request: NextRequest) {
     const tokenData = await tokenResponse.json();
     const accessToken = tokenData.access_token as string;
 
-    // Decide _msearch (Log Search) availability. Historically we inferred this
-    // from `organization.entitlements.monitoringCenter.productSKU` — but
-    // that field doesn't reliably line up with whether the API actually
-    // works (observed: SKU 3 orgs that call _msearch successfully). Now we
-    // probe the endpoint directly and record the SKU alongside it purely for
-    // diagnostics.
+    // Decide Log Search availability by probing the (new) Enhanced Log Search
+    // OpenSearch backend directly for this org. The `monitoringCenter.productSKU`
+    // profile field is recorded only for diagnostics — it doesn't reliably
+    // reflect whether the API is reachable for this token.
     let monitoringProductSKU: number | undefined;
+    let orgId: string | undefined;
     try {
       const profileRes = await loggedFetch(`${creds.baseUrl}/accounts/api/profile`, {
         method: "GET",
@@ -89,18 +88,24 @@ export async function POST(request: NextRequest) {
       });
       if (profileRes.ok) {
         const profile = (await profileRes.json()) as {
-          organization?: { entitlements?: { monitoringCenter?: { productSKU?: number } } };
+          organization?: {
+            id?: string;
+            entitlements?: { monitoringCenter?: { productSKU?: number } };
+          };
         };
         monitoringProductSKU = profile?.organization?.entitlements?.monitoringCenter?.productSKU;
+        orgId = profile?.organization?.id;
       }
     } catch (profileError) {
       debugError("Profile fetch after login failed:", profileError);
     }
 
-    const monitoringCenterEnabled = await probeMsearchEntitlement(creds.baseUrl, accessToken);
+    const monitoringCenterEnabled = orgId
+      ? await probeLogSearch(creds.baseUrl, orgId, accessToken)
+      : false;
     debugLog(
       `[AUTH-TOKEN] monitoringCenter.productSKU=${monitoringProductSKU} ` +
-        `_msearch probe → monitoringCenterEnabled=${monitoringCenterEnabled}`
+        `log-search probe → monitoringCenterEnabled=${monitoringCenterEnabled}`
     );
 
     // Prepare session data

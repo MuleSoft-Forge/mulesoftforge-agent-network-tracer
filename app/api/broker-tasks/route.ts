@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { debugLog, debugError } from "@/lib/api-logger";
 import { BrokerTasksRequestSchema } from "@/lib/schemas";
 import { requireAuth } from "@/lib/api/auth-middleware";
+import { orgHasTitaniumMonitoring } from "@/lib/api/log-search-entitlement";
+import { isOrgLogSearchEntitled } from "@/lib/api/log-search";
 import { validationError } from "@/lib/api/error-responses";
 import { resolveBrokerContext } from "@/lib/broker-context";
 import { dumpBrokerTasksVerbose } from "@/lib/broker-tasks/verbose-dump";
@@ -30,8 +32,7 @@ export async function POST(request: NextRequest) {
   const authResult = await requireAuth(request);
   if (authResult instanceof NextResponse) return authResult;
   const { baseUrl, accessToken, session } = authResult;
-  const hasMsearch = session.monitoringCenterEnabled === true;
-  debugLog(`[BROKER-TASKS] session: baseUrl=${baseUrl} token=${accessToken.slice(0, 8)}… monitoringCenterEnabled=${hasMsearch}`);
+  debugLog(`[BROKER-TASKS] session: baseUrl=${baseUrl} token=${accessToken.slice(0, 8)}… productSKU=${session.monitoringProductSKU ?? "unknown"}`);
   dumpBrokerTasksVerbose("auth-session", {
     baseUrl,
     accessToken,
@@ -58,8 +59,11 @@ export async function POST(request: NextRequest) {
     includeMsearchDiagnostics = false,
   } = parseResult.data;
   const timeRange = Math.min(timeRangeMs, MAX_TIME_RANGE_MS);
+  // Entitlement is decided for the *queried* org (handles business-group /
+  // multi-org switches), not a login-time flag.
+  const hasMsearch = await isOrgLogSearchEntitled(baseUrl, orgId, accessToken);
   debugLog(
-    `[BROKER-TASKS] orgId=${orgId} apiInstanceId=${apiInstanceId} envId=${envId ?? "none"} timeRange=${timeRange}ms includeMsearchDiagnostics=${includeMsearchDiagnostics}`
+    `[BROKER-TASKS] orgId=${orgId} apiInstanceId=${apiInstanceId} envId=${envId ?? "none"} timeRange=${timeRange}ms logSearchEntitled=${hasMsearch} includeMsearchDiagnostics=${includeMsearchDiagnostics}`
   );
 
   let brokerAppName: string | undefined;
@@ -114,6 +118,7 @@ export async function POST(request: NextRequest) {
         accessToken,
         baseUrl,
         timeRangeMs: timeRange,
+        envId: envId ?? undefined,
         brokerAppName,
         includeDiagnostics: includeMsearchDiagnostics,
       });
@@ -168,6 +173,7 @@ export async function POST(request: NextRequest) {
       timeRangeMs: timeRange,
       envId: envId ?? undefined,
       brokerAppName,
+      logSearchEntitled: hasMsearch || orgHasTitaniumMonitoring(session),
     });
 
     debugLog(`[BROKER-TASKS] runtime-logs returned ${runtimeResult.tasks.length} tasks`);

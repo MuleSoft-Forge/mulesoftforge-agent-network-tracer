@@ -84,8 +84,8 @@ export interface JobCard {
 
 /** Per-API status for task details: what worked and what failed (200 vs 403 entitlement vs 403 unauthorized). */
 export interface ApiStatus {
-  /** Log search (Monitoring _msearch): 200 ok, 403 entitlement (Premium required), or 403/other */
-  logSearch: "ok" | "403_entitlement" | "403_unauthorized" | "error";
+  /** Log search (Monitoring _msearch): 200 ok, 403 entitlement, 404 unavailable, or other error */
+  logSearch: "ok" | "403_entitlement" | "403_unauthorized" | "404_unavailable" | "error";
   /** Object Store: ok, 403, no store found, store found but no keys, skipped, or error */
   objectStore: "ok" | "403_forbidden" | "no_store" | "no_keys" | "skipped" | "error";
   /** Deployment API (AMC): ok, 403 (e.g. Read Applications scope), not_used, or error */

@@ -5,6 +5,8 @@ import { fetchObjectStoreData, getObjectStoreRegionFromDeployment, getMonitoring
 import { getOAuthConfig, AMC_COMMON_SCOPES_TO_TRY } from "@/lib/auth/config";
 import type { ApiStatus } from "@/components/task-details/types";
 import { requireAuth } from "@/lib/api/auth-middleware";
+import { orgHasTitaniumMonitoring } from "@/lib/api/log-search-entitlement";
+import { isOrgLogSearchEntitled } from "@/lib/api/log-search";
 import { msearch } from "@/lib/api/msearch";
 import { validationError } from "@/lib/api/error-responses";
 import { resolveDeploymentContext, type TaskCallstackState } from "@/lib/deployment-context/resolvers";
@@ -1184,10 +1186,9 @@ export async function GET(request: NextRequest) {
   debugLog("[TASK-CALLSTACK] ✓ Authentication successful");
   
   const { baseUrl, accessToken, session } = authResult;
-  const hasMsearch = session.monitoringCenterEnabled === true;
   debugLog(`[TASK-CALLSTACK] baseUrl: ${baseUrl}`);
   debugLog(`[TASK-CALLSTACK] accessToken: ${accessToken ? "present" : "missing"} (${accessToken?.length || 0} chars)`);
-  debugLog(`[TASK-CALLSTACK] monitoringCenterEnabled: ${hasMsearch}`);
+  debugLog(`[TASK-CALLSTACK] monitoringProductSKU: ${session.monitoringProductSKU ?? "unknown"}`);
   
   const { searchParams } = new URL(request.url);
   const orgId = searchParams.get("orgId");
@@ -1227,6 +1228,10 @@ export async function GET(request: NextRequest) {
   debugLog(`[TASK-CALLSTACK] Validated envId: ${validatedEnvId ?? "undefined"}`);
   debugLog(`[TASK-CALLSTACK] Validated skipTraces: ${skipTracesRequested ?? false}`);
 
+  // Entitlement is decided for the *queried* org, not a login-time flag.
+  const hasMsearch = await isOrgLogSearchEntitled(baseUrl, validatedOrgId, accessToken);
+  debugLog(`[TASK-CALLSTACK] logSearchEntitled (per-org): ${hasMsearch}`);
+
   const timeRange = 30 * 24 * 3600 * 1000;
   debugLog(`[TASK-CALLSTACK] Time range: ${timeRange}ms (30 days)`);
 
@@ -1238,7 +1243,7 @@ export async function GET(request: NextRequest) {
           debugLog("[TASK-CALLSTACK] Step 4: Phase 1 - Searching logs by taskId...");
           debugLog(`[TASK-CALLSTACK] Phase 1 query: ${phase1Query}`);
           debugLog(`[TASK-CALLSTACK] Phase 1 timeRange: ${timeRange}ms`);
-          const result = await msearch(validatedOrgId, phase1Query, { timeRangeMs: timeRange }, accessToken, baseUrl);
+          const result = await msearch(validatedOrgId, phase1Query, { timeRangeMs: timeRange, envId: validatedEnvId ?? undefined }, accessToken, baseUrl);
           debugLog(`[TASK-CALLSTACK] Phase 1 result: ${result.hits?.length || 0} hits, error: ${result.error || "none"}`);
           if (result.hits?.length > 0) {
             const first = result.hits[0] as { _source?: { appId?: string; [key: string]: unknown } };
@@ -1255,18 +1260,24 @@ export async function GET(request: NextRequest) {
       debugLog("[TASK-CALLSTACK] Skipping msearch (monitoringCenterEnabled=false)");
     }
 
-    // No-entitlement mode: get task details from runtime logs.
-    // Triggered by either an explicit Premium-required signal OR msearch
-    // reaching the endpoint but finding nothing (observed with productSKU 3
-    // orgs whose _msearch returns 200 + empty because Premium is required to
-    // populate the ES index).
+    // Runtime-log fallback: when Log Search is unavailable, or when entitled but
+    // the task is not indexed yet (empty msearch hits).
+    const titaniumOrg = orgHasTitaniumMonitoring(session);
+    const msearchUnavailable =
+      phase1.error === "MSEARCH_UNAVAILABLE" ||
+      phase1.error === "MONITORING_CENTER_PREMIUM_REQUIRED";
     const msearchHadNoHits = hasMsearch && !phase1.error && (phase1.hits?.length ?? 0) === 0;
-    if (phase1.error === "MONITORING_CENTER_PREMIUM_REQUIRED" || msearchHadNoHits) {
+    const lacksLogSearch = !hasMsearch || msearchUnavailable;
+    if (lacksLogSearch || msearchHadNoHits) {
       if (msearchHadNoHits) {
         debugLog("[TASK-CALLSTACK] msearch returned 0 hits — falling through to runtime logs");
       }
-      debugLog("[TASK-CALLSTACK] Decision: Premium required, entering no-entitlement mode");
-      debugLog("[NO-ENTITLEMENT] Premium required, getting task details from runtime logs");
+      const runtimeFallbackMode =
+        lacksLogSearch && !titaniumOrg ? "no-entitlement" : "entitlement";
+      debugLog(
+        `[TASK-CALLSTACK] Decision: runtime-log fallback (mode=${runtimeFallbackMode}, lacksLogSearch=${lacksLogSearch}, titaniumOrg=${titaniumOrg})`
+      );
+      debugLog("[RUNTIME-FALLBACK] Getting task details from runtime logs");
       const runtimeLogsResult = await getTaskDetailsFromRuntimeLogs(
         validatedOrgId,
         validatedTaskId,
@@ -1345,22 +1356,27 @@ export async function GET(request: NextRequest) {
               resolvedDeploymentIdFromPipeline
             );
           // Error Transparency: Use deploymentApiStatus from resolved state (preserves 403 from Resolver 3)
-          const noEntitlementApiStatus: ApiStatus = {
-            logSearch: "403_entitlement",
+          const runtimeFallbackApiStatus: ApiStatus = {
+            logSearch:
+              phase1.error === "MSEARCH_UNAVAILABLE" || (lacksLogSearch && titaniumOrg)
+                ? "404_unavailable"
+                : lacksLogSearch
+                  ? "403_entitlement"
+                  : "error",
             objectStore: objectStoreApiStatus,
             deploymentApi: noEntDeploymentApiStatus,
             traceSpans: "skipped",
             monitoringSuggestions,
           };
           if (noEntAmc403Error) {
-            debugLog(`[NO-ENTITLEMENT] AMC 403 Error preserved: ${noEntAmc403Error.substring(0, 200)}...`);
+            debugLog(`[RUNTIME-FALLBACK] AMC 403 Error preserved: ${noEntAmc403Error.substring(0, 200)}...`);
           }
         return NextResponse.json({
-            jobCard: { ...jobCardFromRuntime, objectStore, apiStatus: noEntitlementApiStatus },
+            jobCard: { ...jobCardFromRuntime, objectStore, apiStatus: runtimeFallbackApiStatus },
             entries: runtimeLogsResult.entries,
             traceSpans: [],
           rawQueries: { phase1: phase1Query, phase2: null, traceId: null },
-            mode: "no-entitlement",
+            mode: runtimeFallbackMode,
           });
         } catch (deploymentError) {
           const msg = deploymentError instanceof Error ? deploymentError.message : "Deployment required but failed";
@@ -1459,7 +1475,7 @@ export async function GET(request: NextRequest) {
       debugLog(`[TASK-CALLSTACK] Decision: traceId found, proceeding with phase 2 search`);
       phase2Query = `orgId=${validatedOrgId} AND ("${escapeLucenePhrase(traceId)}" OR "${escapeLucenePhrase(validatedTaskId)}")`;
       debugLog(`[TASK-CALLSTACK] Phase 2 query: ${phase2Query}`);
-      const phase2 = await msearch(validatedOrgId, phase2Query, { timeRangeMs: timeRange }, accessToken, baseUrl);
+      const phase2 = await msearch(validatedOrgId, phase2Query, { timeRangeMs: timeRange, envId: validatedEnvId ?? undefined }, accessToken, baseUrl);
       debugLog(`[TASK-CALLSTACK] Phase 2 result: ${phase2.hits?.length || 0} hits, error: ${phase2.error || "none"}`);
       if (phase2.hits?.length > 0) {
         const first2 = phase2.hits[0] as { _source?: { appId?: string; [key: string]: unknown } };
@@ -1469,10 +1485,13 @@ export async function GET(request: NextRequest) {
         debugLog(`[KEY_FACTS] msearch Phase 2: hitCount=${phase2.hits.length}, firstHit.appId=${firstAppId2}, firstHit.apiInstanceId=${String(firstApiInstanceId2)}`);
       }
       
-      // No-entitlement mode: get task details from runtime logs
-      if (phase2.error === "MONITORING_CENTER_PREMIUM_REQUIRED") {
-        debugLog("[TASK-CALLSTACK] Decision: Premium required in phase2, entering no-entitlement mode");
-        debugLog("[NO-ENTITLEMENT] Premium required in phase2, getting task details from runtime logs");
+      // Runtime-log fallback when phase 2 hits an entitlement error.
+      if (phase2.error === "MONITORING_CENTER_PREMIUM_REQUIRED" || phase2.error === "MSEARCH_UNAVAILABLE") {
+        const titaniumOrg = orgHasTitaniumMonitoring(session);
+        const phase2FallbackMode = titaniumOrg || hasMsearch ? "entitlement" : "no-entitlement";
+        debugLog(
+          `[TASK-CALLSTACK] Decision: phase2 ${phase2.error} — runtime fallback (mode=${phase2FallbackMode})`
+        );
         const runtimeLogsResult = await getTaskDetailsFromRuntimeLogs(
           validatedOrgId,
           validatedTaskId,
@@ -1551,22 +1570,27 @@ export async function GET(request: NextRequest) {
               resolvedDeploymentIdFromPipeline2
             );
           // Error Transparency: Use deploymentApiStatus from resolved state (preserves 403 from Resolver 3)
-          const noEntitlementApiStatus: ApiStatus = {
-            logSearch: "403_entitlement",
+          const phase2FallbackApiStatus: ApiStatus = {
+            logSearch:
+              phase2.error === "MSEARCH_UNAVAILABLE"
+                ? "404_unavailable"
+                : phase2.error === "MONITORING_CENTER_PREMIUM_REQUIRED"
+                  ? "403_entitlement"
+                  : "error",
             objectStore: objectStoreApiStatus,
             deploymentApi: noEntDeploymentApiStatus2,
             traceSpans: "skipped",
             monitoringSuggestions,
           };
           if (noEntAmc403Error2) {
-            debugLog(`[NO-ENTITLEMENT] AMC 403 Error preserved: ${noEntAmc403Error2.substring(0, 200)}...`);
+            debugLog(`[RUNTIME-FALLBACK] AMC 403 Error preserved: ${noEntAmc403Error2.substring(0, 200)}...`);
           }
           return NextResponse.json({
-            jobCard: { ...jobCardFromRuntime, objectStore, apiStatus: noEntitlementApiStatus },
+            jobCard: { ...jobCardFromRuntime, objectStore, apiStatus: phase2FallbackApiStatus },
             entries: runtimeLogsResult.entries,
             traceSpans: [],
             rawQueries: { phase1: phase1Query, phase2: phase2Query, traceId },
-            mode: "no-entitlement",
+            mode: phase2FallbackMode,
           });
         } catch (deploymentError) {
           const msg = deploymentError instanceof Error ? deploymentError.message : "Deployment required but failed";

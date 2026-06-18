@@ -39,6 +39,9 @@ export async function GET(req: NextRequest) {
   const luceneQuery = req.nextUrl.searchParams.get("query") || "*";
   const days = Math.max(1, Math.min(90, parseInt(req.nextUrl.searchParams.get("days") || "60", 10)));
   const size = Math.max(1, Math.min(20, parseInt(req.nextUrl.searchParams.get("size") || "3", 10)));
+  // The _msearch endpoint routes via these headers (no org/env in path).
+  const orgId = req.nextUrl.searchParams.get("orgId") || undefined;
+  const envId = req.nextUrl.searchParams.get("envId") || undefined;
 
   const now = Date.now();
   const gte = now - days * 24 * 3600 * 1000;
@@ -68,12 +71,15 @@ export async function GET(req: NextRequest) {
       }),
     ].join("\n") + "\n";
 
+  const probeHeaders: Record<string, string> = {
+    Authorization: `Bearer ${accessToken}`,
+    "Content-Type": "application/x-ndjson",
+  };
+  if (orgId) probeHeaders["X-ANYPNT-ORG-ID"] = orgId;
+  if (envId) probeHeaders["X-ANYPNT-ENV-ID"] = envId;
   const res = await fetch(`${baseUrl}/monitoring/api/logs/elasticsearch/_msearch`, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/x-ndjson",
-    },
+    headers: probeHeaders,
     body: ndjson,
   });
 

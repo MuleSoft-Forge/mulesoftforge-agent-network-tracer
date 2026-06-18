@@ -94,6 +94,10 @@ function apiStatusLabel(
       ok: { label: "200 OK", ok: true },
       "403_entitlement": { label: "403 Entitlement (Monitoring Center Premium required)", ok: false },
       "403_unauthorized": { label: "403 Unauthorized", ok: false },
+      "404_unavailable": {
+        label: "404 Not Found (_msearch not available for this account — using runtime logs)",
+        ok: false,
+      },
       error: { label: "Error", ok: false },
     },
     objectStore: {

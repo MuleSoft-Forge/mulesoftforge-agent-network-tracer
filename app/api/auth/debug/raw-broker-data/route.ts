@@ -61,9 +61,15 @@ export async function GET(req: NextRequest) {
     ].join("\n") + "\n";
 
     try {
+      const msHeaders: Record<string, string> = {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/x-ndjson",
+      };
+      if (orgId) msHeaders["X-ANYPNT-ORG-ID"] = orgId;
+      if (envId) msHeaders["X-ANYPNT-ENV-ID"] = envId;
       const res = await fetch(`${baseUrl}/monitoring/api/logs/elasticsearch/_msearch`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/x-ndjson" },
+        headers: msHeaders,
         body: ndjson,
       });
       const text = await res.text();
