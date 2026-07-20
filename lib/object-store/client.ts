@@ -20,7 +20,19 @@ const OBJECT_STORE_REGIONS = [
   "sa-east-1",      // Brazil (São Paulo)
 ] as const;
 
-type ObjectStoreRegion = (typeof OBJECT_STORE_REGIONS)[number];
+type ObjectStoreRegion = string;
+
+const DEFAULT_OBJECT_STORE_FALLBACK_REGIONS: ObjectStoreRegion[] = [
+  "us-east-1",
+  "us-west-2",
+  "eu-central-1",
+  "ca-central-1",
+];
+const OBJECT_STORE_REGION_CACHE_TTL_MS = 30 * 60 * 1000;
+const objectStoreRegionCache = new Map<
+  string,
+  { regions: ObjectStoreRegion[]; cachedAt: number }
+>();
 
 interface ObjectStoreValue {
   binaryValue: string; // Base64-encoded
@@ -285,7 +297,88 @@ function extractDownstreamContexts(strings: string[]): Array<{ agent: string; co
 }
 
 function isObjectStoreRegion(s: string): s is ObjectStoreRegion {
-  return (OBJECT_STORE_REGIONS as readonly string[]).includes(s);
+  return (
+    s.length <= 64 &&
+    /^[a-z0-9]+(?:-[a-z0-9]+){2,4}$/.test(s)
+  );
+}
+
+interface ObjectStoreRegionDescriptor {
+  id?: unknown;
+}
+
+/**
+ * Discover all Object Store regions available to an organization using the
+ * documented Object Store v2 regions operation. Region IDs are validated and
+ * used only to construct hosts under the fixed anypoint.mulesoft.com suffix.
+ */
+async function discoverObjectStoreRegions(
+  orgId: string,
+  accessToken: string
+): Promise<ObjectStoreRegion[]> {
+  const cached = objectStoreRegionCache.get(orgId);
+  if (
+    cached &&
+    Date.now() - cached.cachedAt < OBJECT_STORE_REGION_CACHE_TTL_MS
+  ) {
+    return cached.regions;
+  }
+
+  const url =
+    "https://object-store-us-east-1.anypoint.mulesoft.com" +
+    `/api/v1/organizations/${encodeURIComponent(orgId)}/regions`;
+
+  try {
+    const response = await loggedFetch(url, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json",
+      },
+    });
+    if (!response.ok) {
+      debugLog(
+        `[ObjectStore] Region discovery returned HTTP ${response.status}; using static fallback`
+      );
+      return [];
+    }
+
+    const body = (await response.json()) as unknown;
+    if (!Array.isArray(body)) {
+      debugLog(
+        "[ObjectStore] Region discovery returned an unexpected response; using static fallback"
+      );
+      return [];
+    }
+
+    const regions = Array.from(
+      new Set(
+        body
+          .map((item: ObjectStoreRegionDescriptor) => item?.id)
+          .filter(
+            (id: unknown): id is ObjectStoreRegion =>
+              typeof id === "string" && isObjectStoreRegion(id)
+          )
+      )
+    );
+
+    if (regions.length > 0) {
+      objectStoreRegionCache.set(orgId, {
+        regions,
+        cachedAt: Date.now(),
+      });
+      debugLog(
+        `[ObjectStore] Discovered regions for organization: ${regions.join(", ")}`
+      );
+    }
+    return regions;
+  } catch (error) {
+    debugLog(
+      "[ObjectStore] Region discovery failed; using static fallback:",
+      error
+    );
+    return [];
+  }
 }
 
 /**
@@ -574,7 +667,9 @@ async function findObjectStore(
   const storeIdPrefixShort = `APP_${deploymentId}_`;
   const has403Errors = new Set<string>(); // Track 403 errors per region for parallel execution
 
-  // Use translation table to determine region - only search that specific region
+  // Use the deployment-derived or explicitly configured region as the fast
+  // path. If neither is available, ask Object Store for the organization's
+  // current regions instead of guessing from a hardcoded list.
   const preferred =
     preferredRegion && isObjectStoreRegion(preferredRegion)
       ? preferredRegion
@@ -588,14 +683,21 @@ async function findObjectStore(
     debugLog(`[ObjectStore] WARNING: No preferred region determined. preferredRegion=${preferredRegion ?? "undefined"}, OBJECT_STORE_REGION=${process.env.OBJECT_STORE_REGION ?? "undefined"}`);
   }
   
-  // Only search the preferred region (from translation table), not all regions
-  // If no preferred region, use a small fallback set of common regions
+  const discoveredRegions = preferred
+    ? []
+    : await discoverObjectStoreRegions(orgId, accessToken);
   const regionsToTry: ObjectStoreRegion[] = preferred
     ? [preferred]
-    : ["us-east-1", "us-west-2", "eu-central-1", "ca-central-1"]; // Fallback: search common regions if translation fails
+    : discoveredRegions.length > 0
+      ? discoveredRegions
+      : DEFAULT_OBJECT_STORE_FALLBACK_REGIONS;
   
   if (!preferred) {
-    debugLog(`[ObjectStore] Using fallback regions: ${regionsToTry.join(", ")}`);
+    debugLog(
+      `[ObjectStore] Using ${
+        discoveredRegions.length > 0 ? "discovered" : "static fallback"
+      } regions: ${regionsToTry.join(", ")}`
+    );
   }
 
   // Try shorter prefix first (matches Anypoint UI behavior)
@@ -673,8 +775,7 @@ async function findObjectStore(
   // If we got 403 errors in all regions, throw a specific error
   if (has403Errors.size > 0 && has403Errors.size === regionsToTry.length) {
     debugError(`[ObjectStore] All regions returned 403 Forbidden - insufficient permissions to access Object Store`);
-    const regionsSearched = preferred ? [preferred] : ["us-east-1", "us-west-2", "eu-central-1", "ca-central-1"];
-    debugLog(`[ObjectStore] 403 error summary - orgId: ${orgId}, envId: ${envId}, deploymentId: ${deploymentId}, tried regions: ${regionsSearched.join(", ")}`);
+    debugLog(`[ObjectStore] 403 error summary - orgId: ${orgId}, envId: ${envId}, deploymentId: ${deploymentId}, tried regions: ${regionsToTry.join(", ")}`);
     throw new Error("403 Forbidden: Insufficient permissions to access Object Store");
   }
 
@@ -1016,11 +1117,7 @@ export async function fetchObjectStoreData(
   }
 
   if (!storeInfo) {
-    // Determine which regions were actually searched
-    const searchedRegions = objectStoreRegion 
-      ? [objectStoreRegion] 
-      : ["us-east-1", "us-west-2", "eu-central-1", "ca-central-1"]; // Fallback regions
-    let errorMessage = `Object Store not found for deployment ${deploymentId}. Searched region(s): ${searchedRegions.join(", ")}. Store pattern: APP_${deploymentId}__defaultPersistentObjectStore`;
+    let errorMessage = `Object Store not found for deployment ${deploymentId}. Store pattern: APP_${deploymentId}__defaultPersistentObjectStore`;
     if (deploymentType === "HY") {
       errorMessage += `. Note: Hybrid (HY) deployments may not have Object Store provisioned.`;
     }

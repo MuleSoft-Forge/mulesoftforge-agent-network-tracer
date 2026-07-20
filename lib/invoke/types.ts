@@ -1,3 +1,5 @@
+import { inferA2AVersionFromCard } from "./a2a-version";
+
 export type NodeStatus = "idle" | "active" | "complete" | "error";
 
 export interface AgentSkill {
@@ -13,6 +15,12 @@ export interface AgentCard {
   description?: string;
   version?: string;
   url?: string;
+  protocolVersion?: string;
+  supportedInterfaces?: Array<{
+    url?: string;
+    protocolVersion?: string;
+    protocolBinding?: string;
+  }>;
   skills?: AgentSkill[];
   capabilities?: {
     streaming?: boolean;
@@ -42,11 +50,12 @@ export interface InvokeState {
   activeNodeId: string | null;
   agentCard: AgentCard | null;
   brokerUrl: string;
+  a2aVersion: string;
   brokerLoaded: boolean;
 }
 
 export type InvokeAction =
-  | { type: "SET_BROKER"; url: string; card: AgentCard | null }
+  | { type: "SET_BROKER"; url: string; card: AgentCard | null; a2aVersion?: string }
   | { type: "RESET_BROKER" }
   | { type: "ADD_MESSAGE"; message: InvokeMessage }
   | { type: "SET_NODE_STATUS"; nodeId: string; status: NodeStatus }
@@ -63,6 +72,7 @@ export const INITIAL_INVOKE_STATE: InvokeState = {
   activeNodeId: null,
   agentCard: null,
   brokerUrl: "",
+  a2aVersion: "0.3",
   brokerLoaded: false,
 };
 
@@ -73,6 +83,7 @@ export function invokeReducer(state: InvokeState, action: InvokeAction): InvokeS
         ...state,
         brokerUrl: action.url,
         agentCard: action.card,
+        a2aVersion: action.a2aVersion ?? inferA2AVersionFromCard(action.card),
         brokerLoaded: true,
         messages: [],
         nodeStatuses: {},

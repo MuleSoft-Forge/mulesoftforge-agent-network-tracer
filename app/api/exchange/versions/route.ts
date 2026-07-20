@@ -1,14 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
-import { loggedFetch, debugError } from "@/lib/api-logger";
+import { debugError } from "@/lib/api-logger";
 import { requireAuth } from "@/lib/api/auth-middleware";
+import { fetchExchangeAssetViaGraphQL } from "@/lib/mulesoft/exchange-graphql";
 
 export const dynamic = "force-dynamic";
 
 /**
- * Fetches all versions of an Exchange asset.
- * Uses the Exchange v2 search API to find all versions of a given asset.
+ * Fetches all versions of an Exchange asset via the Graph API.
  *
- * Query params: organizationId, assetId
+ * `GET /exchange/api/v2/assets/{groupId}/{assetId}` (no version) is not a real
+ * endpoint — only DELETE/PATCH exist there. MuleSoft's own CLI
+ * (anypoint-cli-agent-fabric-plugin) resolves every version through
+ * `POST /graph/api/v2/graphql`'s `asset(...).otherVersions`, which is what
+ * this route does too.
+ *
+ * Query params: organizationId (asset groupId), assetId
  */
 export async function GET(request: NextRequest) {
   const authResult = await requireAuth(request);
@@ -27,44 +33,27 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const url = `${baseUrl}/exchange/api/v2/assets/${encodeURIComponent(organizationId)}/${encodeURIComponent(assetId)}`;
-
   try {
-    const res = await loggedFetch(url, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-    });
+    const asset = await fetchExchangeAssetViaGraphQL(baseUrl, organizationId, assetId, accessToken);
 
-    if (!res.ok) {
-      const text = await res.text();
+    if (!asset) {
       return NextResponse.json(
-        { error: `Exchange API failed: ${res.status} ${text.slice(0, 200)}` },
-        { status: res.status }
+        { error: "Asset not found in Exchange" },
+        { status: 404 }
       );
     }
 
-    const assetData = await res.json();
-
-    const versions = (assetData.versions ?? []).map(
-      (v: {
-        version: string;
-        createdAt?: string;
-        status?: string;
-        [key: string]: unknown;
-      }) => ({
-        version: v.version,
-        createdAt: v.createdAt ?? null,
-        status: v.status ?? null,
-      })
-    );
+    const versions = [
+      { version: asset.version, createdAt: null, status: asset.status ?? null },
+      ...asset.otherVersions
+        .filter((v) => v.version !== asset.version)
+        .map((v) => ({ version: v.version, createdAt: null, status: null })),
+    ];
 
     return NextResponse.json({
       organizationId,
       assetId,
-      name: assetData.name ?? assetId,
+      name: asset.name ?? assetId,
       versions,
     });
   } catch (error) {

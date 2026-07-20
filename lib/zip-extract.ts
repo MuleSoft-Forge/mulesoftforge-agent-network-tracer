@@ -111,9 +111,10 @@ export function extractTextFiles(zipBuffer: Buffer): ZipEntry[] {
     // Skip directories
     if (filename.endsWith("/")) continue;
 
-    // Only extract text-like files
+    // Only extract text-like files. `agent` is AgentScript source
+    // (network zips ship it under `brokers/*.agent`).
     const ext = filename.split(".").pop()?.toLowerCase() ?? "";
-    const textExts = new Set(["yaml", "yml", "json", "xml", "raml", "txt", "md", "properties", "cfg", "conf"]);
+    const textExts = new Set(["yaml", "yml", "json", "xml", "raml", "txt", "md", "properties", "cfg", "conf", "agent"]);
     if (!textExts.has(ext)) continue;
 
     // Skip entries that declare an oversized uncompressed payload (zip-bomb guard).

@@ -6,10 +6,11 @@ import type { AgentCard, AgentSkill } from "./types";
  */
 export async function fetchAgentCard(
   brokerUrl: string,
-  opts: { bustCache?: boolean } = {}
+  opts: { bustCache?: boolean; a2aVersion?: string } = {}
 ): Promise<AgentCard | null> {
   const params = new URLSearchParams({ url: brokerUrl });
   if (opts.bustCache) params.set("refresh", "1");
+  if (opts.a2aVersion) params.set("a2aVersion", opts.a2aVersion);
   try {
     const res = await fetch(`/api/invoke/agent-card?${params}`);
     if (!res.ok) return null;
@@ -23,9 +24,29 @@ export function getSkills(agentCard: AgentCard | null): AgentSkill[] {
   return agentCard?.skills ?? [];
 }
 
-export function skillPromptText(
-  skill: AgentSkill
-): string {
-  if (skill.examples && skill.examples.length > 0) return skill.examples[0];
-  return skill.description ?? skill.name;
+const PLACEHOLDER_SKILL_DESCRIPTION =
+  /^provide a description for this skill\b/i;
+
+export function isPlaceholderSkillDescription(text: string | undefined): boolean {
+  return typeof text === "string" && PLACEHOLDER_SKILL_DESCRIPTION.test(text.trim());
+}
+
+function promptFromSkillName(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) return "Help me with this task.";
+  return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+}
+
+export function skillPromptText(skill: AgentSkill): string {
+  const example = skill.examples
+    ?.map((value) => value.trim())
+    .find((value) => value.length > 0);
+  if (example) return example;
+
+  const description = skill.description?.trim();
+  if (description && !isPlaceholderSkillDescription(description)) {
+    return description;
+  }
+
+  return promptFromSkillName(skill.name);
 }

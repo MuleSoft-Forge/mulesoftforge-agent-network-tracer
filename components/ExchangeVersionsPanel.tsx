@@ -1,3 +1,7 @@
+/**
+ * Exchange version list, file fetch, and compare for v2 agent-network assets.
+ * Uses agent-network-metadata topology to fetch referenced broker/MCP/LLM files at their own versions.
+ */
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
@@ -7,6 +11,11 @@ import type { CanonicalGraph } from "@/lib/agent-network-types";
 import { exchangeVersionToCanonical, diffGraphs } from "@/lib/adapters/exchange-to-canonical";
 import type { GraphDiff } from "@/lib/adapters/exchange-to-canonical";
 import type { VersionFiles, ExchangeFileEntry } from "@/components/ExchangeFileDiff";
+import {
+  EXCHANGE_AGENT_NETWORK_CLASSIFIERS,
+  parseExchangeMetadataFile,
+  type ParsedExchangeMetadata,
+} from "@/lib/mulesoft/exchange-asset-metadata";
 
 interface ExchangeVersion {
   version: string;
@@ -15,11 +24,8 @@ interface ExchangeVersion {
 }
 
 interface ExchangeVersionsPanelProps {
-  orgId: string;
-  assetId: string;
-  brokerName: string;
-  /** GAV of the parent agent-network asset, from the broker's API Manager metadata */
-  agentNetworkGav?: { groupId: string; assetId: string; version: string };
+  /** Published agent-network asset on Exchange (BG-scoped, not per-environment). */
+  networkGav: { groupId: string; assetId: string; name: string };
   onGraphLoad: (graph: CanonicalGraph | null) => void;
   onDiffResult: (diff: GraphDiff | null, beforeVersion: string, afterVersion: string) => void;
   onCompareGraphs: (before: CanonicalGraph, after: CanonicalGraph) => void;
@@ -30,125 +36,221 @@ interface ExchangeVersionsPanelProps {
 
 type CompareSlot = "before" | "after";
 
-async function fetchMavenPublishedFiles(
-  orgId: string,
-  version: string,
-  agentNetworkInfo?: { assetId: string; groupId: string } | null
-): Promise<ExchangeFileEntry[]> {
-  if (!agentNetworkInfo) return [];
+interface ResolvedExchangeAsset {
+  groupId: string;
+  assetId: string;
+  name: string;
+  versions: ExchangeVersion[];
+}
 
+async function fetchNetworkVersions(network: {
+  groupId: string;
+  assetId: string;
+  name: string;
+}): Promise<ResolvedExchangeAsset> {
+  const res = await fetch(
+    `/api/exchange/versions?organizationId=${encodeURIComponent(network.groupId)}&assetId=${encodeURIComponent(network.assetId)}`
+  );
+  if (!res.ok) {
+    throw new Error(`Failed to load Exchange versions (${res.status})`);
+  }
+  const data = (await res.json()) as {
+    name?: string;
+    versions?: ExchangeVersion[];
+  };
+  return {
+    groupId: network.groupId,
+    assetId: network.assetId,
+    name: data.name ?? network.name,
+    versions: data.versions ?? [],
+  };
+}
+
+/**
+ * `files[]` entry as returned by `GET /api/exchange/asset` (a passthrough of
+ * Exchange's real `GET /exchange/api/v2/assets/{groupId}/{assetId}/{version}`).
+ * Ground-truthed against a real published agent-network asset: every version
+ * carries a non-fat project zip (classifier `agent-network` on legacy v1
+ * projects, `agentic-network` on current ones), a `fat-*` self-contained
+ * duplicate of that same zip, a `pom`, and an `agent-network-metadata.json`
+ * topology file listing every broker/registry asset this version references
+ * (each with its own exact groupId/assetId/version) — that reference list is
+ * what drives fetching the per-broker/MCP/LLM metadata files below, instead of
+ * guessing that a broker's own asset shares the network's version.
+ */
+interface ExchangeAssetFile {
+  classifier?: string | null;
+  packaging?: string;
+  downloadURL?: string;
+}
+
+async function fetchAssetFiles(
+  groupId: string,
+  assetId: string,
+  version: string
+): Promise<ExchangeAssetFile[]> {
   try {
-    const params = new URLSearchParams({
-      organizationId: orgId,
-      assetId: agentNetworkInfo.assetId,
-      version,
-      groupId: agentNetworkInfo.groupId,
-    });
-
-    const res = await fetch(`/api/exchange/maven-files?${params.toString()}`);
+    const params = new URLSearchParams({ organizationId: groupId, assetId, version });
+    const res = await fetch(`/api/exchange/asset?${params.toString()}`);
     if (!res.ok) return [];
-
-    const data = (await res.json()) as {
-      files?: Array<{ classifier: string; packaging: string; content: string | null }>;
-    };
-
-    return (data.files ?? [])
-      .filter((f) => f.content !== null)
-      .map((f) => ({
-        classifier: f.classifier,
-        packaging: f.packaging,
-        content: f.content,
-      }));
+    const data = (await res.json()) as { files?: ExchangeAssetFile[] };
+    return data.files ?? [];
   } catch {
     return [];
   }
 }
 
+function isFatClassifier(classifier: string | null | undefined): boolean {
+  return (classifier ?? "").toLowerCase().startsWith("fat-");
+}
+
+/** The one non-fat zip holding the real project sources (agent-network.yaml, exchange.json, brokers/*.agent). */
+function findProjectZip(files: ExchangeAssetFile[]): ExchangeAssetFile | undefined {
+  return files.find(
+    (f) =>
+      f.packaging === "zip" &&
+      !isFatClassifier(f.classifier) &&
+      (f.classifier === "agent-network" || f.classifier === "agentic-network" || f.classifier === "broker-group")
+  );
+}
+
+/** All classifiers with connections/card content worth surfacing — see lib/mulesoft/exchange-asset-metadata.ts. */
+const BROKER_FILE_CLASSIFIERS = new Set<string>(
+  EXCHANGE_AGENT_NETWORK_CLASSIFIERS.filter(
+    (c) => c !== "agent-network" && c !== "agentic-network" && c !== "mcp" && c !== "broker-group"
+  )
+);
+
 function isBrokerExchangeListFile(f: {
-  classifier?: string;
+  classifier?: string | null;
   packaging?: string;
 }): boolean {
   const c = (f.classifier ?? "").toLowerCase();
   const p = (f.packaging ?? "").toLowerCase();
   if (!["json", "yaml", "yml"].includes(p)) return false;
-  return c === "a2a-card" || c === "agent-metadata";
+  return BROKER_FILE_CLASSIFIERS.has(c);
 }
 
-/** a2a-card, agent-metadata (and similar) from the broker asset listing in Exchange */
-async function fetchBrokerExchangeAssetFiles(
-  orgId: string,
-  brokerAssetId: string,
-  version: string
-): Promise<ExchangeFileEntry[]> {
+/** The non-fat metadata JSON files on an asset (a2a-card, agent-metadata, mcp-metadata, llm-metadata, agent-network-metadata, ...). */
+function findMetadataJsonFiles(files: ExchangeAssetFile[]): ExchangeAssetFile[] {
+  return files.filter((f) => !isFatClassifier(f.classifier) && isBrokerExchangeListFile(f));
+}
+
+async function downloadAssetFile(f: ExchangeAssetFile): Promise<ExchangeFileEntry | null> {
+  if (!f.downloadURL || !f.classifier || !f.packaging) return null;
   try {
-    const assetParams = new URLSearchParams({
-      organizationId: orgId,
-      assetId: brokerAssetId,
-      version,
+    const params = new URLSearchParams({
+      downloadURL: f.downloadURL,
+      classifier: f.classifier,
+      packaging: f.packaging,
     });
-    const assetRes = await fetch(`/api/exchange/asset?${assetParams.toString()}`);
-    if (!assetRes.ok) return [];
+    const res = await fetch(`/api/exchange/file?${params.toString()}`);
+    if (!res.ok) return null;
+    const data = (await res.json()) as { content?: string };
+    return { classifier: f.classifier, packaging: f.packaging, content: data.content ?? null };
+  } catch {
+    return null;
+  }
+}
 
-    const assetData = (await assetRes.json()) as {
-      files?: Array<{
-        classifier?: string;
-        packaging?: string;
-        downloadURL?: string;
-      }>;
-    };
-
-    const files = assetData.files ?? [];
-    const targets = files.filter(
-      (f) =>
-        f.downloadURL &&
-        f.classifier &&
-        f.packaging &&
-        isBrokerExchangeListFile(f)
-    );
-
-    const downloaded = await Promise.all(
-      targets.map(async (f) => {
-        const params = new URLSearchParams({
-          downloadURL: f.downloadURL!,
-          classifier: f.classifier!,
-          packaging: f.packaging!,
-        });
-        const fileRes = await fetch(`/api/exchange/file?${params.toString()}`);
-        if (!fileRes.ok) return null;
-        const data = (await fileRes.json()) as { content?: string };
-        return {
-          classifier: f.classifier!,
-          packaging: f.packaging!,
-          content: data.content ?? null,
-        } satisfies ExchangeFileEntry;
-      })
-    );
-
-    return downloaded.filter((x): x is ExchangeFileEntry => x !== null);
+/** Downloads and unzips the project zip, returning each entry (agent-network.yaml, exchange.json, brokers/*.agent) as a file. */
+async function downloadProjectZipFiles(f: ExchangeAssetFile): Promise<ExchangeFileEntry[]> {
+  if (!f.downloadURL) return [];
+  try {
+    const params = new URLSearchParams({ downloadURL: f.downloadURL, classifier: f.classifier ?? "project" });
+    const res = await fetch(`/api/exchange/extract-zip?${params.toString()}`);
+    if (!res.ok) return [];
+    const data = (await res.json()) as { files?: Array<{ filename: string; content: string }> };
+    return (data.files ?? []).map((entry) => {
+      const dot = entry.filename.lastIndexOf(".");
+      return {
+        classifier: dot > 0 ? entry.filename.slice(0, dot) : entry.filename,
+        packaging: dot > 0 ? entry.filename.slice(dot + 1) : "txt",
+        content: entry.content,
+      };
+    });
   } catch {
     return [];
   }
 }
 
+/**
+ * The agent-network asset's own files for this version: the extracted project
+ * zip (agent-network.yaml, exchange.json, brokers/*.agent) plus the
+ * agent-network-metadata.json topology file. Also returns the parsed topology
+ * so the caller can resolve exactly which broker/MCP/LLM asset versions this
+ * network version references (see findMetadataJsonFiles callers below).
+ */
+async function fetchNetworkOwnFiles(
+  agentNetworkInfo: { assetId: string; groupId: string } | null | undefined,
+  version: string
+): Promise<{ files: ExchangeFileEntry[]; networkMetadata: ParsedExchangeMetadata | null }> {
+  if (!agentNetworkInfo) return { files: [], networkMetadata: null };
+
+  const assetFiles = await fetchAssetFiles(agentNetworkInfo.groupId, agentNetworkInfo.assetId, version);
+  const projectZip = findProjectZip(assetFiles);
+  const metadataFiles = findMetadataJsonFiles(assetFiles);
+
+  const [zipFiles, metadataEntries] = await Promise.all([
+    projectZip ? downloadProjectZipFiles(projectZip) : Promise.resolve([]),
+    Promise.all(metadataFiles.map(downloadAssetFile)),
+  ]);
+
+  const resolvedMetadataEntries = metadataEntries.filter((e): e is ExchangeFileEntry => e !== null);
+  const networkMetadataEntry = resolvedMetadataEntries.find((e) => e.classifier === "agent-network-metadata");
+  const networkMetadata = networkMetadataEntry
+    ? parseExchangeMetadataFile("agent-network-metadata", networkMetadataEntry.content)
+    : null;
+
+  return { files: [...zipFiles, ...resolvedMetadataEntries], networkMetadata };
+}
+
+/**
+ * Metadata files (a2a-card, agent-metadata, mcp-metadata, llm-metadata) from
+ * every broker/MCP/LLM asset this network version's own topology references —
+ * each fetched at its *own* referenced version, not the network's version
+ * (those commonly differ, e.g. network 1.0.5 referencing broker 1.0.3).
+ */
+async function fetchReferencedAssetFiles(
+  networkMetadata: ParsedExchangeMetadata | null
+): Promise<ExchangeFileEntry[]> {
+  if (!networkMetadata || networkMetadata.fileKind !== "agent-network-metadata") return [];
+
+  const refs = new Map<string, { groupId: string; assetId: string; version: string }>();
+  const addRef = (ref: { groupId: string; assetId: string; version: string }) => {
+    refs.set(`${ref.groupId}:${ref.assetId}:${ref.version}`, ref);
+  };
+  for (const broker of networkMetadata.brokers) {
+    addRef(broker.ref);
+    for (const conn of broker.connections) addRef(conn.ref);
+  }
+  for (const entry of networkMetadata.registry) addRef(entry.ref);
+
+  const perAsset = await Promise.all(
+    Array.from(refs.values())
+      .filter((ref) => ref.version)
+      .map(async (ref) => {
+        const files = await fetchAssetFiles(ref.groupId, ref.assetId, ref.version);
+        const downloaded = await Promise.all(findMetadataJsonFiles(files).map(downloadAssetFile));
+        return downloaded.filter((e): e is ExchangeFileEntry => e !== null);
+      })
+  );
+
+  return perAsset.flat();
+}
+
 async function fetchVersionFiles(
-  orgId: string,
-  brokerAssetId: string,
   version: string,
   agentNetworkInfo?: { assetId: string; groupId: string } | null
 ): Promise<VersionFiles> {
-  const [published, exchangeAsset] = await Promise.all([
-    fetchMavenPublishedFiles(orgId, version, agentNetworkInfo),
-    fetchBrokerExchangeAssetFiles(orgId, brokerAssetId, version),
-  ]);
+  const { files: published, networkMetadata } = await fetchNetworkOwnFiles(agentNetworkInfo, version);
+  const exchangeAsset = await fetchReferencedAssetFiles(networkMetadata);
 
   return { version, published, exchangeAsset };
 }
 
 export default function ExchangeVersionsPanel({
-  orgId,
-  assetId,
-  brokerName,
-  agentNetworkGav,
+  networkGav,
   onGraphLoad,
   onDiffResult,
   onCompareGraphs,
@@ -165,16 +267,18 @@ export default function ExchangeVersionsPanel({
   const [beforeVersion, setBeforeVersion] = useState<string | null>(null);
   const [afterVersion, setAfterVersion] = useState<string | null>(null);
   const [comparing, setComparing] = useState(false);
-  // The agent-network asset info comes directly from the broker's API Manager metadata — no searching
-  const agentNetworkAsset = agentNetworkGav
-    ? { assetId: agentNetworkGav.assetId, groupId: agentNetworkGav.groupId, name: agentNetworkGav.assetId }
-    : null;
+  const [resolvedNetworkAsset, setResolvedNetworkAsset] = useState<{
+    assetId: string;
+    groupId: string;
+    name: string;
+  } | null>(null);
 
   useEffect(() => {
-    if (!agentNetworkGav) {
+    if (!networkGav.groupId || !networkGav.assetId) {
       setVersions([]);
       setLoading(false);
-      setError("No agent-network asset linked to this broker");
+      setError("No agent-network asset selected");
+      setResolvedNetworkAsset(null);
       return;
     }
 
@@ -186,23 +290,23 @@ export default function ExchangeVersionsPanel({
     setBeforeVersion(null);
     setAfterVersion(null);
     setCompareMode(false);
+    setResolvedNetworkAsset(null);
     onGraphLoad(null);
 
-    fetch(
-      `/api/exchange/versions?organizationId=${encodeURIComponent(agentNetworkGav.groupId)}&assetId=${encodeURIComponent(agentNetworkGav.assetId)}`
-    )
-      .then(async (res) => {
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          throw new Error((data as { error?: string }).error || `Failed: ${res.status}`);
-        }
-        return res.json();
-      })
-      .then((data: { versions?: ExchangeVersion[] }) => {
-        if (!cancelled) setVersions(data.versions ?? []);
+    fetchNetworkVersions(networkGav)
+      .then((resolved) => {
+        if (cancelled) return;
+        setVersions(resolved.versions);
+        setResolvedNetworkAsset({
+          assetId: resolved.assetId,
+          groupId: resolved.groupId,
+          name: resolved.name,
+        });
       })
       .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load versions");
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Failed to load versions");
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -210,13 +314,20 @@ export default function ExchangeVersionsPanel({
 
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgId, assetId, agentNetworkGav?.assetId, agentNetworkGav?.groupId]);
+  }, [networkGav.groupId, networkGav.assetId, networkGav.name]);
+
+  const agentNetworkAsset = resolvedNetworkAsset;
 
   const loadVersionGraph = useCallback(
     async (version: string) => {
       setLoadingGraph(true);
       try {
-        const graph = await exchangeVersionToCanonical(orgId, assetId, version, brokerName);
+        const graph = await exchangeVersionToCanonical(
+          networkGav.groupId,
+          networkGav.assetId,
+          version,
+          networkGav.name
+        );
         onGraphLoad(graph);
       } catch {
         onGraphLoad(null);
@@ -224,7 +335,7 @@ export default function ExchangeVersionsPanel({
         setLoadingGraph(false);
       }
     },
-    [orgId, assetId, brokerName, onGraphLoad]
+    [networkGav.groupId, networkGav.assetId, networkGav.name, onGraphLoad]
   );
 
   const handleViewVersion = useCallback(
@@ -238,13 +349,13 @@ export default function ExchangeVersionsPanel({
       loadVersionGraph(version);
 
       if (onVersionFilesLoaded) {
-        const vf = await fetchVersionFiles(orgId, assetId, version, agentNetworkAsset);
+        const vf = await fetchVersionFiles(version, agentNetworkAsset);
         onVersionFilesLoaded(vf);
       } else {
         onFilesLoadingChange?.(false);
       }
     },
-    [loadVersionGraph, onDiffResult, onVersionFilesLoaded, onFilesLoadingChange, orgId, assetId, agentNetworkAsset]
+    [loadVersionGraph, onDiffResult, onVersionFilesLoaded, onFilesLoadingChange, agentNetworkAsset]
   );
 
   const handleCompareSelect = useCallback(
@@ -264,10 +375,20 @@ export default function ExchangeVersionsPanel({
     onFilesLoadingChange?.(true);
     try {
       const [beforeGraph, afterGraph, beforeFiles, afterFiles] = await Promise.all([
-        exchangeVersionToCanonical(orgId, assetId, beforeVersion, brokerName),
-        exchangeVersionToCanonical(orgId, assetId, afterVersion, brokerName),
-        fetchVersionFiles(orgId, assetId, beforeVersion, agentNetworkAsset),
-        fetchVersionFiles(orgId, assetId, afterVersion, agentNetworkAsset),
+        exchangeVersionToCanonical(
+          networkGav.groupId,
+          networkGav.assetId,
+          beforeVersion,
+          networkGav.name
+        ),
+        exchangeVersionToCanonical(
+          networkGav.groupId,
+          networkGav.assetId,
+          afterVersion,
+          networkGav.name
+        ),
+        fetchVersionFiles(beforeVersion, agentNetworkAsset),
+        fetchVersionFiles(afterVersion, agentNetworkAsset),
       ]);
       const diff = diffGraphs(beforeGraph, afterGraph);
       onDiffResult(diff, beforeVersion, afterVersion);
@@ -279,7 +400,18 @@ export default function ExchangeVersionsPanel({
     } finally {
       setComparing(false);
     }
-  }, [beforeVersion, afterVersion, orgId, assetId, brokerName, onDiffResult, onCompareGraphs, onFilesLoaded, onFilesLoadingChange, agentNetworkAsset]);
+  }, [
+    beforeVersion,
+    afterVersion,
+    networkGav.groupId,
+    networkGav.assetId,
+    networkGav.name,
+    onDiffResult,
+    onCompareGraphs,
+    onFilesLoaded,
+    onFilesLoadingChange,
+    agentNetworkAsset,
+  ]);
 
   const toggleCompareMode = useCallback(() => {
     const next = !compareMode;

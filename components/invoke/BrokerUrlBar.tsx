@@ -7,6 +7,7 @@ import type { InvokeAction } from "@/lib/invoke/types";
 import type { Dispatch } from "react";
 import { urlContainsIngressPlaceholder } from "@/lib/invoke/ingress-gateway-url";
 import { useImeComposition } from "@/lib/ime-composition";
+import { inferA2AVersionFromCard } from "@/lib/invoke/a2a-version";
 
 interface BrokerUrlBarProps {
   url: string;
@@ -16,6 +17,8 @@ interface BrokerUrlBarProps {
   agentCard: AgentCard | null;
   /** URL resolved from Exchange when a broker is selected in the sidebar. */
   suggestedUrl?: string | null;
+  /** A2A protocol version inferred from Exchange when a broker is selected. */
+  suggestedA2aVersion?: string | null;
   dispatch: Dispatch<InvokeAction>;
   /** When set, `${ingressgw.url}` in the bar can be expanded via API Manager before Load. */
   resolveContext?: { orgId: string; envId: string; apiInstanceId: string };
@@ -28,6 +31,7 @@ export default function BrokerUrlBar({
   currentStep,
   agentCard,
   suggestedUrl,
+  suggestedA2aVersion,
   dispatch,
   resolveContext,
 }: BrokerUrlBarProps) {
@@ -77,12 +81,20 @@ export default function BrokerUrlBar({
       trimmed = await resolveIngressUrlIfNeeded(trimmed);
       setInputUrl(trimmed);
 
-      const card = await fetchAgentCard(trimmed, { bustCache });
+      const card = await fetchAgentCard(trimmed, {
+        bustCache,
+        a2aVersion: suggestedA2aVersion ?? undefined,
+      });
       let resolvedUrl = card?.url?.trim() || trimmed;
       if (urlContainsIngressPlaceholder(resolvedUrl) && resolveContext) {
         resolvedUrl = await resolveIngressUrlIfNeeded(resolvedUrl);
       }
-      dispatch({ type: "SET_BROKER", url: resolvedUrl, card });
+      dispatch({
+        type: "SET_BROKER",
+        url: resolvedUrl,
+        card,
+        a2aVersion: suggestedA2aVersion ?? inferA2AVersionFromCard(card),
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load broker");
     } finally {
@@ -99,12 +111,20 @@ export default function BrokerUrlBar({
       if (urlContainsIngressPlaceholder(fetchUrl) && resolveContext) {
         fetchUrl = await resolveIngressUrlIfNeeded(fetchUrl);
       }
-      const card = await fetchAgentCard(fetchUrl, { bustCache: true });
+      const card = await fetchAgentCard(fetchUrl, {
+        bustCache: true,
+        a2aVersion: suggestedA2aVersion ?? undefined,
+      });
       let resolvedUrl = card?.url?.trim() || fetchUrl;
       if (urlContainsIngressPlaceholder(resolvedUrl) && resolveContext) {
         resolvedUrl = await resolveIngressUrlIfNeeded(resolvedUrl);
       }
-      dispatch({ type: "SET_BROKER", url: resolvedUrl, card });
+      dispatch({
+        type: "SET_BROKER",
+        url: resolvedUrl,
+        card,
+        a2aVersion: suggestedA2aVersion ?? inferA2AVersionFromCard(card),
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Refresh failed");
     } finally {

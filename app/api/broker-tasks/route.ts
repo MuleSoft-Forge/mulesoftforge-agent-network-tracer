@@ -68,12 +68,14 @@ export async function POST(request: NextRequest) {
 
   let brokerAppName: string | undefined;
   let brokerDeploymentId: string | undefined;
+  let brokerLogAppIds: string[] | undefined;
   if (envId) {
     try {
       const ctx = await resolveBrokerContext(orgId, envId, apiInstanceId, accessToken, baseUrl);
       brokerAppName = ctx?.appName;
       brokerDeploymentId = ctx?.deploymentId;
-      debugLog(`[BROKER-TASKS] resolveBrokerContext result: appName=${ctx?.appName ?? "null"}, deploymentId=${ctx?.deploymentId ?? "null"}, deploymentType=${ctx?.deploymentType ?? "null"}`);
+      brokerLogAppIds = ctx?.logAppIds;
+      debugLog(`[BROKER-TASKS] resolveBrokerContext result: appName=${ctx?.appName ?? "null"}, deploymentId=${ctx?.deploymentId ?? "null"}, deploymentType=${ctx?.deploymentType ?? "null"}, targetId=${ctx?.targetId ?? "null"}`);
       dumpBrokerTasksVerbose(
         "broker-context",
         ctx
@@ -120,6 +122,7 @@ export async function POST(request: NextRequest) {
         timeRangeMs: timeRange,
         envId: envId ?? undefined,
         brokerAppName,
+        logAppIds: brokerLogAppIds,
         includeDiagnostics: includeMsearchDiagnostics,
       });
 
@@ -173,6 +176,7 @@ export async function POST(request: NextRequest) {
       timeRangeMs: timeRange,
       envId: envId ?? undefined,
       brokerAppName,
+      brokerDeploymentId,
       logSearchEntitled: hasMsearch || orgHasTitaniumMonitoring(session),
     });
 

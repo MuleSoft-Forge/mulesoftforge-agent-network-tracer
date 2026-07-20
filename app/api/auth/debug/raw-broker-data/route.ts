@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { DEFAULT_BASE_URL } from "@/lib/constants";
+import { buildAmcLogsUrl } from "@/lib/api/amc-logs";
+import { logSearch } from "@/lib/api/log-search";
+import {
+  deploymentNameCandidates,
+  findAmcDeploymentByNames,
+  parseAppNameFromMetadataSource,
+} from "@/lib/broker-context";
 
 export const dynamic = "force-dynamic";
 
@@ -44,49 +51,29 @@ export async function GET(req: NextRequest) {
     params: { orgId, apiInstanceId, envId, days, maxHits, now: new Date(now).toISOString() },
   };
 
-  // --- helper: run _msearch ---
+  // --- helper: run log search (Enhanced Log Search / OSD) ---
   async function runMsearch(label: string, lucene: string, size: number): Promise<unknown> {
-    const ndjson = [
-      JSON.stringify({ index: [], ignore_unavailable: true, preference: now }),
-      JSON.stringify({
-        version: true, size, from: 0,
-        _source: { excludes: [] },
-        stored_fields: ["*"],
-        docvalue_fields: ["timestamp"],
-      }),
-      JSON.stringify({
-        filter: [{ range: { timestamp: { gte: now - timeRangeMs, lte: now, format: "epoch_millis" } } }],
-        query: [{ query: lucene, language: "lucene" }],
-      }),
-    ].join("\n") + "\n";
-
     try {
-      const msHeaders: Record<string, string> = {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/x-ndjson",
-      };
-      if (orgId) msHeaders["X-ANYPNT-ORG-ID"] = orgId;
-      if (envId) msHeaders["X-ANYPNT-ENV-ID"] = envId;
-      const res = await fetch(`${baseUrl}/monitoring/api/logs/elasticsearch/_msearch`, {
-        method: "POST",
-        headers: msHeaders,
-        body: ndjson,
+      const result = await logSearch({
+        orgId,
+        accessToken,
+        baseUrl,
+        luceneQuery: lucene,
+        size,
+        from: 0,
+        timeRangeMs,
       });
-      const text = await res.text();
-      if (!res.ok) return { label, lucene, ok: false, status: res.status, body: text.slice(0, 2000) };
-      const parsed = JSON.parse(text);
-      const r = (parsed.responses || [])[0] || {};
-      const hits = r.hits?.hits ?? [];
-      const totalRaw = r.hits?.total;
-      const total = typeof totalRaw === "number" ? totalRaw
-        : (totalRaw?.value ?? 0);
-      return { label, lucene, ok: true, total, returned: hits.length, shards: r._shards, took: r.took, hits };
+      if (result.error) {
+        return { label, lucene, ok: false, status: result.httpStatus ?? 0, error: result.error };
+      }
+      const hits = result.hits ?? [];
+      return { label, lucene, ok: true, total: result.total, returned: hits.length, hits };
     } catch (e) {
       return { label, lucene, ok: false, error: e instanceof Error ? e.message : String(e) };
     }
   }
 
-  // 1. _msearch probes
+  // 1. _msearch probes (baseline — broker-specific probes added after RM fetch)
   const msearchProbes: Record<string, unknown> = {};
   msearchProbes["wildcard"] = await runMsearch("wildcard", "*", 3);
   msearchProbes["orgOnly"] = await runMsearch("orgOnly", `orgId=${orgId}`, 5);
@@ -95,7 +82,46 @@ export async function GET(req: NextRequest) {
   }
   results["msearch"] = msearchProbes;
 
-  // 2. Analyze hits: distinct appId, logLevel, message patterns, field presence
+  // 2. RM (API Manager) metadata — also drives broker-specific probes below
+  let rmBody: Record<string, unknown> | undefined;
+  let brokerTargetId: string | undefined;
+  let brokerMetadataAppName: string | undefined;
+  if (apiInstanceId && envId) {
+    try {
+      const rmUrl = `${baseUrl}/apimanager/api/v1/organizations/${orgId}/environments/${envId}/apis/${apiInstanceId}`;
+      const rmRes = await fetch(rmUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
+      if (rmRes.ok) {
+        rmBody = (await rmRes.json()) as Record<string, unknown>;
+        results["rmApiInstance"] = { ok: true, status: rmRes.status, body: rmBody };
+        const deployment = rmBody.deployment as { targetId?: string } | undefined;
+        brokerTargetId = deployment?.targetId;
+        brokerMetadataAppName = parseAppNameFromMetadataSource(
+          (rmBody.metadata as { source?: string } | undefined)?.source
+        );
+        if (brokerTargetId) {
+          msearchProbes["orgAndTargetId"] = await runMsearch(
+            "orgAndTargetId",
+            `orgId=${orgId} AND appId=${brokerTargetId}`,
+            maxHits
+          );
+        }
+        if (brokerMetadataAppName) {
+          msearchProbes["orgAndMetadataApp"] = await runMsearch(
+            "orgAndMetadataApp",
+            `orgId=${orgId} AND appId=${brokerMetadataAppName}`,
+            maxHits
+          );
+        }
+        results["msearch"] = msearchProbes;
+      } else {
+        results["rmApiInstance"] = { ok: false, status: rmRes.status, body: (await rmRes.text()).slice(0, 2000) };
+      }
+    } catch (e) {
+      results["rmApiInstance"] = { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  // 3. Analyze orgAndApi hits
   const orgAndApiResult = msearchProbes["orgAndApi"] as { ok?: boolean; hits?: Array<{ _source?: Record<string, unknown> }> } | undefined;
   if (orgAndApiResult?.ok && Array.isArray(orgAndApiResult.hits)) {
     const hits = orgAndApiResult.hits;
@@ -121,7 +147,7 @@ export async function GET(req: NextRequest) {
 
     const hasTaskId = hits.filter(h => {
       const msg = String((h._source as Record<string, unknown>)?.message ?? "");
-      return /taskId[=:]/.test(msg) || /"taskId"/.test(msg);
+      return /(?:taskId|task_id)[=:]/i.test(msg) || /"(?:taskId|task_id)"/i.test(msg);
     });
     results["taskIdPresence"] = {
       hitsWithTaskId: hasTaskId.length,
@@ -130,20 +156,7 @@ export async function GET(req: NextRequest) {
     };
   }
 
-  // 3. RM (API Manager) metadata
-  if (apiInstanceId && envId) {
-    try {
-      const rmUrl = `${baseUrl}/apimanager/api/v1/organizations/${orgId}/environments/${envId}/apis/${apiInstanceId}`;
-      const rmRes = await fetch(rmUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
-      results["rmApiInstance"] = rmRes.ok
-        ? { ok: true, status: rmRes.status, body: await rmRes.json() }
-        : { ok: false, status: rmRes.status, body: (await rmRes.text()).slice(0, 2000) };
-    } catch (e) {
-      results["rmApiInstance"] = { ok: false, error: e instanceof Error ? e.message : String(e) };
-    }
-  }
-
-  // 4. AMC deployments list + raw logs
+  // 4. AMC deployments list + raw logs (broker deployment first)
   if (envId) {
     try {
       const listUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${envId}/deployments`;
@@ -153,7 +166,19 @@ export async function GET(req: NextRequest) {
         const deployments = (listData.items ?? []).map(d => ({ id: d.id, name: d.name, status: d.status }));
         results["amcDeployments"] = deployments;
 
-        for (const dep of deployments.slice(0, 10)) {
+        const brokerDep = findAmcDeploymentByNames(
+          deployments,
+          deploymentNameCandidates(brokerMetadataAppName)
+        );
+        if (brokerDep) {
+          results["amcBrokerMatch"] = brokerDep;
+        }
+
+        const depOrder = brokerDep
+          ? [brokerDep, ...deployments.filter((d) => d.id !== brokerDep.id).slice(0, 9)]
+          : deployments.slice(0, 10);
+
+        for (const dep of depOrder) {
           const specUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${envId}/deployments/${dep.id}/specs`;
           const specRes = await fetch(specUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
           if (!specRes.ok) continue;
@@ -161,7 +186,14 @@ export async function GET(req: NextRequest) {
           const specId = specs?.[0]?.version ?? specs?.[0]?.id;
           if (!specId) continue;
 
-          const logsUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${envId}/deployments/${dep.id}/specs/${specId}/logs?length=200&descending=true`;
+          const logsUrl = buildAmcLogsUrl({
+            baseUrl,
+            organizationId: orgId,
+            environmentId: envId,
+            deploymentId: dep.id,
+            specificationId: specId,
+            search: { length: 200, descending: true },
+          });
           const logsRes = await fetch(logsUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
           if (!logsRes.ok) continue;
           const entries = await logsRes.json() as Array<{ timestamp?: number; message?: string; logLevel?: string; replicaId?: string }>;
@@ -178,7 +210,7 @@ export async function GET(req: NextRequest) {
               replicaId: e.replicaId,
               message: (e.message ?? "").slice(0, 300),
             })),
-            hasTaskId: entries.filter(e => /taskId[=:]/.test(e.message ?? "")).length,
+            hasTaskId: entries.filter(e => /(?:taskId|task_id)[=:]/i.test(e.message ?? "")).length,
             hasBrokerError: entries.filter(e => (e.message ?? "").includes("TOOL_ERROR") || (e.message ?? "").includes("MonoDeferContextual")).length,
           };
           results[`amcLogs_${dep.name}`] = logSummary;

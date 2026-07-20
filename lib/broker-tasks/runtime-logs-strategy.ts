@@ -7,6 +7,7 @@
  */
 
 import { loggedFetch, debugLog, debugError } from "@/lib/api-logger";
+import { buildAmcLogsUrl } from "@/lib/api/amc-logs";
 import type { BrokerTaskAccumulator, BrokerTasksResult } from "./types";
 import { finaliseTasks } from "./types";
 
@@ -22,6 +23,8 @@ export interface RuntimeLogsStrategyParams {
   timeRangeMs: number;
   envId?: string;
   brokerAppName?: string;
+  /** Resolved AMC deployment id (skips name lookup when set). */
+  brokerDeploymentId?: string;
   /** When true, org has Log Search — do not tag responses as no-entitlement. */
   logSearchEntitled?: boolean;
 }
@@ -33,10 +36,9 @@ export async function fetchTasksViaRuntimeLogs(
   const resultMode = logSearchEntitled ? undefined : ("no-entitlement" as const);
   debugLog("[RUNTIME-LOGS] Starting for apiInstanceId:", apiInstanceId);
 
-  // AMC `GET /logs?length=N&descending=true` returns the last N entries with
-  // no time filter. Apply the UI's activity window post-parse so e.g. a task
-  // from 48h ago doesn't appear when the user selected "last 24h".
-  const cutoffMs = Date.now() - timeRangeMs;
+  const endTime = Date.now();
+  const cutoffMs = endTime - timeRangeMs;
+  const logWindow: AmcLogWindow = { startTime: cutoffMs, endTime };
   const withinWindow = (startTime: string): boolean => {
     if (!startTime) return true; // unknown → keep; better than dropping silently
     const t = new Date(startTime).getTime();
@@ -58,7 +60,7 @@ export async function fetchTasksViaRuntimeLogs(
 
     // Fast path: if we have the AMC app name + envId, try that deployment directly
     if (brokerAppName && envId && environments.some((e) => e.id === envId)) {
-      const tasks = await tryDeploymentByName(baseUrl, orgId, envId, brokerAppName, apiInstanceId, accessToken);
+      const tasks = await tryDeploymentByName(baseUrl, orgId, envId, brokerAppName, apiInstanceId, accessToken, logWindow);
       const inWindow = filterAccumulators(tasks);
       if (inWindow.length > 0) {
         return { tasks: finaliseTasks(inWindow), source: "runtime-logs", totalLogs: 0, mode: resultMode };
@@ -72,13 +74,13 @@ export async function fetchTasksViaRuntimeLogs(
 
     // Try the RM-resolved deployment first
     if (apiInstanceInfo?.deploymentId && apiInstanceInfo?.targetEnvId) {
-      const tasks = await fetchAndParseLogs(baseUrl, orgId, apiInstanceInfo.targetEnvId, apiInstanceInfo.deploymentId, apiInstanceId, accessToken);
+      const tasks = await fetchAndParseLogs(baseUrl, orgId, apiInstanceInfo.targetEnvId, apiInstanceInfo.deploymentId, apiInstanceId, accessToken, logWindow);
       for (const t of tasks) allTasks[t.taskId] = t;
     }
 
     // Walk environments with multiple approaches (app-name match, RM detail, etc.)
     for (const env of environments) {
-      await tryEnvironmentApproaches(baseUrl, orgId, env.id, apiInstanceId, accessToken, brokerAppName, allTasks);
+      await tryEnvironmentApproaches(baseUrl, orgId, env.id, apiInstanceId, accessToken, brokerAppName, allTasks, logWindow);
     }
 
     const inWindow = filterAccumulators(Object.values(allTasks));
@@ -102,6 +104,11 @@ export async function fetchTasksViaRuntimeLogs(
 
 const AMC_LOGS_MAX_LENGTH = 1000;
 
+interface AmcLogWindow {
+  startTime: number;
+  endTime: number;
+}
+
 interface AmcLogEntry {
   docId?: string;
   timestamp?: number;
@@ -118,10 +125,23 @@ async function fetchLogsFromAmc(
   deploymentId: string,
   specId: string,
   accessToken: string,
+  window: AmcLogWindow,
   length: number = AMC_LOGS_MAX_LENGTH
 ): Promise<string> {
   const safeLength = Math.min(Math.max(1, length), AMC_LOGS_MAX_LENGTH);
-  const logsUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${envId}/deployments/${deploymentId}/specs/${specId}/logs?length=${safeLength}&descending=true`;
+  const logsUrl = buildAmcLogsUrl({
+    baseUrl,
+    organizationId: orgId,
+    environmentId: envId,
+    deploymentId,
+    specificationId: specId,
+    search: {
+      length: safeLength,
+      startTime: window.startTime,
+      endTime: window.endTime,
+      descending: true,
+    },
+  });
   const res = await loggedFetch(logsUrl, {
     method: "GET",
     headers: { Authorization: `Bearer ${accessToken}` },
@@ -225,11 +245,12 @@ async function fetchAndParseLogs(
   envId: string,
   deploymentId: string,
   apiInstanceId: string,
-  accessToken: string
+  accessToken: string,
+  window: AmcLogWindow
 ): Promise<BrokerTaskAccumulator[]> {
   const specId = await resolveSpecId(baseUrl, orgId, envId, deploymentId, accessToken);
   if (!specId) return [];
-  const logsText = await fetchLogsFromAmc(baseUrl, orgId, envId, deploymentId, specId, accessToken);
+  const logsText = await fetchLogsFromAmc(baseUrl, orgId, envId, deploymentId, specId, accessToken, window);
   if (!logsText) return [];
   return parseLogsForTasks(logsText, apiInstanceId);
 }
@@ -240,7 +261,8 @@ async function tryDeploymentByName(
   envId: string,
   appName: string,
   apiInstanceId: string,
-  accessToken: string
+  accessToken: string,
+  window: AmcLogWindow
 ): Promise<BrokerTaskAccumulator[]> {
   try {
     const listUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${envId}/deployments?name=${encodeURIComponent(appName)}`;
@@ -250,7 +272,7 @@ async function tryDeploymentByName(
     const items = listData.items ?? [];
     if (items.length !== 1) return [];
     debugLog("[RUNTIME-LOGS] Matched AMC deployment by name:", items[0].name, "->", items[0].id);
-    return fetchAndParseLogs(baseUrl, orgId, envId, items[0].id, apiInstanceId, accessToken);
+    return fetchAndParseLogs(baseUrl, orgId, envId, items[0].id, apiInstanceId, accessToken, window);
   } catch {
     return [];
   }
@@ -263,7 +285,8 @@ async function tryEnvironmentApproaches(
   apiInstanceId: string,
   accessToken: string,
   brokerAppName: string | undefined,
-  allTasks: Record<string, BrokerTaskAccumulator>
+  allTasks: Record<string, BrokerTaskAccumulator>,
+  window: AmcLogWindow
 ): Promise<void> {
   try {
     const rmUrl = `${baseUrl}/apimanager/api/v1/organizations/${orgId}/environments/${envId}/apis/${apiInstanceId}`;
@@ -349,7 +372,7 @@ async function tryEnvironmentApproaches(
         }
         if (!specId) continue;
 
-        const logsText = await fetchLogsFromAmc(baseUrl, orgId, envId, approach.deploymentId, specId, accessToken);
+        const logsText = await fetchLogsFromAmc(baseUrl, orgId, envId, approach.deploymentId, specId, accessToken, window);
         if (!logsText) continue;
 
         const parsedTasks = parseLogsForTasks(logsText, apiInstanceId);

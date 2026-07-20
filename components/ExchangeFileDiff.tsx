@@ -25,6 +25,9 @@ interface ExchangeFileDiffProps {
   after: VersionFiles;
 }
 
+// `published` = the agent-network asset's own files (project zip contents + agent-network-metadata.json).
+// `exchangeAsset` = metadata files from every broker/MCP/LLM asset the network's topology references.
+
 interface FileDiffData {
   classifier: string;
   packaging: string;
@@ -330,13 +333,13 @@ export default function ExchangeFileDiff({ before, after }: ExchangeFileDiffProp
       ) : (
         <>
           <FileDiffSection
-            title="Published artifact (Maven)"
-            subtitle="agent-network.yaml and exchange.json from the agent-network zip"
+            title="Network project files"
+            subtitle="agent-network.yaml, exchange.json, brokers/*.agent (from the project zip) and agent-network-metadata.json"
             diffs={publishedDiffs}
           />
           <FileDiffSection
-            title="Exchange asset files"
-            subtitle="Files attached to the broker asset in Exchange (e.g. a2a-card, agent-metadata)"
+            title="Referenced asset files"
+            subtitle="agent-metadata, mcp-metadata, llm-metadata and a2a-card files from brokers/MCP/LLM assets referenced by this network version"
             diffs={exchangeAssetDiffs}
           />
         </>

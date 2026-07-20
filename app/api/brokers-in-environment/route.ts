@@ -5,20 +5,9 @@ import { loggedFetch, debugLog, debugError } from "@/lib/api-logger";
 import { BrokersInEnvironmentRequestSchema } from "@/lib/schemas";
 import { requireAuth } from "@/lib/api/auth-middleware";
 import { validationError } from "@/lib/api/error-responses";
+import { parseGavFromMetadataSource, type Gav } from "@/lib/mulesoft/parse-gav";
 
 export const dynamic = "force-dynamic";
-
-interface Gav { groupId: string; assetId: string; version: string }
-
-function parseGav(urn: string | null | undefined): Gav | undefined {
-  // "urn:gav:groupId:assetId:version"
-  if (!urn || typeof urn !== "string") return undefined;
-  const parts = urn.replace("urn:gav:", "").split(":");
-  if (parts.length >= 3) {
-    return { groupId: parts[0], assetId: parts[1], version: parts[2] };
-  }
-  return undefined;
-}
 
 /**
  * Shape of an API Manager instance row (from /apimanager/api/v1/.../apis).
@@ -48,17 +37,18 @@ interface ApiManagerListResponse {
 }
 
 /**
- * Fetch ALL API instances for (orgId, envId) from API Manager, following the
- * `limit`/`offset` pager. This is the authoritative source for which
- * instances are deployed in a given environment — fabric's
- * `prod_instances_map` is observed to be incomplete for some orgs, which
- * would cause the old code path to drop brokers entirely.
+ * Fetch agentic instances for (orgId, envId) from API Manager, following the
+ * `limit`/`offset` pager. The developer-portal contract defines
+ * `family=agentic` for agent and MCP server instances. Older tenants can
+ * return an empty result for that filter, so we retry the legacy unfiltered
+ * collection only in that case.
  */
 async function listApiManagerInstances(
   baseUrl: string,
   orgId: string,
   envId: string,
-  authHeader: string
+  authHeader: string,
+  family: "agentic" | undefined = "agentic"
 ): Promise<ApiManagerInstance[]> {
   const PAGE_SIZE = 500;
   const results: ApiManagerInstance[] = [];
@@ -66,7 +56,8 @@ async function listApiManagerInstances(
     const url =
       `${baseUrl}/apimanager/api/v1/organizations/${encodeURIComponent(orgId)}` +
       `/environments/${encodeURIComponent(envId)}/apis` +
-      `?fullInfo=true&limit=${PAGE_SIZE}&offset=${offset}&sort=name&ascending=true`;
+      `?${family ? `family=${family}&` : ""}` +
+      `fullInfo=true&limit=${PAGE_SIZE}&offset=${offset}&sort=name&ascending=true`;
     const res = await loggedFetch(url, { headers: { Authorization: authHeader } });
     if (!res.ok) {
       const text = await res.text();
@@ -98,6 +89,7 @@ async function listApiManagerInstances(
     // Safety guard against unbounded looping.
     if (offset > 10_000) break;
   }
+
   return results;
 }
 
@@ -119,7 +111,7 @@ async function fetchSingleInstanceGav(
   if (!res.ok) return undefined;
   try {
     const data = (await res.json()) as { metadata?: { source?: string } };
-    return parseGav(data?.metadata?.source);
+    return parseGavFromMetadataSource(data?.metadata?.source);
   } catch {
     return undefined;
   }
@@ -181,7 +173,7 @@ export async function GET(request: NextRequest) {
     // `assetId` to decide which brokers to return.
     // -----------------------------------------------------------------------
 
-    const [fabricRes, amInstances] = await Promise.all([
+    const [fabricRes, initialAmInstances] = await Promise.all([
       loggedFetch(
         `${baseUrl}/visualizer/api/v2/organizations/${encodeURIComponent(validatedOrgId)}/fabric-network`,
         {
@@ -204,6 +196,29 @@ export async function GET(request: NextRequest) {
     const brokerNodes = (fabric.nodes ?? []).filter(
       (n: FabricNode) => String(n.type).toUpperCase() === "BROKER"
     );
+    let amInstances = initialAmInstances;
+
+    const brokerAssetIds = new Set(
+      brokerNodes
+        .map((node) => node.assetId)
+        .filter((assetId): assetId is string => typeof assetId === "string")
+    );
+    const agenticResultMatchesBroker = amInstances.some((instance) => {
+      const assetId = instance.assetId ?? instance.apiAsset?.assetId;
+      return typeof assetId === "string" && brokerAssetIds.has(assetId);
+    });
+    if (brokerNodes.length > 0 && !agenticResultMatchesBroker) {
+      debugLog(
+        "[BROKERS-IN-ENV] Agentic instances did not match fabric brokers; retrying unfiltered API Manager list"
+      );
+      amInstances = await listApiManagerInstances(
+        baseUrl,
+        validatedOrgId,
+        validatedEnvironmentId,
+        authHeader,
+        undefined
+      );
+    }
 
     // Group API Manager instances by assetId. Each entry collects every
     // instance id for the asset in this env plus (if present on the list
@@ -215,7 +230,7 @@ export async function GET(request: NextRequest) {
       const id = String(inst.id);
       const existing = instancesByAssetId.get(assetId) ?? { ids: [] };
       if (!existing.ids.includes(id)) existing.ids.push(id);
-      if (!existing.gav) existing.gav = parseGav(inst.metadata?.source);
+      if (!existing.gav) existing.gav = parseGavFromMetadataSource(inst.metadata?.source);
       instancesByAssetId.set(assetId, existing);
     }
 

@@ -1,14 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
-import { loggedFetch, debugLog, debugError } from "@/lib/api-logger";
+import { debugLog, debugError } from "@/lib/api-logger";
 import { requireAuth } from "@/lib/api/auth-middleware";
+import { EXCHANGE_SEARCH_TYPES, searchExchangeAssets } from "@/lib/mulesoft/exchange-search";
+import { fetchExchangeAssetViaGraphQL } from "@/lib/mulesoft/exchange-graphql";
 
 export const dynamic = "force-dynamic";
 
 /**
  * Finds the agent-network Exchange asset that contains a given broker.
  *
- * Uses the Exchange search API with the broker assetId as the search term,
- * filtered to type=agent-network. This is a single API call — O(1), not O(n).
+ * Searches via pseas/ang (the real endpoints behind Exchange's own search —
+ * see lib/mulesoft/exchange-search.ts) filtered to type `agent-network`, then
+ * resolves the winning hit's full version list via the Graph API. Returns the
+ * parent network asset, not the broker asset itself.
  *
  * Query params: organizationId, brokerAssetId
  */
@@ -28,37 +32,32 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const authHeader = { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" };
+  const authHeader = { Authorization: `Bearer ${accessToken}` };
 
   try {
-    // Single call: search Exchange for agent-network assets mentioning this broker
-    const searchUrl = `${baseUrl}/exchange/api/v2/assets?organizationId=${encodeURIComponent(organizationId)}&type=agent-network&search=${encodeURIComponent(brokerAssetId)}&limit=5`;
+    const { hits: assets, attempt } = await searchExchangeAssets(
+      baseUrl,
+      organizationId,
+      brokerAssetId,
+      authHeader,
+      fetch,
+      [EXCHANGE_SEARCH_TYPES.AGENT_NETWORK]
+    );
 
-    const res = await loggedFetch(searchUrl, { headers: authHeader });
-    if (!res.ok) {
-      return NextResponse.json({ error: `Exchange search failed: ${res.status}` }, { status: res.status });
-    }
+    debugLog(
+      `[agent-network-asset] Search for "${brokerAssetId}" via ${attempt} returned ${assets.length} results`
+    );
 
-    const assets = (await res.json()) as Array<{
-      groupId: string;
-      assetId: string;
-      name?: string;
-      version?: string;
-    }>;
-
-    // Filter out the broker asset itself — we want the parent agent-network, not the broker
     const filtered = assets.filter((a) => a.assetId !== brokerAssetId);
 
-    debugLog(`[agent-network-asset] Search for "${brokerAssetId}" returned ${assets.length} results, ${filtered.length} after excluding broker`);
+    debugLog(
+      `[agent-network-asset] ${filtered.length} after excluding broker asset`
+    );
 
     if (filtered.length === 0) {
       return NextResponse.json({ error: "No agent-network asset found", assetId: null }, { status: 404 });
     }
 
-    // Rank candidates deterministically rather than blindly taking the first
-    // search hit: prefer assets whose id/name actually references a network and
-    // that share the broker's groupId, so multi-match searches don't resolve to
-    // an unrelated asset.
     const score = (a: { groupId: string; assetId: string; name?: string }): number => {
       let s = 0;
       const hay = `${a.assetId} ${a.name ?? ""}`.toLowerCase();
@@ -76,37 +75,36 @@ export async function GET(request: NextRequest) {
       );
     }
     const match = ranked[0];
-    const detailUrl = `${baseUrl}/exchange/api/v2/assets/${encodeURIComponent(match.groupId)}/${encodeURIComponent(match.assetId)}`;
-    const detailRes = await fetch(detailUrl, { headers: authHeader });
+    // There is no documented/working GET for "asset, no version" on the REST
+    // surface — resolve the full version list via the Graph API instead, the
+    // same way MuleSoft's own CLI does (see lib/mulesoft/exchange-graphql.ts).
+    const asset = await fetchExchangeAssetViaGraphQL(baseUrl, match.groupId, match.assetId, accessToken);
 
-    if (!detailRes.ok) {
-      // Return what we have from search even without full details
+    if (!asset) {
       return NextResponse.json({
         assetId: match.assetId,
         groupId: match.groupId,
         name: match.name ?? match.assetId,
         versions: [{ version: match.version ?? "unknown", createdAt: null, status: null }],
+        searchAttempt: attempt,
       });
     }
 
-    const detail = (await detailRes.json()) as {
-      groupId: string;
-      assetId: string;
-      name?: string;
-      versions?: Array<{ version: string; createdAt?: string; status?: string }>;
-    };
+    const versions = [
+      { version: asset.version, createdAt: null, status: asset.status ?? null },
+      ...asset.otherVersions
+        .filter((v) => v.version !== asset.version)
+        .map((v) => ({ version: v.version, createdAt: null, status: null })),
+    ];
 
-    debugLog(`[agent-network-asset] Resolved: ${detail.assetId} with ${detail.versions?.length ?? 0} versions`);
+    debugLog(`[agent-network-asset] Resolved: ${asset.assetId} with ${versions.length} versions`);
 
     return NextResponse.json({
-      assetId: detail.assetId,
-      groupId: detail.groupId,
-      name: detail.name ?? detail.assetId,
-      versions: (detail.versions ?? []).map((v) => ({
-        version: v.version,
-        createdAt: v.createdAt ?? null,
-        status: v.status ?? null,
-      })),
+      assetId: asset.assetId,
+      groupId: asset.groupId,
+      name: asset.name || match.name || match.assetId,
+      versions,
+      searchAttempt: attempt,
     });
   } catch (error) {
     debugError("[agent-network-asset] Error:", error);

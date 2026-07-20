@@ -36,7 +36,7 @@ export async function msearch(
   accessToken: string,
   baseUrl: string
 ): Promise<MSearchResult> {
-  const { size = 500, from = 0, timeRangeMs = 30 * 24 * 3600 * 1000 } = opts;
+  const { size = 500, from = 0, timeRangeMs = 30 * 24 * 3600 * 1000, envId } = opts;
 
   const result = await logSearch({
     orgId,

@@ -8,8 +8,10 @@ import { requireAuth } from "@/lib/api/auth-middleware";
 import { orgHasTitaniumMonitoring } from "@/lib/api/log-search-entitlement";
 import { isOrgLogSearchEntitled } from "@/lib/api/log-search";
 import { msearch } from "@/lib/api/msearch";
+import { buildAmcLogsUrl } from "@/lib/api/amc-logs";
 import { validationError } from "@/lib/api/error-responses";
 import { resolveDeploymentContext, type TaskCallstackState } from "@/lib/deployment-context/resolvers";
+import { resolveBrokerContext, type BrokerContext } from "@/lib/broker-context";
 
 export const dynamic = "force-dynamic";
 
@@ -272,7 +274,42 @@ async function fetchDeploymentDetail(
 }
 
 
+function isGraphRuntimeLog(logger: string, message: string): boolean {
+  if (logger.includes("module_graph_runtime")) return true;
+  return /\[agent_[^\]]+\]|\] on_init:|\] after_reasoning:|Graph execution|Execution started \(turn_id|Current node:|Starting vanilla node|Transitioning to next node|OpenAI request input|Response output from OpenAI|LLM Reasoning was:|Final state variables|Slow internal duration|Registered node type|State size check:|already registered with|completed without needing to transition|trace_id=[a-f0-9]{32} task_id=/i.test(
+    message
+  );
+}
+
+function classifyGraphRuntimeLog(logger: string, message: string): string | null {
+  if (!isGraphRuntimeLog(logger, message)) return null;
+
+  if (/^\[agent_[^\]]+\]\s+Received message:/.test(message)) return "INBOUND_REQUEST";
+  if (/Execution started \(turn_id:/.test(message)) return "GRAPH_EXECUTION_START";
+  if (/^Current node:/.test(message) || /^Starting vanilla node/.test(message)) return "GRAPH_NODE";
+  if (/\] on_init: Action enabled, executing tool=/.test(message) || /\] on_init: Tool .+ result received/.test(message)) {
+    return "TOOL_EXECUTED";
+  }
+  if (/^OpenAI request input:/.test(message)) return "LLM_REQUEST";
+  if (/^Response output from OpenAI:/.test(message)) return "LLM_RESPONSE";
+  if (/^LLM Reasoning was:/.test(message)) return "LLM_REASONING";
+  if (/Transitioning to next node:/.test(message) || /Handoff to .+ enabled/.test(message) || /\] after_reasoning: Handoff to/.test(message)) {
+    return "GRAPH_TRANSITION";
+  }
+  if (/^Final state variables:/.test(message) && message.includes("TASK_STATE_COMPLETED")) return "FINAL_RESPONSE";
+  if (/^Graph execution completed/.test(message)) return "FINAL_RESPONSE";
+  if (/completed without needing to transition/.test(message)) return "GRAPH_NODE_COMPLETE";
+  if (/^Slow internal duration/.test(message)) return "GRAPH_PERF";
+  if (/Registered node type|State size check:|already registered with|Node type .* already registered/.test(message)) {
+    return "GRAPH_DEBUG";
+  }
+  return "GRAPH_RUNTIME";
+}
+
 function classifyLog(logger: string, message: string): string {
+  const graphType = classifyGraphRuntimeLog(logger, message);
+  if (graphType) return graphType;
+  if (logger === "flex-gateway-envoy") return "GATEWAY";
   if (logger === "http-listener-config") {
     if (/^LISTENER\s*\n.*POST\s+\//m.test(message) || message.startsWith("LISTENER\nPOST"))
       return "INBOUND_REQUEST";
@@ -301,22 +338,43 @@ function classifyLog(logger: string, message: string): string {
     if (message.includes("HTTP/1.1 200") || message.includes("HTTP/1.1 2"))
       return "FINAL_RESPONSE";
   }
-  if (logger === "flex-gateway-envoy") return "GATEWAY";
   return "OTHER";
 }
 
 function parseFields(message: string) {
   const f: Record<string, unknown> = {};
   const m = (rx: RegExp) => (message.match(rx) || [])[1] || null;
-  f.taskId = m(/taskId=([a-f0-9-]+)/);
-  f.contextId = m(/contextId=([a-f0-9-]+)/);
+  f.taskId = m(/(?:taskId|task_id)=([a-f0-9-]+)/);
+  f.contextId = m(/(?:contextId|context_id)=([a-f0-9-]+)/);
   f.apiInstanceId = m(/apiInstanceId=(\d+)/);
   f.iteration = m(/iteration=(\d+)/);
-  f.agent = m(/agent=(\S+)/);
-  f.traceId = m(/traceparent: 00-([a-f0-9]{32})/);
+  f.agent = m(/(?:agent_id|agent)=(\S+)/);
+  f.traceId = m(/traceparent: 00-([a-f0-9]{32})/) || m(/trace_id=([a-f0-9]{32})/);
   f.spanId = m(/traceparent: 00-[a-f0-9]{32}-([a-f0-9]{16})/);
   f.correlationId = m(/[Xx]-[Cc]orrelation-[Ii]d: ([a-f0-9-]+)/);
-  f.tool = m(/(?:LLM selected tool|Executed tool) (\S+)/);
+  f.tool =
+    m(/(?:LLM selected tool|Executed tool) (\S+)/) ||
+    m(/executing tool=(\S+)/) ||
+    m(/Tool (\S+) result received/);
+  f.graphNode =
+    m(/Current node: (\S+)/) ||
+    m(/Starting vanilla node (\S+)/) ||
+    m(/Transitioning to next node: (\S+)/) ||
+    m(/Handoff to (\S+) enabled/) ||
+    m(/\[(\w+)\] on_init:/);
+  const bracketAgent = message.match(/^\[(agent_[^\]]+)\]/);
+  if (bracketAgent) {
+    f.agent = f.agent || bracketAgent[1];
+  }
+  if (message.startsWith("LLM Reasoning was:")) {
+    f.llmReasoning = message.replace(/^LLM Reasoning was:\s*/, "").split(" : trace_id")[0].trim();
+  }
+  if (message.startsWith("Final state variables:")) {
+    const stateMatch = message.match(/TASK_STATE_(\w+)/);
+    if (stateMatch) f.resultStatus = `TASK_STATE_${stateMatch[1]}`;
+    const textMatch = message.match(/'text':\s*'([^']+)'/);
+    if (textMatch) f.responseText = textMatch[1];
+  }
   // Extract embedded JSON
   if (message.startsWith("Tool Input:")) {
     const jsonMatch = message.match(/Tool Input: ([\s\S]+?)(?:\s+agent=|$)/);
@@ -372,9 +430,94 @@ function normalizeTimestamp(ts: string | number | null | undefined): number | st
   return ts as string;
 }
 
+function extractTraceIdFromMessage(message: string): string | null {
+  const traceparent = message.match(/traceparent: 00-([a-f0-9]{32})/);
+  if (traceparent) return traceparent[1];
+  const traceIdField = message.match(/trace_id=([a-f0-9]{32})/);
+  if (traceIdField) return traceIdField[1];
+  return null;
+}
+
+type TaskCallstackEntry = {
+  index?: number;
+  type?: string;
+  summary?: string;
+  timestamp?: string | number;
+  logger?: string;
+  level?: string;
+  appId?: string;
+  workerId?: string;
+  fields?: Record<string, unknown>;
+  raw?: { message?: string; [key: string]: unknown };
+  _id?: string;
+  _index?: string;
+};
+
+function entryDedupeKey(entry: TaskCallstackEntry): string {
+  const message = (entry.raw?.message as string) ?? entry.summary ?? "";
+  return `${String(entry.timestamp ?? "")}|${entry.logger ?? ""}|${message.slice(0, 120)}`;
+}
+
+function mergeTaskCallstackEntries<T extends TaskCallstackEntry>(primary: T[], supplemental: T[]): T[] {
+  const seen = new Set<string>();
+  const merged: T[] = [];
+  for (const entry of [...primary, ...supplemental]) {
+    const key = entryDedupeKey(entry);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(entry);
+  }
+  merged.sort((a, b) => {
+    const ta = normalizeTimestamp(a.timestamp);
+    const tb = normalizeTimestamp(b.timestamp);
+    const t1 = typeof ta === "number" ? ta : new Date(ta).getTime();
+    const t2 = typeof tb === "number" ? tb : new Date(tb).getTime();
+    return t1 - t2;
+  });
+  return merged.map((entry, index) => ({ ...entry, index }));
+}
+
+function hasBrokerRuntimeLogs(entries: TaskCallstackEntry[]): boolean {
+  return entries.some((entry) => {
+    if (
+      entry.type === "INBOUND_REQUEST" ||
+      entry.type === "FINAL_RESPONSE" ||
+      entry.type === "LLM_TOOL_SELECTION" ||
+      entry.type === "LLM_REASONING" ||
+      entry.type === "LLM_REQUEST" ||
+      entry.type === "LLM_RESPONSE" ||
+      entry.type === "TOOL_EXECUTED" ||
+      entry.type === "GRAPH_NODE" ||
+      entry.type === "GRAPH_EXECUTION_START" ||
+      entry.type === "GRAPH_TRANSITION"
+    ) {
+      return true;
+    }
+    if (
+      entry.logger === "http-listener-config" ||
+      entry.logger === "Loop" ||
+      entry.logger === "INSECURE-LOGGING" ||
+      entry.logger?.includes("module_graph_runtime")
+    ) {
+      return true;
+    }
+    const message = ((entry.raw?.message as string) ?? entry.summary ?? "") as string;
+    return /Graph execution|module_graph_runtime|\[agent_[^\]]+\]/i.test(message);
+  });
+}
+
+function graphMessageHead(message: string, maxLen = 120): string {
+  return message.split(" : trace_id")[0].slice(0, maxLen);
+}
+
 function summarizeLine(type: string, message: string, fields: Record<string, unknown>): string {
   switch (type) {
     case "INBOUND_REQUEST":
+      if (/^\[agent_[^\]]+\]\s+Received message:/.test(message)) {
+        const agent = (fields.agent as string) || message.match(/^\[(agent_[^\]]+)\]/)?.[1] || "?";
+        const lenMatch = message.match(/length=(\d+)/);
+        return lenMatch ? `[${agent}] Received message (${lenMatch[1]} bytes)` : `[${agent}] Received message`;
+      }
       return fields.userMessage ? `"${fields.userMessage}"` : "Inbound POST request";
     case "LLM_TOOL_SELECTION":
       return `LLM selected: ${((fields.tool as string) || "?").replace(/^[a-zA-Z0-9]+_/, "")}`;
@@ -410,13 +553,24 @@ function summarizeLine(type: string, message: string, fields: Record<string, unk
       const statusMatch = message.match(/HTTP\/1\.1\s+(\d+)/);
       return `Response ${statusMatch ? statusMatch[1] : "?"}`;
     }
-    case "TOOL_EXECUTED":
-      return `Executed: ${((fields.tool as string) || "?").replace(/^[a-zA-Z0-9]+_/, "")}`;
+    case "TOOL_EXECUTED": {
+      const toolName = ((fields.tool as string) || "?").replace(/^[a-zA-Z0-9]+_/, "");
+      if (/\] on_init: Tool .+ result received/.test(message)) {
+        return `${toolName} result received`;
+      }
+      return `Executed: ${toolName}`;
+    }
     case "TOOL_OUTPUT":
       return fields.toolOutputJson
         ? `Output: ${JSON.stringify(fields.toolOutputJson).slice(0, 200)}${JSON.stringify(fields.toolOutputJson).length > 200 ? "..." : ""}`
         : "Tool output";
     case "FINAL_RESPONSE":
+      if (fields.responseText) {
+        return fields.resultStatus
+          ? `"${fields.responseText}" (${fields.resultStatus})`
+          : `"${fields.responseText}"`;
+      }
+      if (/^Graph execution completed/.test(message)) return "Graph execution completed";
       return fields.resultStatus ? `Task ${fields.resultStatus}` : "Final response";
     case "AGENT_DISCOVERY": {
       const agMatch = message.match(/\/([^/]+)\/\.well-known/);
@@ -428,10 +582,38 @@ function summarizeLine(type: string, message: string, fields: Record<string, unk
       return "HTTP chunk";
     case "LLM_NO_TOOL":
       return "LLM reasoning (no tool selected)";
+    case "GRAPH_EXECUTION_START": {
+      const turnMatch = message.match(/turn_id: ([^)]+)/);
+      return turnMatch ? `Execution started (${turnMatch[1]})` : "Graph execution started";
+    }
+    case "GRAPH_NODE":
+      return fields.graphNode ? `Node: ${fields.graphNode}` : graphMessageHead(message, 100);
+    case "GRAPH_NODE_COMPLETE": {
+      const doneMatch = message.match(/Node (\S+) completed/);
+      return doneMatch ? `${doneMatch[1]} completed` : "Node completed";
+    }
+    case "GRAPH_TRANSITION":
+      return fields.graphNode ? `Transition → ${fields.graphNode}` : graphMessageHead(message, 100);
+    case "LLM_REQUEST":
+      return "OpenAI request";
+    case "LLM_RESPONSE":
+      return "OpenAI response";
+    case "LLM_REASONING": {
+      const reasoning = (fields.llmReasoning as string) || message.replace(/^LLM Reasoning was:\s*/, "").split(" : trace_id")[0].trim();
+      return reasoning.length > 140 ? `${reasoning.slice(0, 140)}…` : reasoning;
+    }
+    case "GRAPH_PERF": {
+      const perfMatch = message.match(/action '([^']+)' internal duration: ([\d.]+ms)/);
+      return perfMatch ? `${perfMatch[1]}: ${perfMatch[2]}` : graphMessageHead(message, 100);
+    }
+    case "GRAPH_DEBUG":
+      return graphMessageHead(message, 100);
+    case "GRAPH_RUNTIME":
+      return graphMessageHead(message);
+    case "OTHER":
+      return message.split("\n")[0].slice(0, 200);
     default:
-      // For INSECURE-LOGGING entries that don't match specific patterns, preserve logger name in summary
-      const defaultSummary = message.split("\n")[0].slice(0, 200);
-      return defaultSummary;
+      return message.split("\n")[0].slice(0, 200);
   }
 }
 
@@ -689,6 +871,78 @@ async function searchTracesByEntityAndTime(
   }
 }
 
+
+/**
+ * Lightweight runtime-log fetch for a deployment we've already resolved (via cached
+ * resolveBrokerContext). Skips the RM-detail + AMC-list-by-name lookups that
+ * getTaskDetailsFromRuntimeLogs performs internally, and uses the AMC logs `regexp`
+ * param so the server filters to matching lines instead of transferring up to 1000
+ * lines for client-side filtering.
+ */
+async function fetchAndParseRuntimeLogsForDeployment(
+  orgId: string,
+  envId: string,
+  deploymentId: string,
+  accessToken: string,
+  baseUrl: string,
+  taskId: string
+): Promise<{ entries: unknown[]; jobCard: unknown } | null> {
+  try {
+    const detailRes = await loggedFetch(
+      `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${envId}/deployments/${deploymentId}`,
+      { method: "GET", headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    if (!detailRes.ok) {
+      debugLog(`[TASK-CALLSTACK] fetchAndParseRuntimeLogsForDeployment: deployment detail ${detailRes.status}`);
+      return null;
+    }
+    const detail = (await detailRes.json()) as { desiredVersion?: string; replicas?: Array<{ id: string }> };
+    const specId = detail.desiredVersion ?? detail.replicas?.[0]?.id;
+    if (!specId) {
+      debugLog("[TASK-CALLSTACK] fetchAndParseRuntimeLogsForDeployment: no specId on deployment detail");
+      return null;
+    }
+
+    const logsUrl = buildAmcLogsUrl({
+      baseUrl,
+      organizationId: orgId,
+      environmentId: envId,
+      deploymentId,
+      specificationId: specId,
+      search: { length: 200, descending: true, regexp: taskId },
+    });
+    const logsRes = await loggedFetch(logsUrl, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!logsRes.ok) {
+      debugLog(`[TASK-CALLSTACK] fetchAndParseRuntimeLogsForDeployment: logs fetch ${logsRes.status}`);
+      return null;
+    }
+
+    const contentType = logsRes.headers.get("content-type") || "";
+    let logsText: string;
+    if (contentType.includes("application/json")) {
+      const logEntries = (await logsRes.json()) as Array<{ timestamp?: number; message?: string }>;
+      logsText = Array.isArray(logEntries)
+        ? logEntries
+            .map((e) => `${e.timestamp != null ? new Date(e.timestamp).toISOString() : ""} ${e.message ?? ""}`.trim())
+            .filter((l) => l.length > 0)
+            .join("\n")
+        : "";
+    } else {
+      logsText = await logsRes.text();
+    }
+    if (!logsText.includes(taskId)) {
+      debugLog("[TASK-CALLSTACK] fetchAndParseRuntimeLogsForDeployment: filtered logs don't contain taskId");
+      return null;
+    }
+    return parseRuntimeLogsToEntriesAndJobCard(logsText, taskId);
+  } catch (error) {
+    debugLog("[TASK-CALLSTACK] fetchAndParseRuntimeLogsForDeployment error:", error);
+    return null;
+  }
+}
 
 /**
  * Parse runtime logs text for a given taskId and return entries + jobCard, or null if none.
@@ -996,7 +1250,14 @@ async function getTaskDetailsFromRuntimeLogs(
             const specId = detail.desiredVersion ?? detail.replicas?.[0]?.id;
             if (specId) {
               const safeLength = 1000;
-              const logsUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${envId}/deployments/${deploymentId}/specs/${specId}/logs?length=${safeLength}&descending=true`;
+              const logsUrl = buildAmcLogsUrl({
+                baseUrl,
+                organizationId: orgId,
+                environmentId: envId,
+                deploymentId,
+                specificationId: specId,
+                search: { length: safeLength, descending: true },
+              });
               const logsRes = await loggedFetch(logsUrl, {
                 method: "GET",
                 headers: { Authorization: `Bearer ${accessToken}` },
@@ -1115,7 +1376,14 @@ async function getTaskDetailsFromRuntimeLogs(
 
           try {
             const safeLength = 1000;
-            const logsUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${env.id}/deployments/${deployment.id}/specs/${specId}/logs?length=${safeLength}&descending=true`;
+            const logsUrl = buildAmcLogsUrl({
+              baseUrl,
+              organizationId: orgId,
+              environmentId: env.id,
+              deploymentId: deployment.id,
+              specificationId: specId,
+              search: { length: safeLength, descending: true },
+            });
 
             const logsRes = await loggedFetch(logsUrl, {
               method: "GET",
@@ -1234,6 +1502,19 @@ export async function GET(request: NextRequest) {
 
   const timeRange = 30 * 24 * 3600 * 1000;
   debugLog(`[TASK-CALLSTACK] Time range: ${timeRange}ms (30 days)`);
+
+  // Resolve broker context (RM detail + AMC list-by-name) once up front, in parallel with
+  // msearch below. Both the runtime-log supplement and the deployment-context pipeline
+  // (Steps 11-13) need this — caching avoids doing the same 2 network round trips twice.
+  const brokerContextPromise: Promise<BrokerContext | null> =
+    validatedApiInstanceId && validatedEnvId
+      ? resolveBrokerContext(validatedOrgId, validatedEnvId, validatedApiInstanceId, accessToken, baseUrl, loggedFetch).catch(
+          (error) => {
+            debugLog("[TASK-CALLSTACK] Cached resolveBrokerContext failed:", error);
+            return null;
+          }
+        )
+      : Promise.resolve(null);
 
   try {
     // Phase 1: search by taskId — only when org has Log Search (productSKU === 1)
@@ -1410,10 +1691,10 @@ export async function GET(request: NextRequest) {
       const h = phase1.hits[i];
       const hit = h as { _source?: { message?: string } };
       const message = (hit._source?.message as string) || "";
-      debugLog(`[TASK-CALLSTACK] Hit ${i}: checking for traceparent in message (length: ${message.length})`);
-      const m = message.match(/traceparent: 00-([a-f0-9]{32})/);
-      if (m) {
-        traceId = m[1];
+      debugLog(`[TASK-CALLSTACK] Hit ${i}: checking for traceId in message (length: ${message.length})`);
+      const extractedTraceId = extractTraceIdFromMessage(message);
+      if (extractedTraceId) {
+        traceId = extractedTraceId;
         debugLog(`[TASK-CALLSTACK] ✓ Found traceId: ${traceId}`);
         break;
       }
@@ -1646,7 +1927,7 @@ export async function GET(request: NextRequest) {
 
     // Classify and parse each entry (normalize timestamp: flex-gateway sends epoch ms as string)
     debugLog("[TASK-CALLSTACK] Step 9: Classifying and parsing entries...");
-    const entries = unique.map((h: unknown, i: number) => {
+    let entries = unique.map((h: unknown, i: number) => {
       const hit = h as { _source?: { message?: string; logger?: string; timestamp?: string | number; "log-level"?: string; appId?: string; workerId?: string; [key: string]: unknown }; _id?: string; _index?: string };
       const s = hit._source || {};
       const message = (s.message as string) || "";
@@ -1679,6 +1960,54 @@ export async function GET(request: NextRequest) {
         return acc;
       }, {})
     )}`);
+
+    // Log Search often indexes the Flex Gateway line before broker runtime logs.
+    // Supplement with AMC runtime logs so refresh matches the initial runtime-log view.
+    if (!hasBrokerRuntimeLogs(entries)) {
+      debugLog("[TASK-CALLSTACK] Log Search hits lack broker runtime logs — supplementing from AMC runtime logs");
+      let runtimeSupplement: { entries: unknown[]; jobCard: unknown } | null = null;
+      const cachedBrokerContext = await brokerContextPromise;
+      if (cachedBrokerContext?.deploymentId && validatedEnvId) {
+        debugLog(
+          `[TASK-CALLSTACK] Using cached broker context for supplement: deploymentId=${cachedBrokerContext.deploymentId}`
+        );
+        runtimeSupplement = await fetchAndParseRuntimeLogsForDeployment(
+          validatedOrgId,
+          validatedEnvId,
+          cachedBrokerContext.deploymentId,
+          accessToken,
+          baseUrl,
+          validatedTaskId
+        );
+      }
+      if (!runtimeSupplement) {
+        debugLog("[TASK-CALLSTACK] Falling back to full runtime-log discovery for supplement");
+        runtimeSupplement = await getTaskDetailsFromRuntimeLogs(
+          validatedOrgId,
+          validatedTaskId,
+          validatedEnvId ?? null,
+          accessToken,
+          baseUrl,
+          timeRange,
+          validatedApiInstanceId ?? undefined
+        );
+      }
+      if (runtimeSupplement && runtimeSupplement.entries.length > 0) {
+        const beforeCount = entries.length;
+        entries = mergeTaskCallstackEntries(entries, runtimeSupplement.entries as typeof entries);
+        debugLog(
+          `[TASK-CALLSTACK] Merged AMC runtime logs: ${beforeCount} log-search + ${runtimeSupplement.entries.length} runtime -> ${entries.length} total`
+        );
+        debugLog(`[TASK-CALLSTACK] Entry types breakdown after merge: ${JSON.stringify(
+          entries.reduce((acc: Record<string, number>, e: typeof entries[0]) => {
+            acc[e.type] = (acc[e.type] || 0) + 1;
+            return acc;
+          }, {})
+        )}`);
+      } else {
+        debugLog("[TASK-CALLSTACK] AMC runtime log supplement returned no entries");
+      }
+    }
 
     // Derive max iteration from parsed log fields (iteration=N in log messages)
     const maxIter = Math.max(
@@ -1740,6 +2069,10 @@ export async function GET(request: NextRequest) {
 
     // Functional Pipeline: Resolve Deployment Context (Steps 11-13)
     debugLog("[TASK-CALLSTACK] Steps 11-13: Resolving deployment context via functional pipeline...");
+    // Reuse the broker context resolved up front (shared with the runtime-log supplement
+    // above, or already in flight) instead of letting Resolver 2 refetch it.
+    const cachedBrokerContextForPipeline =
+      validatedApiInstanceId && validatedEnvId ? await brokerContextPromise : undefined;
     const initialState: TaskCallstackState = {
       orgId: validatedOrgId,
       taskId: validatedTaskId,
@@ -1760,6 +2093,19 @@ export async function GET(request: NextRequest) {
         amc403Error: null,
         deploymentApiStatus: "not_used",
       },
+      precomputedDeploymentContext:
+        cachedBrokerContextForPipeline === undefined
+          ? undefined
+          : cachedBrokerContextForPipeline
+            ? {
+                id: cachedBrokerContextForPipeline.deploymentId,
+                type: cachedBrokerContextForPipeline.deploymentType,
+                resolvedName: cachedBrokerContextForPipeline.appName,
+                source: "broker_resolution",
+                amc403Error: null,
+                deploymentApiStatus: "not_used",
+              }
+            : null,
       traceId: traceId || null,
       errors: [],
     };

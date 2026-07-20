@@ -68,7 +68,6 @@ export default function ControlPlaneSignIn() {
         <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
           <div className="flex flex-col gap-4">
             <div className="h-10 animate-pulse bg-gray-200 rounded"></div>
-            <div className="h-10 animate-pulse bg-gray-200 rounded"></div>
           </div>
         </div>
       </div>

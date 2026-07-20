@@ -4,15 +4,25 @@
  * Uses RM GET api -> metadata.source -> AMC list by app name when HY/RR so we get the broker's MC deployment, not the caller's.
  */
 
+import {
+  deploymentNameCandidates,
+  findAmcDeploymentByNames,
+  type AmcDeploymentItem,
+} from "./amc-deployment-match";
+
 export interface BrokerContext {
   deploymentId: string;
   appName: string | undefined;
   deploymentType: string | undefined;
+  /** Flex Gateway / shared-space target id — often the `appId` in Log Search. */
+  targetId?: string;
+  /** Values to use when querying or post-filtering Log Search `appId`. */
+  logAppIds?: string[];
 }
 
 type FetchFn = (url: string, init?: RequestInit) => Promise<Response>;
 
-function parseAppNameFromMetadataSource(source: string | undefined): string | undefined {
+export function parseAppNameFromMetadataSource(source: string | undefined): string | undefined {
   if (!source || typeof source !== "string") return undefined;
   const parts = source.split(":");
   return parts.length >= 4 ? parts[3] : undefined;
@@ -49,15 +59,18 @@ export async function resolveBrokerContext(
     deployment?: {
       applicationId?: string;
       deploymentId?: string | null;
+      targetId?: string;
       type?: string;
     };
     appId?: string;
+    targetId?: string;
     metadata?: { source?: string };
     endpoint?: { uri?: string; deploymentType?: string };
   };
 
   const deploymentType = apiInstanceInfo.deployment?.type ?? apiInstanceInfo.endpoint?.deploymentType;
   const appNameFromSource = parseAppNameFromMetadataSource(apiInstanceInfo.metadata?.source);
+  const targetId = apiInstanceInfo.deployment?.targetId ?? apiInstanceInfo.targetId;
 
   debugLog(`[BROKER-CTX] RM response: deployment.applicationId=${apiInstanceInfo.deployment?.applicationId ?? "null"}, deployment.deploymentId=${apiInstanceInfo.deployment?.deploymentId ?? "null"}, deploymentId=${apiInstanceInfo.deploymentId ?? "null"}, appId=${apiInstanceInfo.appId ?? "null"}`);
   debugLog(`[BROKER-CTX] RM response: deploymentType=${deploymentType ?? "null"}, metadata.source=${apiInstanceInfo.metadata?.source ?? "null"}, appNameFromSource=${appNameFromSource ?? "null"}`);
@@ -80,46 +93,103 @@ export async function resolveBrokerContext(
   }
   debugLog(`[BROKER-CTX] Initial deploymentId=${deploymentId ?? "null"} (from ${deploymentIdSource})`);
 
-  if (appNameFromSource) {
-    debugLog(`[BROKER-CTX] Resolving via AMC list-by-name: ${appNameFromSource}`);
-    const listUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${envId}/deployments?name=${encodeURIComponent(appNameFromSource)}`;
-    const listRes = await fetchFn(listUrl, {
-      method: "GET",
-      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-    });
-    if (listRes.ok) {
-      const data = (await listRes.json()) as { items?: Array<{ id: string; name: string }> };
-      const items = data.items ?? [];
-      debugLog(`[BROKER-CTX] AMC list returned ${items.length} items: ${items.map(d => `${d.name}=${d.id}`).join(", ")}`);
-      const match = items.find((d) => d.name === appNameFromSource);
-      if (match) {
-        debugLog(`[BROKER-CTX] ✓ AMC match: deploymentId=${match.id} (appName=${appNameFromSource})`);
-        if (deploymentId && match.id !== deploymentId) {
-          debugLog(`[BROKER-CTX] NOTE: AMC deploymentId (${match.id}) differs from RM deploymentId (${deploymentId}) — using AMC (correct for Object Store)`);
-        }
-        return {
-          deploymentId: match.id,
-          appName: appNameFromSource,
-          deploymentType,
-        };
-      } else {
-        debugLog(`[BROKER-CTX] ✗ No AMC deployment matched name="${appNameFromSource}"`);
-      }
-    } else {
-      debugLog(`[BROKER-CTX] AMC list-by-name returned ${listRes.status}`);
+  const amcMatch = await resolveAmcDeployment(
+    orgId,
+    envId,
+    deploymentNameCandidates(appNameFromSource),
+    accessToken,
+    baseUrl,
+    fetchFn,
+    debugLog
+  );
+
+  if (amcMatch) {
+    debugLog(`[BROKER-CTX] ✓ AMC match: deploymentId=${amcMatch.id} (amcName=${amcMatch.name})`);
+    if (deploymentId && amcMatch.id !== deploymentId) {
+      debugLog(
+        `[BROKER-CTX] NOTE: AMC deploymentId (${amcMatch.id}) differs from RM deploymentId (${deploymentId}) — using AMC`
+      );
     }
-  } else {
-    debugLog(`[BROKER-CTX] No appNameFromSource — skipping AMC list-by-name`);
+    return buildBrokerContext(amcMatch.id, amcMatch.name, deploymentType, targetId, appNameFromSource);
   }
 
   if (deploymentId) {
     debugLog(`[BROKER-CTX] Returning fallback: deploymentId=${deploymentId} (from ${deploymentIdSource})`);
-    return {
-      deploymentId,
-      appName: appNameFromSource ?? undefined,
-      deploymentType,
-    };
+    return buildBrokerContext(deploymentId, appNameFromSource ?? undefined, deploymentType, targetId, appNameFromSource);
   }
   debugLog(`[BROKER-CTX] ✗ Could not resolve any deploymentId`);
+  return null;
+}
+
+function buildBrokerContext(
+  deploymentId: string,
+  appName: string | undefined,
+  deploymentType: string | undefined,
+  targetId: string | undefined,
+  metadataAppName: string | undefined
+): BrokerContext {
+  const logAppIds = [...new Set([appName, metadataAppName, targetId].filter((v): v is string => Boolean(v)))];
+  return {
+    deploymentId,
+    appName,
+    deploymentType,
+    ...(targetId ? { targetId } : {}),
+    ...(logAppIds.length > 0 ? { logAppIds } : {}),
+  };
+}
+
+async function resolveAmcDeployment(
+  orgId: string,
+  envId: string,
+  candidateNames: string[],
+  accessToken: string,
+  baseUrl: string,
+  fetchFn: FetchFn,
+  debugLog: (...args: unknown[]) => void
+): Promise<AmcDeploymentItem | null> {
+  if (candidateNames.length === 0) {
+    debugLog("[BROKER-CTX] No AMC name candidates — skipping AMC resolution");
+    return null;
+  }
+
+  debugLog(`[BROKER-CTX] Resolving via AMC: candidates=${candidateNames.join(", ")}`);
+
+  for (const candidate of candidateNames) {
+    const listUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${envId}/deployments?name=${encodeURIComponent(candidate)}`;
+    const listRes = await fetchFn(listUrl, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    });
+    if (!listRes.ok) {
+      debugLog(`[BROKER-CTX] AMC list-by-name "${candidate}" returned ${listRes.status}`);
+      continue;
+    }
+    const data = (await listRes.json()) as { items?: AmcDeploymentItem[] };
+    const items = data.items ?? [];
+    debugLog(
+      `[BROKER-CTX] AMC list "${candidate}" returned ${items.length} items: ${items.map((d) => `${d.name}=${d.id}`).join(", ")}`
+    );
+    const match = findAmcDeploymentByNames(items, candidateNames);
+    if (match) return match;
+  }
+
+  const allUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${envId}/deployments`;
+  const allRes = await fetchFn(allUrl, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+  });
+  if (!allRes.ok) {
+    debugLog(`[BROKER-CTX] AMC full list returned ${allRes.status}`);
+    return null;
+  }
+  const allData = (await allRes.json()) as { items?: AmcDeploymentItem[] };
+  const allItems = allData.items ?? [];
+  const fuzzy = findAmcDeploymentByNames(allItems, candidateNames);
+  if (fuzzy) {
+    debugLog(`[BROKER-CTX] ✓ AMC fuzzy match from full list: ${fuzzy.name}=${fuzzy.id}`);
+    return fuzzy;
+  }
+
+  debugLog(`[BROKER-CTX] ✗ No AMC deployment matched candidates=[${candidateNames.join(", ")}]`);
   return null;
 }

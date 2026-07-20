@@ -145,6 +145,38 @@ export function pickPublicIngressOriginFromApiManagerInstance(
   return best?.origin ?? null;
 }
 
+function isPublicHttpUrl(raw: string): boolean {
+  try {
+    const url = new URL(raw.trim());
+    if (url.protocol !== "https:" && url.protocol !== "http:") return false;
+    return !isNonPublicRuntimeHostname(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Pick the best **public** consumer-facing endpoint from API Manager
+ * `GET .../apis/{id}` — full URL including path when available.
+ */
+export function pickPublicEndpointUriFromApiManagerInstance(
+  inst: Record<string, unknown>
+): string | null {
+  const endpoint = inst.endpoint as Record<string, unknown> | undefined;
+  const candidates = [
+    inst.endpointUri,
+    endpoint?.uri,
+    endpoint?.proxyUri,
+  ].filter((value): value is string => typeof value === "string" && value.trim() !== "");
+
+  for (const raw of candidates) {
+    const trimmed = raw.trim();
+    if (isPublicHttpUrl(trimmed)) return trimmed;
+  }
+
+  return null;
+}
+
 /** @deprecated Use pickPublicIngressOriginFromApiManagerInstance with full instance JSON. */
 export function publicGatewayOriginFromApiInstance(inst: {
   endpoint?: { uri?: string; proxyUri?: string };

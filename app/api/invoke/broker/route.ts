@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isSafePublicUrl, safeFetch, SsrfBlockedError } from "@/lib/api/url-safety";
+import {
+  a2aVersionRequestHeaders,
+  buildBrokerSendMessageRequest,
+  extractJsonRpcErrorMessage,
+  normalizeA2AVersion,
+} from "@/lib/invoke/a2a-version";
 import { isAuthenticated } from "@/lib/session";
 
 /** Cap how much upstream broker error text we echo back to the client. */
@@ -47,9 +53,14 @@ export async function POST(req: NextRequest) {
 
   const brokerTimeoutMs = resolveBrokerTimeoutMs();
   try {
-    const body = (await req.json()) as { brokerUrl?: string; message?: string };
+    const body = (await req.json()) as {
+      brokerUrl?: string;
+      message?: string;
+      a2aVersion?: string;
+    };
     const brokerUrl = body.brokerUrl?.trim();
     const message = body.message?.trim();
+    const a2aVersion = normalizeA2AVersion(body.a2aVersion) ?? "0.3";
 
     if (!brokerUrl || !message) {
       return NextResponse.json(
@@ -66,19 +77,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const upstreamBody = {
-      jsonrpc: "2.0",
-      id: crypto.randomUUID(),
-      method: "message/send",
-      params: {
-        message: {
-          role: "user",
-          kind: "message",
-          parts: [{ kind: "text", text: message }],
-          messageId: crypto.randomUUID(),
-        },
-      },
-    };
+    const upstreamBody = buildBrokerSendMessageRequest(a2aVersion, message);
 
     // Defensive normalization: user-provided URLs sometimes include accidental
     // double slashes in the path (e.g. https://host//broker), which some
@@ -93,6 +92,7 @@ export async function POST(req: NextRequest) {
         headers: {
           "Content-Type": "application/json",
           Accept: "application/json",
+          ...a2aVersionRequestHeaders(a2aVersion),
         },
         body: JSON.stringify(upstreamBody),
         signal: AbortSignal.timeout(brokerTimeoutMs),
@@ -122,6 +122,14 @@ export async function POST(req: NextRequest) {
     if (parsed === null) {
       return NextResponse.json(
         { error: "Broker returned non-JSON response", detail: truncate(raw) },
+        { status: 502 }
+      );
+    }
+
+    const jsonRpcError = extractJsonRpcErrorMessage(parsed);
+    if (jsonRpcError) {
+      return NextResponse.json(
+        { error: jsonRpcError, detail: truncate(raw) },
         { status: 502 }
       );
     }

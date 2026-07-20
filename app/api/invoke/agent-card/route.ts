@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isSafePublicUrl, safeFetch } from "@/lib/api/url-safety";
+import { a2aVersionRequestHeaders, normalizeA2AVersion } from "@/lib/invoke/a2a-version";
 import { isAuthenticated } from "@/lib/session";
 
 interface AgentCard {
@@ -7,6 +8,12 @@ interface AgentCard {
   description?: string;
   version?: string;
   url?: string;
+  protocolVersion?: string;
+  supportedInterfaces?: Array<{
+    url?: string;
+    protocolVersion?: string;
+    protocolBinding?: string;
+  }>;
   skills?: unknown[];
   capabilities?: unknown;
 }
@@ -81,13 +88,16 @@ function buildGetCandidates(brokerUrl: string): string[] {
   return [...new Set(paths)];
 }
 
-async function tryGet(endpoint: string): Promise<AgentCard | null> {
+async function tryGet(endpoint: string, a2aVersion?: string): Promise<AgentCard | null> {
   try {
     const res = await safeFetch(
       endpoint,
       {
         method: "GET",
-        headers: { Accept: "application/json" },
+        headers: {
+          Accept: "application/json",
+          ...(a2aVersion ? a2aVersionRequestHeaders(a2aVersion) : {}),
+        },
         signal: AbortSignal.timeout(5000),
       },
       { allowHttp: false }
@@ -107,7 +117,7 @@ async function tryGet(endpoint: string): Promise<AgentCard | null> {
   }
 }
 
-async function tryPost(brokerUrl: string): Promise<AgentCard | null> {
+async function tryPost(brokerUrl: string, a2aVersion?: string): Promise<AgentCard | null> {
   const bodies = [
     JSON.stringify({ jsonrpc: "2.0", method: "agent/info", id: crypto.randomUUID(), params: {} }),
     JSON.stringify({ jsonrpc: "2.0", method: "tasks/send", id: crypto.randomUUID(), params: {} }),
@@ -118,7 +128,11 @@ async function tryPost(brokerUrl: string): Promise<AgentCard | null> {
         brokerUrl,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+            ...(a2aVersion ? a2aVersionRequestHeaders(a2aVersion) : {}),
+          },
           body,
           signal: AbortSignal.timeout(8000),
         },
@@ -154,6 +168,7 @@ export async function GET(req: NextRequest) {
   }
 
   const bust = req.nextUrl.searchParams.get("refresh") === "1";
+  const a2aVersion = normalizeA2AVersion(req.nextUrl.searchParams.get("a2aVersion")) ?? undefined;
   if (!bust) {
     const cached = cacheGet(brokerUrl);
     if (cached) return NextResponse.json(cached);
@@ -161,14 +176,14 @@ export async function GET(req: NextRequest) {
 
   const candidates = buildGetCandidates(brokerUrl);
   for (const endpoint of candidates) {
-    const card = await tryGet(endpoint);
+    const card = await tryGet(endpoint, a2aVersion);
     if (card) {
       cacheSet(brokerUrl, card);
       return NextResponse.json(card);
     }
   }
 
-  const card = await tryPost(brokerUrl);
+  const card = await tryPost(brokerUrl, a2aVersion);
   if (card) {
     cacheSet(brokerUrl, card);
     return NextResponse.json(card);

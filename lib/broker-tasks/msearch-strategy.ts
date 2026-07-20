@@ -27,6 +27,8 @@ export interface MSearchStrategyParams {
   envId?: string;
   /** If set, only hits whose _source.appId matches are kept (post-filter). */
   brokerAppName?: string;
+  /** Additional appId values for Log Search queries and post-filter (e.g. Flex targetId). */
+  logAppIds?: string[];
   /** Run org-wide + wildcard probes and attach `msearchDiagnostics` (extra _msearch calls). */
   includeDiagnostics?: boolean;
 }
@@ -87,7 +89,7 @@ function summarizeFilteredQuery(
 export async function fetchTasksViaMSearch(
   params: MSearchStrategyParams
 ): Promise<BrokerTasksResult | null> {
-  const { orgId, apiInstanceId, accessToken, baseUrl, timeRangeMs, envId, brokerAppName, includeDiagnostics } =
+  const { orgId, apiInstanceId, accessToken, baseUrl, timeRangeMs, envId, brokerAppName, logAppIds, includeDiagnostics } =
     params;
 
   const now = Date.now();
@@ -127,11 +129,13 @@ export async function fetchTasksViaMSearch(
   //          errors that don't mention apiInstanceId). Only used when we have
   //          a resolved brokerAppName.
   // De-duplicate by ES _id so we don't double-count.
+  const appIdFilters = [...new Set([...(logAppIds ?? []), ...(brokerAppName ? [brokerAppName] : [])])];
+
   const queries: { label: string; lucene: string }[] = [
     { label: "apiInstanceId", lucene: `orgId=${orgId} AND apiInstanceId=${apiInstanceId}` },
   ];
-  if (brokerAppName) {
-    queries.push({ label: "appId", lucene: `orgId=${orgId} AND appId=${brokerAppName}` });
+  for (const appId of appIdFilters) {
+    queries.push({ label: `appId:${appId}`, lucene: `orgId=${orgId} AND appId=${appId}` });
   }
 
   const PAGE_SIZE = 1000;
@@ -184,16 +188,19 @@ export async function fetchTasksViaMSearch(
 
   // Post-filter: keep only broker-app hits when we have a name.
   // Gateway proxy logs (appId=_api_version_*) are noise for task discovery.
+  const appIdFilterSet = new Set(appIdFilters);
   const hitsToUse =
-    brokerAppName !== undefined
+    appIdFilterSet.size > 0
       ? allHits.filter((h: unknown) => {
           const src = (h as { _source?: { appId?: string } })._source;
-          return (src?.appId as string) === brokerAppName;
+          return appIdFilterSet.has(String(src?.appId ?? ""));
         })
       : allHits;
 
-  if (brokerAppName && hitsToUse.length !== allHits.length) {
-    debugLog(`[MSEARCH] Post-filtered by appId=${brokerAppName}: ${allHits.length} -> ${hitsToUse.length}`);
+  if (appIdFilterSet.size > 0 && hitsToUse.length !== allHits.length) {
+    debugLog(
+      `[MSEARCH] Post-filtered by appId in [${[...appIdFilterSet].join(", ")}]: ${allHits.length} -> ${hitsToUse.length}`
+    );
   }
 
   const accumulators = parseHitsToAccumulators(hitsToUse, apiInstanceId);
@@ -208,10 +215,10 @@ export async function fetchTasksViaMSearch(
         filteredQuery: filteredQuerySummary,
         orgOnlyQuery,
         wildcardQuery,
-        ...(brokerAppName !== undefined
+        ...(appIdFilterSet.size > 0
           ? {
               brokerAppPostFilter: {
-                brokerAppName,
+                brokerAppName: brokerAppName ?? [...appIdFilterSet].join("|"),
                 beforeHits: allHits.length,
                 afterHits: hitsToUse.length,
               },
@@ -239,9 +246,9 @@ export async function fetchTasksViaMSearch(
 // ---------------------------------------------------------------------------
 
 const RE = {
-  task: /taskId=([a-f0-9-]+)/,
-  ctx: /contextId=([a-f0-9-]+)/,
-  agent: /agent=(\S+)/,
+  task: /(?:taskId|task_id)=([a-f0-9-]+)/,
+  ctx: /(?:contextId|context_id)=([a-f0-9-]+)/,
+  agent: /(?:agent_id|agent)=(\S+)/,
   tool: /(?:LLM selected tool|Executed tool) (\S+)/,
   iter: /iteration=(\d+)/,
   apiInstance: /apiInstanceId=(\d+)/,

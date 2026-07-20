@@ -127,7 +127,7 @@ export default function TasksList({
   };
 
   return (
-    <div className="space-y-2">
+    <div className="flex min-h-0 flex-1 flex-col gap-2">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-gray-900">Tasks</h3>
         {apiInstanceId && (
@@ -161,7 +161,7 @@ export default function TasksList({
         </p>
       )}
       {apiInstanceId && (
-        <ul className="flex-1 space-y-0 overflow-y-auto max-h-[420px] scrollbar-thin pr-1">
+        <ul className="min-h-0 flex-1 space-y-0 overflow-y-auto scrollbar-thin pr-1">
           {tasks.map((task) => {
             const isError = task.status === "error";
             const tools = Array.isArray(task.toolsUsed) ? task.toolsUsed : [];

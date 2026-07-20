@@ -4,7 +4,7 @@ import { useRef, useEffect, useState, KeyboardEvent, Dispatch } from "react";
 import type { InvokeMessage, InvokeAction, AgentSkill, InvokeState } from "@/lib/invoke/types";
 import type { CanonicalGraph } from "@/lib/agent-network-types";
 import { handleSend } from "@/lib/invoke/flow-engine";
-import { skillPromptText } from "@/lib/invoke/discovery";
+import { skillPromptText, isPlaceholderSkillDescription } from "@/lib/invoke/discovery";
 import { findCanonicalNodeForSkill } from "@/lib/invoke/graph-builder";
 import { useImeComposition } from "@/lib/ime-composition";
 
@@ -95,7 +95,7 @@ export default function ConversationPanel({
   displayGraph,
   dispatch,
 }: ConversationPanelProps) {
-  const { messages, isProcessing, currentStep, brokerUrl } = state;
+  const { messages, isProcessing, currentStep, brokerUrl, a2aVersion } = state;
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -123,7 +123,14 @@ export default function ConversationPanel({
     const preferredNodeId = skillId
       ? findCanonicalNodeForSkill(skillId, displayGraph)
       : undefined;
-    await handleSend(msg, brokerUrl, displayGraph, preferredNodeId, dispatch);
+    await handleSend(msg, brokerUrl, displayGraph, preferredNodeId, dispatch, a2aVersion);
+  }
+
+  function useSkillPrompt(skill: AgentSkill) {
+    const prompt = skillPromptText(skill);
+    setInput(prompt);
+    textareaRef.current?.focus();
+    if (textareaRef.current) adjustHeight(textareaRef.current);
   }
 
   function handleKey(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -149,9 +156,13 @@ export default function ConversationPanel({
                     <button
                       key={skill.id}
                       type="button"
-                      onClick={() => onSend(skillPromptText(skill), skill.name)}
+                      onClick={() => useSkillPrompt(skill)}
                       disabled={isProcessing}
-                      title={skill.description}
+                      title={
+                        isPlaceholderSkillDescription(skill.description)
+                          ? skillPromptText(skill)
+                          : skill.description ?? skillPromptText(skill)
+                      }
                       className="text-left text-xs text-gray-700 bg-gray-50 hover:bg-primary/5 hover:text-primary hover:border-primary/30 border border-gray-200 rounded-xl px-3 py-2.5 transition-colors disabled:opacity-50 leading-snug"
                     >
                       {skill.name}
@@ -199,7 +210,7 @@ export default function ConversationPanel({
               <button
                 key={skill.id}
                 type="button"
-                onClick={() => setInput(skillPromptText(skill))}
+                onClick={() => useSkillPrompt(skill)}
                 disabled={isProcessing}
                 className="shrink-0 text-[11px] text-gray-500 hover:text-primary bg-gray-50 hover:bg-primary/5 border border-gray-200 hover:border-primary/30 rounded-full px-2.5 py-1 transition-colors disabled:opacity-50 whitespace-nowrap"
               >
@@ -218,6 +229,7 @@ export default function ConversationPanel({
             value={input}
             onChange={(e) => { setInput(e.target.value); adjustHeight(e.target); }}
             onKeyDown={handleKey}
+            {...compositionProps}
             {...compositionProps}
             placeholder="Ask the broker…"
             disabled={isProcessing}

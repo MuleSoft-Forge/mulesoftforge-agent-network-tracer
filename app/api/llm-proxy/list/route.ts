@@ -252,14 +252,13 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // Documented API Manager list endpoint. `fullInfo=true` populates the
-  // `endpoint` object on each instance so we can filter to LLM proxies
-  // client-side. (The `filters` query param is a JSON string on this endpoint
-  // and is under-documented — filtering the response is more reliable.)
+  // Documented API Manager list endpoint. `family=llm` limits the response to
+  // LLM-based APIs; `fullInfo=true` populates the endpoint and routing details
+  // needed to distinguish Flex LLM proxies from agent-egress instances.
   const url =
     `${baseUrl}/apimanager/api/v1/organizations/${encodeURIComponent(orgId)}` +
     `/environments/${encodeURIComponent(envId)}/apis` +
-    `?fullInfo=true&limit=250&offset=0&sort=name&ascending=false`;
+    `?family=llm&fullInfo=true&limit=250&offset=0&sort=name&ascending=false`;
 
   try {
     const res = await loggedFetch(url, {

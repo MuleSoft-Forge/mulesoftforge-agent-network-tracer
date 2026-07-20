@@ -1,7 +1,11 @@
 import type { Dispatch } from "react";
 import type { CanonicalGraph } from "@/lib/agent-network-types";
-import type { InvokeAction, InvokeMessage } from "./types";
+import {
+  extractJsonRpcErrorMessage,
+  normalizeA2AVersion,
+} from "./a2a-version";
 import { findBrokerNodeId } from "./graph-builder";
+import type { InvokeAction, InvokeMessage } from "./types";
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -27,40 +31,65 @@ function extractPartsText(parts: unknown): string | null {
   return texts.length > 0 ? texts.join("\n") : null;
 }
 
+function extractTextFromResultObject(result: Record<string, unknown>): string | null {
+  const task = result.task as Record<string, unknown> | undefined;
+  if (task) {
+    const taskArtifacts = task.artifacts as Array<Record<string, unknown>> | undefined;
+    if (Array.isArray(taskArtifacts) && taskArtifacts.length > 0) {
+      const texts: string[] = [];
+      for (const artifact of taskArtifacts) {
+        const t = extractPartsText(artifact.parts);
+        if (t) texts.push(t);
+      }
+      if (texts.length > 0) return texts.join("\n");
+    }
+    const taskStatus = task.status as Record<string, unknown> | undefined;
+    const taskStatusMsg = taskStatus?.message as Record<string, unknown> | undefined;
+    if (taskStatusMsg) {
+      const t = extractPartsText(taskStatusMsg.parts);
+      if (t) return t;
+    }
+  }
+
+  const artifacts = result.artifacts as Array<Record<string, unknown>> | undefined;
+  if (Array.isArray(artifacts) && artifacts.length > 0) {
+    const texts: string[] = [];
+    for (const artifact of artifacts) {
+      const t = extractPartsText(artifact.parts);
+      if (t) texts.push(t);
+    }
+    if (texts.length > 0) return texts.join("\n");
+  }
+  const directParts = extractPartsText(result.parts);
+  if (directParts) return directParts;
+  const msg = result.message as Record<string, unknown> | undefined;
+  if (msg) {
+    const t = extractPartsText(msg.parts);
+    if (t) return t;
+    if (typeof msg.content === "string") return msg.content;
+  }
+  const status = result.status as Record<string, unknown> | undefined;
+  if (status) {
+    const statusMsg = status.message as Record<string, unknown> | undefined;
+    if (statusMsg) {
+      const t = extractPartsText(statusMsg.parts);
+      if (t) return t;
+    }
+  }
+  for (const key of ["response", "answer", "output", "text", "content", "reply"]) {
+    if (typeof result[key] === "string") return result[key] as string;
+  }
+  return null;
+}
+
 function extractTextFromA2AResponse(data: unknown): string {
   if (typeof data === "string" && data.trim()) return data;
   if (typeof data === "object" && data !== null) {
     const obj = data as Record<string, unknown>;
     const result = obj.result as Record<string, unknown> | undefined;
     if (result) {
-      const artifacts = result.artifacts as Array<Record<string, unknown>> | undefined;
-      if (Array.isArray(artifacts) && artifacts.length > 0) {
-        const texts: string[] = [];
-        for (const artifact of artifacts) {
-          const t = extractPartsText(artifact.parts);
-          if (t) texts.push(t);
-        }
-        if (texts.length > 0) return texts.join("\n");
-      }
-      const directParts = extractPartsText(result.parts);
-      if (directParts) return directParts;
-      const msg = result.message as Record<string, unknown> | undefined;
-      if (msg) {
-        const t = extractPartsText(msg.parts);
-        if (t) return t;
-        if (typeof msg.content === "string") return msg.content;
-      }
-      const status = result.status as Record<string, unknown> | undefined;
-      if (status) {
-        const statusMsg = status.message as Record<string, unknown> | undefined;
-        if (statusMsg) {
-          const t = extractPartsText(statusMsg.parts);
-          if (t) return t;
-        }
-      }
-      for (const key of ["response", "answer", "output", "text", "content", "reply"]) {
-        if (typeof result[key] === "string") return result[key] as string;
-      }
+      const fromResult = extractTextFromResultObject(result);
+      if (fromResult) return fromResult;
     }
     for (const key of ["response", "answer", "output", "text", "content", "reply", "message"]) {
       if (typeof obj[key] === "string") return obj[key] as string;
@@ -126,7 +155,8 @@ export async function callRealBroker(
   brokerUrl: string,
   graph: CanonicalGraph,
   preferredNodeId: string | undefined,
-  dispatch: Dispatch<InvokeAction>
+  dispatch: Dispatch<InvokeAction>,
+  a2aVersion = "0.3"
 ): Promise<void> {
   const brokerId = findBrokerNodeId(graph);
   const targetNodeIds = detectTargetNodeIds(userMessage, graph, preferredNodeId);
@@ -150,6 +180,7 @@ export async function callRealBroker(
       body: JSON.stringify({
         brokerUrl,
         message: userMessage,
+        a2aVersion: normalizeA2AVersion(a2aVersion) ?? "0.3",
       }),
     });
 
@@ -160,6 +191,10 @@ export async function callRealBroker(
       );
     }
     const data = await res.json();
+    const jsonRpcError = extractJsonRpcErrorMessage(data);
+    if (jsonRpcError) {
+      throw new Error(jsonRpcError);
+    }
     responseText = extractTextFromA2AResponse(data);
   } catch (err) {
     callError = err instanceof Error ? err.message : "Unknown error";
@@ -284,12 +319,20 @@ export async function handleSend(
   brokerUrl: string,
   graph: CanonicalGraph,
   preferredNodeId: string | undefined,
-  dispatch: Dispatch<InvokeAction>
+  dispatch: Dispatch<InvokeAction>,
+  a2aVersion = "0.3"
 ): Promise<void> {
   dispatch({ type: "ADD_MESSAGE", message: newMsg("user", userMessage) });
 
   if (brokerUrl.trim()) {
-    return callRealBroker(userMessage, brokerUrl, graph, preferredNodeId, dispatch);
+    return callRealBroker(
+      userMessage,
+      brokerUrl,
+      graph,
+      preferredNodeId,
+      dispatch,
+      a2aVersion
+    );
   }
   return runSimulation(userMessage, graph, preferredNodeId, dispatch);
 }

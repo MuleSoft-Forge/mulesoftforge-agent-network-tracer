@@ -63,6 +63,15 @@ export interface TaskCallstackState {
   
   // Deployment context (flows through pipeline)
   deploymentContext: DeploymentContext;
+
+  /**
+   * When the caller already resolved broker context (e.g. via a cached
+   * `resolveBrokerContext` call shared with another code path), pass it here so
+   * Resolver 2 can skip its own RM-detail + AMC-list-by-name round trips.
+   * `undefined` = not precomputed (Resolver 2 resolves normally); `null` = precomputed
+   * and resolution found nothing (Resolver 2 skips, matching what it would have found).
+   */
+  precomputedDeploymentContext?: DeploymentContext | null;
   
   // Other state
   traceId: string | null;
@@ -116,6 +125,18 @@ export function resolveFromLogs(state: TaskCallstackState): TaskCallstackState {
 export async function resolveBroker(
   state: TaskCallstackState
 ): Promise<TaskCallstackState> {
+  if (state.precomputedDeploymentContext !== undefined) {
+    debugLog("[RESOLVER-2] Using precomputed deployment context (already resolved by caller), skipping API calls");
+    if (state.precomputedDeploymentContext) {
+      return {
+        ...state,
+        deploymentContext: state.precomputedDeploymentContext,
+        appId: state.precomputedDeploymentContext.resolvedName || state.appId,
+      };
+    }
+    return state;
+  }
+
   const apiInstanceIdForRm = state.apiInstanceId || state.apiInstanceIdFromLogs;
   const shouldResolveBroker =
     apiInstanceIdForRm && 

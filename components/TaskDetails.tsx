@@ -29,10 +29,18 @@ interface TaskData {
   mode?: "entitlement" | "no-entitlement";
 }
 
+interface TaskUnavailableData {
+  unavailable: true;
+  code: "MONITORING_CENTER_PREMIUM_REQUIRED";
+  message: string;
+}
+
+type TaskResourceData = TaskData | TaskUnavailableData;
+
 /**
  * Helper function to handle API errors and format error messages
  */
-async function handleApiError(res: Response): Promise<never> {
+async function handleApiError(res: Response): Promise<TaskUnavailableData> {
   const statusCode = res.status;
   
   // Read response text first, then try to parse as JSON
@@ -74,7 +82,11 @@ async function handleApiError(res: Response): Promise<never> {
   // Check for Monitoring Center Premium error specifically
   if (statusCode === 403 && (data.code === "MONITORING_CENTER_PREMIUM_REQUIRED" || data.error?.includes("Monitoring Center Premium"))) {
     const errorMessage = data.message || data.error || "Log Search - Advanced package or a Titanium subscription to Anypoint Platform Required - Elasticsearch log search APIs - Enhanced raw storage (up to 128TB based on configuration) - Advanced logs and traces - LLM reasoning logs (for Agent Broker monitoring)";
-    throw new Error(errorMessage);
+    return {
+      unavailable: true,
+      code: "MONITORING_CENTER_PREMIUM_REQUIRED",
+      message: errorMessage,
+    };
   }
   
   // Handle 400 Bad Request with better error messages
@@ -106,9 +118,9 @@ async function handleApiError(res: Response): Promise<never> {
 }
 
 /**
- * Content component that uses React 19's use() hook for data fetching
+ * Render resolved task data.
  */
-function TaskDetailsContent({ orgId, taskId, envId, taskResource }: TaskDetailsProps & { taskResource: Promise<TaskData> }) {
+function TaskDetailsContent({ orgId, taskId, envId, data }: TaskDetailsProps & { data: TaskData }) {
   const [viewMode, setViewMode] = useState<ViewMode>("tree");
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set(["task"]));
   const [expandedEntries, setExpandedEntries] = useState<Set<number>>(new Set());
@@ -118,9 +130,6 @@ function TaskDetailsContent({ orgId, taskId, envId, taskResource }: TaskDetailsP
   const [isResizing, setIsResizing] = useState<boolean>(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const { openDebugViewer } = useDebugViewer();
-
-  // Use React 19's use() hook - this will suspend if the promise is pending
-  const data = use(taskResource);
 
   const { jobCard, entries, traceSpans = [], mode } = data;
   const isNoEntitlement = mode === "no-entitlement";
@@ -649,6 +658,45 @@ function TaskDetailsError({ error }: { error: Error; orgId: string; taskId: stri
   );
 }
 
+function TaskDetailsResource({
+  orgId,
+  taskId,
+  envId,
+  apiInstanceId,
+  skipTraces,
+  taskResource,
+}: TaskDetailsProps & { taskResource: Promise<TaskResourceData> }) {
+  const result = use(taskResource);
+
+  if ("unavailable" in result) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center px-4">
+        <div className="max-w-lg rounded-lg border border-amber-200 bg-amber-50 p-5">
+          <p className="mb-2 text-sm font-semibold text-amber-900">
+            Task details unavailable
+          </p>
+          <p className="text-sm text-amber-800">{result.message}</p>
+          <p className="mt-3 text-xs text-amber-700">
+            Runtime-log fallback did not find this task. This is an entitlement
+            limitation, not an application crash.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <TaskDetailsContent
+      orgId={orgId}
+      taskId={taskId}
+      envId={envId}
+      apiInstanceId={apiInstanceId}
+      skipTraces={skipTraces}
+      data={result}
+    />
+  );
+}
+
 /**
  * Main component with Suspense boundary and error handling
  */
@@ -723,7 +771,14 @@ export default function TaskDetails({ orgId, taskId, envId, apiInstanceId, skipT
           </div>
         }
       >
-        <TaskDetailsContent orgId={orgId} taskId={taskId} envId={envId} taskResource={taskResource} />
+        <TaskDetailsResource
+          orgId={orgId}
+          taskId={taskId}
+          envId={envId}
+          apiInstanceId={apiInstanceId}
+          skipTraces={skipTraces}
+          taskResource={taskResource}
+        />
       </Suspense>
     </ErrorBoundary>
   );

@@ -172,7 +172,10 @@ export async function GET(
 
   try {
     const [instRes, upstreamsRes, policiesRes] = await Promise.all([
-      loggedFetch(`${apiBase}?includeProxyConfiguration=true&includeTlsContexts=true`, {
+      // Documented param is `includeProxyTemplate`; `includeProxyConfiguration`
+      // is undocumented but is what `proxyConfiguration` below is parsed from.
+      // Send both until the real response field name is confirmed live.
+      loggedFetch(`${apiBase}?includeProxyTemplate=true&includeProxyConfiguration=true&includeTlsContexts=true`, {
         headers: { Authorization: authHeader },
       }),
       loggedFetch(`${apiBase}/upstreams`, { headers: { Authorization: authHeader } }),

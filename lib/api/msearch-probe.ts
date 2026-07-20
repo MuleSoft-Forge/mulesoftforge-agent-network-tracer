@@ -77,6 +77,13 @@ export async function probeMsearchEntitlement(
       );
       return false;
     }
+    if (res.status === 404) {
+      debugLog(
+        "[AUTH-TOKEN] _msearch probe: HTTP 404 — API not reachable for this token " +
+          `(productSKU=${opts.productSKU ?? "unknown"}); using runtime logs`
+      );
+      return false;
+    }
     if (!res.ok) {
       const text = await res.text();
       if (res.status === 403 && text.includes("Monitoring Center Premium")) {

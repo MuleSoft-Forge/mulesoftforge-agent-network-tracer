@@ -31,11 +31,13 @@ interface InvokeTabProps {
 export default function InvokeTab({ canonicalGraph, selectedBroker, orgId, envId }: InvokeTabProps) {
   const [state, dispatch] = useReducer(invokeReducer, INITIAL_INVOKE_STATE);
   const [suggestedUrl, setSuggestedUrl] = useState<string | null>(null);
+  const [suggestedA2aVersion, setSuggestedA2aVersion] = useState<string | null>(null);
 
   // When the sidebar broker changes, resolve its A2A URL from Exchange.
   useEffect(() => {
     if (!selectedBroker || !orgId) {
       setSuggestedUrl(null);
+      setSuggestedA2aVersion(null);
       return;
     }
     let cancelled = false;
@@ -45,8 +47,10 @@ export default function InvokeTab({ canonicalGraph, selectedBroker, orgId, envId
     if (inst) params.set("apiInstanceId", inst);
     fetch(`/api/invoke/broker-url?${params.toString()}`)
       .then((r) => r.json())
-      .then((data: { url?: string | null }) => {
-        if (cancelled || !data.url) return;
+      .then((data: { url?: string | null; protocolVersion?: string | null }) => {
+        if (cancelled) return;
+        if (data.protocolVersion) setSuggestedA2aVersion(data.protocolVersion);
+        if (!data.url) return;
         // Don't pre-fill unresolved Exchange placeholders (needs env + instance for substitution).
         if (urlContainsIngressPlaceholder(data.url)) return;
         setSuggestedUrl(data.url);
@@ -150,6 +154,7 @@ export default function InvokeTab({ canonicalGraph, selectedBroker, orgId, envId
           currentStep={state.currentStep}
           agentCard={state.agentCard}
           suggestedUrl={suggestedUrl}
+          suggestedA2aVersion={suggestedA2aVersion}
           dispatch={dispatch}
           resolveContext={
             orgId && envId && selectedBroker?.instanceIds?.[0]
