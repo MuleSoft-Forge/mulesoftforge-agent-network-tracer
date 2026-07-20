@@ -9,6 +9,10 @@ import {
   findAmcDeploymentByNames,
   type AmcDeploymentItem,
 } from "./amc-deployment-match";
+import {
+  logSearchAppIdCandidates,
+  parseBrokerRouteFromEndpoint,
+} from "./log-search-ids";
 
 export interface BrokerContext {
   deploymentId: string;
@@ -18,6 +22,13 @@ export interface BrokerContext {
   targetId?: string;
   /** Values to use when querying or post-filtering Log Search `appId`. */
   logAppIds?: string[];
+  /** Exchange asset id for this API instance (broker identity on shared gateways). */
+  assetId?: string;
+  instanceLabel?: string;
+  /** Last path segment from RM endpoint URI (e.g. agent_broker_get_date). */
+  routeSegment?: string;
+  /** RM deployment.applicationId — sometimes the runtime log appId. */
+  rmApplicationId?: string;
 }
 
 type FetchFn = (url: string, init?: RequestInit) => Promise<Response>;
@@ -55,6 +66,8 @@ export async function resolveBrokerContext(
   }
 
   const apiInstanceInfo = (await rmRes.json()) as {
+    assetId?: string;
+    instanceLabel?: string;
     deploymentId?: string;
     deployment?: {
       applicationId?: string;
@@ -71,10 +84,17 @@ export async function resolveBrokerContext(
   const deploymentType = apiInstanceInfo.deployment?.type ?? apiInstanceInfo.endpoint?.deploymentType;
   const appNameFromSource = parseAppNameFromMetadataSource(apiInstanceInfo.metadata?.source);
   const targetId = apiInstanceInfo.deployment?.targetId ?? apiInstanceInfo.targetId;
+  const assetId = apiInstanceInfo.assetId?.trim() || undefined;
+  const instanceLabel = apiInstanceInfo.instanceLabel?.trim() || undefined;
+  const routeSegment = parseBrokerRouteFromEndpoint(apiInstanceInfo.endpoint?.uri);
+  const rmApplicationId = apiInstanceInfo.deployment?.applicationId?.trim() || undefined;
 
   debugLog(`[BROKER-CTX] RM response: deployment.applicationId=${apiInstanceInfo.deployment?.applicationId ?? "null"}, deployment.deploymentId=${apiInstanceInfo.deployment?.deploymentId ?? "null"}, deploymentId=${apiInstanceInfo.deploymentId ?? "null"}, appId=${apiInstanceInfo.appId ?? "null"}`);
   debugLog(`[BROKER-CTX] RM response: deploymentType=${deploymentType ?? "null"}, metadata.source=${apiInstanceInfo.metadata?.source ?? "null"}, appNameFromSource=${appNameFromSource ?? "null"}`);
   debugLog(`[BROKER-CTX] RM response: endpoint.uri=${apiInstanceInfo.endpoint?.uri ?? "null"}`);
+  debugLog(
+    `[BROKER-CTX] RM response: assetId=${assetId ?? "null"}, instanceLabel=${instanceLabel ?? "null"}, routeSegment=${routeSegment ?? "null"}, rmApplicationId=${rmApplicationId ?? "null"}`
+  );
 
   let deploymentId: string | null = null;
   let deploymentIdSource = "none";
@@ -93,15 +113,23 @@ export async function resolveBrokerContext(
   }
   debugLog(`[BROKER-CTX] Initial deploymentId=${deploymentId ?? "null"} (from ${deploymentIdSource})`);
 
+  const amcNameCandidates = deploymentNameCandidates(
+    appNameFromSource,
+    assetId,
+    instanceLabel,
+    routeSegment
+  );
   const amcMatch = await resolveAmcDeployment(
     orgId,
     envId,
-    deploymentNameCandidates(appNameFromSource),
+    amcNameCandidates,
     accessToken,
     baseUrl,
     fetchFn,
     debugLog
   );
+
+  const rmFields = { assetId, instanceLabel, routeSegment, rmApplicationId };
 
   if (amcMatch) {
     debugLog(`[BROKER-CTX] ✓ AMC match: deploymentId=${amcMatch.id} (amcName=${amcMatch.name})`);
@@ -110,15 +138,36 @@ export async function resolveBrokerContext(
         `[BROKER-CTX] NOTE: AMC deploymentId (${amcMatch.id}) differs from RM deploymentId (${deploymentId}) — using AMC`
       );
     }
-    return buildBrokerContext(amcMatch.id, amcMatch.name, deploymentType, targetId, appNameFromSource);
+    return buildBrokerContext(
+      amcMatch.id,
+      amcMatch.name,
+      deploymentType,
+      targetId,
+      appNameFromSource,
+      rmFields
+    );
   }
 
   if (deploymentId) {
     debugLog(`[BROKER-CTX] Returning fallback: deploymentId=${deploymentId} (from ${deploymentIdSource})`);
-    return buildBrokerContext(deploymentId, appNameFromSource ?? undefined, deploymentType, targetId, appNameFromSource);
+    return buildBrokerContext(
+      deploymentId,
+      appNameFromSource ?? undefined,
+      deploymentType,
+      targetId,
+      appNameFromSource,
+      rmFields
+    );
   }
   debugLog(`[BROKER-CTX] ✗ Could not resolve any deploymentId`);
   return null;
+}
+
+interface RmBrokerFields {
+  assetId?: string;
+  instanceLabel?: string;
+  routeSegment?: string;
+  rmApplicationId?: string;
 }
 
 function buildBrokerContext(
@@ -126,14 +175,27 @@ function buildBrokerContext(
   appName: string | undefined,
   deploymentType: string | undefined,
   targetId: string | undefined,
-  metadataAppName: string | undefined
+  metadataAppName: string | undefined,
+  rmFields: RmBrokerFields = {}
 ): BrokerContext {
-  const logAppIds = [...new Set([appName, metadataAppName, targetId].filter((v): v is string => Boolean(v)))];
+  const logAppIds = logSearchAppIdCandidates(
+    appName,
+    metadataAppName,
+    targetId,
+    rmFields.assetId,
+    rmFields.instanceLabel,
+    rmFields.routeSegment,
+    rmFields.rmApplicationId
+  );
   return {
     deploymentId,
     appName,
     deploymentType,
     ...(targetId ? { targetId } : {}),
+    ...(rmFields.assetId ? { assetId: rmFields.assetId } : {}),
+    ...(rmFields.instanceLabel ? { instanceLabel: rmFields.instanceLabel } : {}),
+    ...(rmFields.routeSegment ? { routeSegment: rmFields.routeSegment } : {}),
+    ...(rmFields.rmApplicationId ? { rmApplicationId: rmFields.rmApplicationId } : {}),
     ...(logAppIds.length > 0 ? { logAppIds } : {}),
   };
 }

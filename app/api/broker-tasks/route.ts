@@ -69,13 +69,17 @@ export async function POST(request: NextRequest) {
   let brokerAppName: string | undefined;
   let brokerDeploymentId: string | undefined;
   let brokerLogAppIds: string[] | undefined;
+  let brokerRouteSegment: string | undefined;
+  let brokerDeploymentType: string | undefined;
   if (envId) {
     try {
       const ctx = await resolveBrokerContext(orgId, envId, apiInstanceId, accessToken, baseUrl);
       brokerAppName = ctx?.appName;
       brokerDeploymentId = ctx?.deploymentId;
       brokerLogAppIds = ctx?.logAppIds;
-      debugLog(`[BROKER-TASKS] resolveBrokerContext result: appName=${ctx?.appName ?? "null"}, deploymentId=${ctx?.deploymentId ?? "null"}, deploymentType=${ctx?.deploymentType ?? "null"}, targetId=${ctx?.targetId ?? "null"}`);
+      brokerRouteSegment = ctx?.routeSegment;
+      brokerDeploymentType = ctx?.deploymentType;
+      debugLog(`[BROKER-TASKS] resolveBrokerContext result: appName=${ctx?.appName ?? "null"}, deploymentId=${ctx?.deploymentId ?? "null"}, deploymentType=${ctx?.deploymentType ?? "null"}, targetId=${ctx?.targetId ?? "null"}, routeSegment=${ctx?.routeSegment ?? "null"}, assetId=${ctx?.assetId ?? "null"}`);
       dumpBrokerTasksVerbose(
         "broker-context",
         ctx
@@ -123,6 +127,8 @@ export async function POST(request: NextRequest) {
         envId: envId ?? undefined,
         brokerAppName,
         logAppIds: brokerLogAppIds,
+        brokerRouteSegments: brokerRouteSegment ? [brokerRouteSegment] : undefined,
+        deploymentType: brokerDeploymentType,
         includeDiagnostics: includeMsearchDiagnostics,
       });
 
@@ -177,6 +183,8 @@ export async function POST(request: NextRequest) {
       envId: envId ?? undefined,
       brokerAppName,
       brokerDeploymentId,
+      brokerRouteSegments: brokerRouteSegment ? [brokerRouteSegment] : undefined,
+      deploymentType: brokerDeploymentType,
       logSearchEntitled: hasMsearch || orgHasTitaniumMonitoring(session),
     });
 

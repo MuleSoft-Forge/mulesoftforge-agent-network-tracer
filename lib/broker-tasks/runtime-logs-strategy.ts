@@ -8,6 +8,8 @@
 
 import { loggedFetch, debugLog, debugError } from "@/lib/api-logger";
 import { buildAmcLogsUrl } from "@/lib/api/amc-logs";
+import { deploymentNameCandidates } from "@/lib/broker-context/amc-deployment-match";
+import { isHyperscaleDeploymentType } from "@/lib/broker-context/log-search-ids";
 import type { BrokerTaskAccumulator, BrokerTasksResult } from "./types";
 import { finaliseTasks } from "./types";
 
@@ -25,6 +27,10 @@ export interface RuntimeLogsStrategyParams {
   brokerAppName?: string;
   /** Resolved AMC deployment id (skips name lookup when set). */
   brokerDeploymentId?: string;
+  /** Broker route segment(s) for HY/Flex shared-gateway log matching. */
+  brokerRouteSegments?: string[];
+  /** HY/RR/RF — assign apiInstanceId when logs match route but omit apiInstanceId. */
+  deploymentType?: string;
   /** When true, org has Log Search — do not tag responses as no-entitlement. */
   logSearchEntitled?: boolean;
 }
@@ -32,7 +38,20 @@ export interface RuntimeLogsStrategyParams {
 export async function fetchTasksViaRuntimeLogs(
   params: RuntimeLogsStrategyParams
 ): Promise<BrokerTasksResult> {
-  const { orgId, apiInstanceId, accessToken, baseUrl, timeRangeMs, envId, brokerAppName, logSearchEntitled = false } = params;
+  const {
+    orgId,
+    apiInstanceId,
+    accessToken,
+    baseUrl,
+    timeRangeMs,
+    envId,
+    brokerAppName,
+    brokerRouteSegments,
+    deploymentType,
+    logSearchEntitled = false,
+  } = params;
+  const routeSegments = [...new Set((brokerRouteSegments ?? []).filter((s) => s.length > 0))];
+  const relaxApiInstanceFromMessage = isHyperscaleDeploymentType(deploymentType);
   const resultMode = logSearchEntitled ? undefined : ("no-entitlement" as const);
   debugLog("[RUNTIME-LOGS] Starting for apiInstanceId:", apiInstanceId);
 
@@ -60,7 +79,17 @@ export async function fetchTasksViaRuntimeLogs(
 
     // Fast path: if we have the AMC app name + envId, try that deployment directly
     if (brokerAppName && envId && environments.some((e) => e.id === envId)) {
-      const tasks = await tryDeploymentByName(baseUrl, orgId, envId, brokerAppName, apiInstanceId, accessToken, logWindow);
+      const tasks = await tryDeploymentByName(
+        baseUrl,
+        orgId,
+        envId,
+        brokerAppName,
+        apiInstanceId,
+        accessToken,
+        logWindow,
+        routeSegments,
+        relaxApiInstanceFromMessage
+      );
       const inWindow = filterAccumulators(tasks);
       if (inWindow.length > 0) {
         return { tasks: finaliseTasks(inWindow), source: "runtime-logs", totalLogs: 0, mode: resultMode };
@@ -74,13 +103,34 @@ export async function fetchTasksViaRuntimeLogs(
 
     // Try the RM-resolved deployment first
     if (apiInstanceInfo?.deploymentId && apiInstanceInfo?.targetEnvId) {
-      const tasks = await fetchAndParseLogs(baseUrl, orgId, apiInstanceInfo.targetEnvId, apiInstanceInfo.deploymentId, apiInstanceId, accessToken, logWindow);
+      const tasks = await fetchAndParseLogs(
+        baseUrl,
+        orgId,
+        apiInstanceInfo.targetEnvId,
+        apiInstanceInfo.deploymentId,
+        apiInstanceId,
+        accessToken,
+        logWindow,
+        routeSegments,
+        relaxApiInstanceFromMessage
+      );
       for (const t of tasks) allTasks[t.taskId] = t;
     }
 
     // Walk environments with multiple approaches (app-name match, RM detail, etc.)
     for (const env of environments) {
-      await tryEnvironmentApproaches(baseUrl, orgId, env.id, apiInstanceId, accessToken, brokerAppName, allTasks, logWindow);
+      await tryEnvironmentApproaches(
+        baseUrl,
+        orgId,
+        env.id,
+        apiInstanceId,
+        accessToken,
+        brokerAppName,
+        allTasks,
+        logWindow,
+        routeSegments,
+        relaxApiInstanceFromMessage
+      );
     }
 
     const inWindow = filterAccumulators(Object.values(allTasks));
@@ -246,13 +296,20 @@ async function fetchAndParseLogs(
   deploymentId: string,
   apiInstanceId: string,
   accessToken: string,
-  window: AmcLogWindow
+  window: AmcLogWindow,
+  brokerRouteSegments: string[] = [],
+  relaxApiInstanceFromMessage = false
 ): Promise<BrokerTaskAccumulator[]> {
   const specId = await resolveSpecId(baseUrl, orgId, envId, deploymentId, accessToken);
   if (!specId) return [];
   const logsText = await fetchLogsFromAmc(baseUrl, orgId, envId, deploymentId, specId, accessToken, window);
   if (!logsText) return [];
-  return parseLogsForTasks(logsText, apiInstanceId);
+  return parseLogsForTasks(
+    logsText,
+    apiInstanceId,
+    brokerRouteSegments,
+    relaxApiInstanceFromMessage
+  );
 }
 
 async function tryDeploymentByName(
@@ -262,7 +319,9 @@ async function tryDeploymentByName(
   appName: string,
   apiInstanceId: string,
   accessToken: string,
-  window: AmcLogWindow
+  window: AmcLogWindow,
+  brokerRouteSegments: string[] = [],
+  relaxApiInstanceFromMessage = false
 ): Promise<BrokerTaskAccumulator[]> {
   try {
     const listUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${envId}/deployments?name=${encodeURIComponent(appName)}`;
@@ -272,7 +331,17 @@ async function tryDeploymentByName(
     const items = listData.items ?? [];
     if (items.length !== 1) return [];
     debugLog("[RUNTIME-LOGS] Matched AMC deployment by name:", items[0].name, "->", items[0].id);
-    return fetchAndParseLogs(baseUrl, orgId, envId, items[0].id, apiInstanceId, accessToken, window);
+    return fetchAndParseLogs(
+      baseUrl,
+      orgId,
+      envId,
+      items[0].id,
+      apiInstanceId,
+      accessToken,
+      window,
+      brokerRouteSegments,
+      relaxApiInstanceFromMessage
+    );
   } catch {
     return [];
   }
@@ -286,7 +355,9 @@ async function tryEnvironmentApproaches(
   accessToken: string,
   brokerAppName: string | undefined,
   allTasks: Record<string, BrokerTaskAccumulator>,
-  window: AmcLogWindow
+  window: AmcLogWindow,
+  brokerRouteSegments: string[] = [],
+  relaxApiInstanceFromMessage = false
 ): Promise<void> {
   try {
     const rmUrl = `${baseUrl}/apimanager/api/v1/organizations/${orgId}/environments/${envId}/apis/${apiInstanceId}`;
@@ -306,6 +377,7 @@ async function tryEnvironmentApproaches(
     const deploymentIdFromDeployment = deploymentInfo.deploymentId;
     const targetId = deploymentInfo.targetId || apiInfo.targetId;
     const brokerName = (apiInfo.instanceLabel || apiInfo.assetId || "").toLowerCase();
+    const amcLookupNames = deploymentNameCandidates(brokerAppName, apiInfo.assetId, apiInfo.instanceLabel);
 
     const deploymentIdToTry = deploymentIdFromDeployment || applicationId || apiInfo.deploymentId || targetId;
     if (!deploymentIdToTry) return;
@@ -320,12 +392,14 @@ async function tryEnvironmentApproaches(
 
     if (brokerAppName) {
       try {
-        const listUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${envId}/deployments?name=${encodeURIComponent(brokerAppName)}`;
-        const listRes = await loggedFetch(listUrl, { method: "GET", headers: { Authorization: `Bearer ${accessToken}` } });
-        if (listRes.ok) {
+        for (const candidate of amcLookupNames) {
+          const listUrl = `${baseUrl}/amc/application-manager/api/v2/organizations/${orgId}/environments/${envId}/deployments?name=${encodeURIComponent(candidate)}`;
+          const listRes = await loggedFetch(listUrl, { method: "GET", headers: { Authorization: `Bearer ${accessToken}` } });
+          if (!listRes.ok) continue;
           const listData = (await listRes.json()) as { items?: Array<{ id: string; name: string }> };
           if (listData.items?.length === 1) {
             approaches.push({ name: "amc-by-app-name", deploymentId: listData.items[0].id, getSpecs: true });
+            break;
           }
         }
       } catch { /* ignore */ }
@@ -375,7 +449,12 @@ async function tryEnvironmentApproaches(
         const logsText = await fetchLogsFromAmc(baseUrl, orgId, envId, approach.deploymentId, specId, accessToken, window);
         if (!logsText) continue;
 
-        const parsedTasks = parseLogsForTasks(logsText, apiInstanceId);
+        const parsedTasks = parseLogsForTasks(
+          logsText,
+          apiInstanceId,
+          brokerRouteSegments,
+          relaxApiInstanceFromMessage
+        );
         for (const task of parsedTasks) {
           if (!allTasks[task.taskId]) {
             allTasks[task.taskId] = task;
@@ -411,7 +490,32 @@ const BROKER_ERROR_PATTERNS = [
   /Did not observe any item or terminal signal/,
 ];
 
-function parseLogsForTasks(logsText: string, targetApiInstanceId: string): BrokerTaskAccumulator[] {
+function lineMatchesBrokerScope(
+  line: string,
+  targetApiInstanceId: string,
+  apiInstanceRegex: RegExp,
+  jsonApiInstanceRegex: RegExp,
+  brokerRouteSegments: string[]
+): boolean {
+  if (apiInstanceRegex.test(line)) {
+    apiInstanceRegex.lastIndex = 0;
+    return true;
+  }
+  if (jsonApiInstanceRegex.test(line)) {
+    jsonApiInstanceRegex.lastIndex = 0;
+    return true;
+  }
+  apiInstanceRegex.lastIndex = 0;
+  jsonApiInstanceRegex.lastIndex = 0;
+  return brokerRouteSegments.some((segment) => line.includes(segment));
+}
+
+function parseLogsForTasks(
+  logsText: string,
+  targetApiInstanceId: string,
+  brokerRouteSegments: string[] = [],
+  relaxApiInstanceFromMessage = false
+): BrokerTaskAccumulator[] {
   const tasks: Record<string, BrokerTaskAccumulator> = {};
   const logLines = logsText.split("\n").filter((line: string) => line.trim().length > 0);
   debugLog("[RUNTIME-LOGS] Parsing", logLines.length, "log lines");
@@ -434,22 +538,23 @@ function parseLogsForTasks(logsText: string, targetApiInstanceId: string): Broke
   const unmatchedErrors: Array<{ msg: string; ts: string }> = [];
 
   for (const line of logLines) {
-    let apiInstanceMatch = apiInstanceRegex.test(line);
-    if (!apiInstanceMatch) {
-      apiInstanceMatch = jsonApiInstanceRegex.test(line);
-      if (!apiInstanceMatch) {
-        if (BROKER_ERROR_PATTERNS.some(re => re.test(line))) {
-          const tsMatch = line.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)/);
-          unmatchedErrors.push({
-            msg: line,
-            ts: tsMatch ? tsMatch[1] : new Date().toISOString(),
-          });
-        }
-        continue;
+    const scopedToBroker = lineMatchesBrokerScope(
+      line,
+      targetApiInstanceId,
+      apiInstanceRegex,
+      jsonApiInstanceRegex,
+      brokerRouteSegments
+    );
+    if (!scopedToBroker) {
+      if (BROKER_ERROR_PATTERNS.some(re => re.test(line))) {
+        const tsMatch = line.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)/);
+        unmatchedErrors.push({
+          msg: line,
+          ts: tsMatch ? tsMatch[1] : new Date().toISOString(),
+        });
       }
-      jsonApiInstanceRegex.lastIndex = 0;
+      continue;
     }
-    apiInstanceRegex.lastIndex = 0;
 
     let taskIdMatch = line.match(taskIdRegex);
     if (!taskIdMatch) {
@@ -486,6 +591,14 @@ function parseLogsForTasks(logsText: string, targetApiInstanceId: string): Broke
 
     const task = tasks[taskId];
     task.logCount++;
+
+    if (
+      !task.apiInstanceId &&
+      relaxApiInstanceFromMessage &&
+      brokerRouteSegments.some((segment) => line.includes(segment))
+    ) {
+      task.apiInstanceId = targetApiInstanceId;
+    }
 
     const ctxMatch = line.match(contextIdRegex);
     if (ctxMatch && !task.contextId) task.contextId = ctxMatch[0].replace("contextId=", "");

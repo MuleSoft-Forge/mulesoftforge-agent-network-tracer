@@ -7,6 +7,7 @@
  */
 
 import { debugLog } from "@/lib/api-logger";
+import { isHyperscaleDeploymentType, logSearchAppIdCandidates } from "@/lib/broker-context/log-search-ids";
 import { msearch } from "@/lib/api/msearch";
 import type { MSearchResult } from "@/lib/api/msearch";
 import type {
@@ -29,6 +30,10 @@ export interface MSearchStrategyParams {
   brokerAppName?: string;
   /** Additional appId values for Log Search queries and post-filter (e.g. Flex targetId). */
   logAppIds?: string[];
+  /** Broker route path segments for message-scoped queries on shared gateways. */
+  brokerRouteSegments?: string[];
+  /** HY/RR/RF — broker logs often omit apiInstanceId in message text. */
+  deploymentType?: string;
   /** Run org-wide + wildcard probes and attach `msearchDiagnostics` (extra _msearch calls). */
   includeDiagnostics?: boolean;
 }
@@ -89,8 +94,24 @@ function summarizeFilteredQuery(
 export async function fetchTasksViaMSearch(
   params: MSearchStrategyParams
 ): Promise<BrokerTasksResult | null> {
-  const { orgId, apiInstanceId, accessToken, baseUrl, timeRangeMs, envId, brokerAppName, logAppIds, includeDiagnostics } =
-    params;
+  const {
+    orgId,
+    apiInstanceId,
+    accessToken,
+    baseUrl,
+    timeRangeMs,
+    envId,
+    brokerAppName,
+    logAppIds,
+    brokerRouteSegments,
+    deploymentType,
+    includeDiagnostics,
+  } = params;
+
+  const relaxApiInstanceFromMessage = isHyperscaleDeploymentType(deploymentType);
+  const routeSegments = [
+    ...new Set((brokerRouteSegments ?? []).filter((s) => s.length > 0)),
+  ];
 
   const now = Date.now();
   const gte = now - timeRangeMs;
@@ -129,13 +150,40 @@ export async function fetchTasksViaMSearch(
   //          errors that don't mention apiInstanceId). Only used when we have
   //          a resolved brokerAppName.
   // De-duplicate by ES _id so we don't double-count.
-  const appIdFilters = [...new Set([...(logAppIds ?? []), ...(brokerAppName ? [brokerAppName] : [])])];
+  const appIdFilters = logSearchAppIdCandidates(...(logAppIds ?? []), ...(brokerAppName ? [brokerAppName] : []));
+
+  const isFlexTargetAppId = (id: string): boolean =>
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 
   const queries: { label: string; lucene: string }[] = [
     { label: "apiInstanceId", lucene: `orgId=${orgId} AND apiInstanceId=${apiInstanceId}` },
   ];
   for (const appId of appIdFilters) {
+    if (isFlexTargetAppId(appId)) continue;
     queries.push({ label: `appId:${appId}`, lucene: `orgId=${orgId} AND appId=${appId}` });
+  }
+  for (const segment of routeSegments) {
+    queries.push({
+      label: `messageRoute:${segment}`,
+      lucene: `orgId=${orgId} AND message:*${segment}* AND message:taskId`,
+    });
+  }
+  // Flex Gateway targetId logs are noisy; scope to task-bearing broker lines.
+  const flexTargetIds = appIdFilters.filter(isFlexTargetAppId);
+  for (const targetId of flexTargetIds) {
+    if (routeSegments.length > 0) {
+      for (const segment of routeSegments) {
+        queries.push({
+          label: `flexTargetRoute:${targetId}:${segment}`,
+          lucene: `orgId=${orgId} AND appId=${targetId} AND message:taskId AND message:*${segment}*`,
+        });
+      }
+    } else {
+      queries.push({
+        label: `flexTargetTasks:${targetId}`,
+        lucene: `orgId=${orgId} AND appId=${targetId} AND message:taskId`,
+      });
+    }
   }
 
   const PAGE_SIZE = 1000;
@@ -189,13 +237,16 @@ export async function fetchTasksViaMSearch(
   // Post-filter: keep only broker-app hits when we have a name.
   // Gateway proxy logs (appId=_api_version_*) are noise for task discovery.
   const appIdFilterSet = new Set(appIdFilters);
-  const hitsToUse =
-    appIdFilterSet.size > 0
-      ? allHits.filter((h: unknown) => {
-          const src = (h as { _source?: { appId?: string } })._source;
-          return appIdFilterSet.has(String(src?.appId ?? ""));
-        })
-      : allHits;
+  const hitsToUse = allHits.filter((h: unknown) => {
+    const src = (h as { _source?: { appId?: string; message?: string } })._source;
+    const appId = String(src?.appId ?? "");
+    const msg = String(src?.message ?? "");
+    if (appIdFilterSet.size === 0) return true;
+    if (appIdFilterSet.has(appId)) return true;
+    if (routeSegments.some((segment) => msg.includes(segment))) return true;
+    if (msg.includes(`apiInstanceId=${apiInstanceId}`)) return true;
+    return false;
+  });
 
   if (appIdFilterSet.size > 0 && hitsToUse.length !== allHits.length) {
     debugLog(
@@ -203,7 +254,12 @@ export async function fetchTasksViaMSearch(
     );
   }
 
-  const accumulators = parseHitsToAccumulators(hitsToUse, apiInstanceId);
+  const accumulators = parseHitsToAccumulators(
+    hitsToUse,
+    apiInstanceId,
+    routeSegments,
+    relaxApiInstanceFromMessage
+  );
   const uniqueTaskIdsParsed = Object.keys(accumulators).length;
   const tasks = finaliseTasks(Object.values(accumulators), apiInstanceId);
 
@@ -313,9 +369,29 @@ function groupErrorHits(
   return result;
 }
 
+function messageMatchesBrokerRoute(message: string, routeSegments: string[]): boolean {
+  return routeSegments.some((segment) => message.includes(segment));
+}
+
+function resolveTaskApiInstanceId(
+  message: string,
+  parsedFromMessage: string,
+  fallbackApiInstanceId: string,
+  routeSegments: string[],
+  relaxWhenRouted: boolean
+): string {
+  if (parsedFromMessage) return parsedFromMessage;
+  if (relaxWhenRouted && messageMatchesBrokerRoute(message, routeSegments)) {
+    return fallbackApiInstanceId;
+  }
+  return "";
+}
+
 function parseHitsToAccumulators(
   hits: unknown[],
-  fallbackApiInstanceId: string
+  fallbackApiInstanceId: string,
+  routeSegments: string[],
+  relaxApiInstanceFromMessage: boolean
 ): Record<string, BrokerTaskAccumulator> {
   const tasks: Record<string, BrokerTaskAccumulator> = {};
   const unmatchedErrors: Array<{ msg: string; ts: string; appId: string }> = [];
@@ -337,6 +413,7 @@ function parseHitsToAccumulators(
     }
 
     if (!tasks[tid]) {
+      const parsedApiInstance = (msg.match(RE.apiInstance) || [])[1] || "";
       tasks[tid] = {
         taskId: tid,
         contextId: (msg.match(RE.ctx) || [])[1] || "",
@@ -347,7 +424,13 @@ function parseHitsToAccumulators(
         maxIteration: 0,
         toolsUsed: new Set(),
         appId: (hit._source?.appId as string) || "",
-        apiInstanceId: (msg.match(RE.apiInstance) || [])[1] || "",
+        apiInstanceId: resolveTaskApiInstanceId(
+          msg,
+          parsedApiInstance,
+          fallbackApiInstanceId,
+          routeSegments,
+          relaxApiInstanceFromMessage
+        ),
         logCount: 0,
       };
     }
@@ -362,7 +445,15 @@ function parseHitsToAccumulators(
     if (agt && !task.broker) task.broker = agt;
 
     const apiInst = (msg.match(RE.apiInstance) || [])[1];
-    if (apiInst && !task.apiInstanceId) task.apiInstanceId = apiInst;
+    if (apiInst && !task.apiInstanceId) {
+      task.apiInstanceId = apiInst;
+    } else if (
+      !task.apiInstanceId &&
+      relaxApiInstanceFromMessage &&
+      messageMatchesBrokerRoute(msg, routeSegments)
+    ) {
+      task.apiInstanceId = fallbackApiInstanceId;
+    }
 
     const it = parseInt((msg.match(RE.iter) || [])[1] || "0", 10);
     if (it > task.maxIteration) task.maxIteration = it;
