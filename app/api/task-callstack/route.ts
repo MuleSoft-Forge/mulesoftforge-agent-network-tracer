@@ -512,6 +512,32 @@ function hasBrokerRuntimeLogs(entries: TaskCallstackEntry[]): boolean {
   });
 }
 
+/**
+ * Flex Gateway can be the only observable source for an A2A request. A terminal
+ * gateway response already contains the completed task payload, so scanning
+ * every AMC deployment for non-existent broker logs only adds latency.
+ */
+function hasSufficientCompletedGatewayTask(
+  entries: TaskCallstackEntry[],
+  taskId: string
+): boolean {
+  let matchingGatewayEntries = 0;
+  let hasTerminalState = false;
+  for (const entry of entries) {
+    if (entry.type !== "GATEWAY") return false;
+    const message = String((entry.raw?.message as string) ?? entry.summary ?? "");
+    if (!message.includes(`"taskId":"${taskId}"`)) continue;
+    matchingGatewayEntries++;
+    if (/TASK_STATE_(COMPLETED|FAILED|CANCELED)|terminal state/i.test(message)) {
+      hasTerminalState = true;
+    }
+  }
+  // One gateway event is not enough to assume that broker runtime logs are
+  // absent. Multiple task-scoped gateway entries plus a terminal response are
+  // sufficient to avoid the costly AMC deployment scan.
+  return matchingGatewayEntries >= 2 && hasTerminalState;
+}
+
 function graphMessageHead(message: string, maxLen = 120): string {
   return message.split(" : trace_id")[0].slice(0, maxLen);
 }
@@ -995,6 +1021,19 @@ function parseRuntimeLogsToEntriesAndJobCard(
     });
   }
   if (entries.length === 0) return null;
+
+  // AMC requests use descending order. Normalize task events to chronological
+  // order before deriving iterations, the task start/end, or its duration.
+  // Otherwise the newest event becomes the "start" and produces a negative
+  // duration (as observed for task 53d61cbe…).
+  entries.sort((a, b) => {
+    const aTimestamp = new Date(String((a as { timestamp?: string }).timestamp ?? "")).getTime();
+    const bTimestamp = new Date(String((b as { timestamp?: string }).timestamp ?? "")).getTime();
+    return aTimestamp - bTimestamp;
+  });
+  entries.forEach((entry, index) => {
+    (entry as { index: number }).index = index;
+  });
 
   assignTaskIterations(entries as IterationAssignableEntry[]);
   const assignedEntries = entries as IterationAssignableEntry[];
@@ -1966,7 +2005,8 @@ export async function GET(request: NextRequest) {
 
     // Log Search often indexes the Flex Gateway line before broker runtime logs.
     // Supplement with AMC runtime logs so refresh matches the initial runtime-log view.
-    if (!hasBrokerRuntimeLogs(entries)) {
+    const completedGatewayTask = hasSufficientCompletedGatewayTask(entries, validatedTaskId);
+    if (!hasBrokerRuntimeLogs(entries) && !completedGatewayTask) {
       debugLog("[TASK-CALLSTACK] Log Search hits lack broker runtime logs — supplementing from AMC runtime logs");
       let runtimeSupplement: { entries: unknown[]; jobCard: unknown } | null = null;
       const cachedBrokerContext = await brokerContextPromise;
@@ -2010,6 +2050,10 @@ export async function GET(request: NextRequest) {
       } else {
         debugLog("[TASK-CALLSTACK] AMC runtime log supplement returned no entries");
       }
+    } else if (completedGatewayTask) {
+      debugLog(
+        "[TASK-CALLSTACK] Completed gateway task found — skipping AMC runtime-log supplement"
+      );
     }
 
     // Derive iterations — v1 uses iteration=N tags; v2 graph logs are synthesized.

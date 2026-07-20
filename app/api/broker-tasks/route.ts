@@ -7,7 +7,7 @@ import { isOrgLogSearchEntitled } from "@/lib/api/log-search";
 import { validationError } from "@/lib/api/error-responses";
 import { resolveBrokerContext } from "@/lib/broker-context";
 import { dumpBrokerTasksVerbose } from "@/lib/broker-tasks/verbose-dump";
-import type { MsearchDiagnostics } from "@/lib/broker-tasks/types";
+import type { BrokerTask, MsearchDiagnostics } from "@/lib/broker-tasks/types";
 import { fetchTasksViaMSearch, fetchTasksViaRuntimeLogs } from "@/lib/broker-tasks";
 
 export const dynamic = "force-dynamic";
@@ -109,14 +109,13 @@ export async function POST(request: NextRequest) {
   });
 
   let msearchDiagnostics: MsearchDiagnostics | undefined;
+  let msearchTasks: BrokerTask[] = [];
+  let msearchTotalLogs = 0;
 
   try {
-    // Strategy A: _msearch — attempted when the login probe said Log Search
-    // is reachable. Even then, we fall through to runtime logs if _msearch
-    // returns 0 tasks: some orgs' _msearch endpoint answers HTTP 200 but the
-    // Elasticsearch index is empty (observed with monitoringCenter.productSKU
-    // 3 accounts — Premium tier needed to populate ES). The runtime-logs
-    // strategy reads AMC logs directly and finds tasks in that case.
+    // Strategy A and B are complementary. Flex API gateway records and broker
+    // runtime records use different appIds, so never let a non-empty result
+    // from one source hide tasks found by the other.
     if (hasMsearch) {
       const msearchResult = await fetchTasksViaMSearch({
         orgId,
@@ -133,33 +132,13 @@ export async function POST(request: NextRequest) {
       });
 
       msearchDiagnostics = msearchResult?.msearchDiagnostics;
-
-      if (msearchResult && msearchResult.tasks.length > 0) {
-        debugLog(`[BROKER-TASKS] msearch returned ${msearchResult.tasks.length} tasks`);
-        debugLog("[BROKER-TASKS] ========== END (msearch) ==========");
-        dumpBrokerTasksVerbose("response-msearch", {
-          source: msearchResult.source,
-          totalTasks: msearchResult.tasks.length,
-          totalLogs: msearchResult.totalLogs,
-          filters: { apiInstanceId },
-          msearchDiagnostics: msearchDiagnostics ?? null,
-          brokerAppName: brokerAppName ?? null,
-          brokerDeploymentId: brokerDeploymentId ?? null,
-        });
-        return NextResponse.json({
-          tasks: msearchResult.tasks,
-          source: msearchResult.source,
-          totalTasks: msearchResult.tasks.length,
-          totalLogs: msearchResult.totalLogs,
-          filters: { apiInstanceId },
-          ...(msearchDiagnostics ? { msearchDiagnostics } : {}),
-        });
-      }
       if (msearchResult) {
+        msearchTasks = msearchResult.tasks;
+        msearchTotalLogs = msearchResult.totalLogs;
         debugLog(
-          `[BROKER-TASKS] msearch returned 0 tasks (totalLogs=${msearchResult.totalLogs}) — falling through to runtime-logs`
+          `[BROKER-TASKS] msearch returned ${msearchTasks.length} tasks (totalLogs=${msearchTotalLogs}) — merging with runtime-logs`
         );
-        dumpBrokerTasksVerbose("msearch-miss-fallback-runtime", {
+        dumpBrokerTasksVerbose("msearch-before-runtime-merge", {
           totalLogs: msearchResult.totalLogs,
           taskCount: msearchResult.tasks.length,
           msearchDiagnostics: msearchDiagnostics ?? null,
@@ -171,8 +150,8 @@ export async function POST(request: NextRequest) {
       debugLog("[BROKER-TASKS] Skipping msearch (monitoringCenterEnabled=false)");
     }
 
-    // Strategy B: runtime logs (no Log Search entitlement, msearch signalled
-    // fallback, or msearch found zero tasks).
+    // Strategy B: runtime logs. Always run it so its broker-runtime records
+    // are merged with gateway records discovered through Log Search.
     debugLog("[BROKER-TASKS] Using runtime-logs strategy");
     const runtimeResult = await fetchTasksViaRuntimeLogs({
       orgId,
@@ -189,23 +168,47 @@ export async function POST(request: NextRequest) {
     });
 
     debugLog(`[BROKER-TASKS] runtime-logs returned ${runtimeResult.tasks.length} tasks`);
-    debugLog("[BROKER-TASKS] ========== END (runtime-logs) ==========");
-    dumpBrokerTasksVerbose("response-runtime-logs", {
-      source: runtimeResult.source,
-      totalTasks: runtimeResult.tasks.length,
-      totalLogs: runtimeResult.totalLogs,
+    const tasksById = new Map<string, BrokerTask>(
+      msearchTasks.map((task) => [task.taskId, task])
+    );
+    for (const task of runtimeResult.tasks) {
+      const existing = tasksById.get(task.taskId);
+      if (!existing) {
+        tasksById.set(task.taskId, task);
+        continue;
+      }
+      tasksById.set(task.taskId, {
+        ...existing,
+        startTime: existing.startTime < task.startTime ? existing.startTime : task.startTime,
+        endTime: existing.endTime ?? task.endTime,
+        maxIteration: Math.max(existing.maxIteration, task.maxIteration),
+        toolsUsed: [...new Set([...existing.toolsUsed, ...task.toolsUsed])],
+        logCount: existing.logCount + task.logCount,
+      });
+    }
+    const mergedTasks = [...tasksById.values()].sort((a, b) => b.startTime.localeCompare(a.startTime));
+
+    debugLog(
+      `[BROKER-TASKS] merged ${msearchTasks.length} msearch + ${runtimeResult.tasks.length} runtime tasks = ${mergedTasks.length} unique tasks`
+    );
+    debugLog("[BROKER-TASKS] ========== END ==========");
+    dumpBrokerTasksVerbose("response-merged", {
+      totalTasks: mergedTasks.length,
+      msearchTasks: msearchTasks.length,
+      runtimeTasks: runtimeResult.tasks.length,
+      totalLogs: msearchTotalLogs + runtimeResult.totalLogs,
       mode: runtimeResult.mode ?? null,
       filters: { apiInstanceId },
       msearchDiagnostics: msearchDiagnostics ?? null,
       brokerAppName: brokerAppName ?? null,
       brokerDeploymentId: brokerDeploymentId ?? null,
-      fellThroughFromMsearch: hasMsearch,
+      mergedSources: hasMsearch ? ["msearch", "runtime-logs"] : ["runtime-logs"],
     });
     return NextResponse.json({
-      tasks: runtimeResult.tasks,
-      source: runtimeResult.source,
-      totalTasks: runtimeResult.tasks.length,
-      totalLogs: runtimeResult.totalLogs,
+      tasks: mergedTasks,
+      source: hasMsearch ? "msearch+runtime-logs" : runtimeResult.source,
+      totalTasks: mergedTasks.length,
+      totalLogs: msearchTotalLogs + runtimeResult.totalLogs,
       filters: { apiInstanceId },
       mode: runtimeResult.mode,
       ...(msearchDiagnostics ? { msearchDiagnostics } : {}),

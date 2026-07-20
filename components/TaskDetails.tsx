@@ -760,6 +760,7 @@ export default function TaskDetails({ orgId, taskId, envId, apiInstanceId, skipT
   // Wrap content with Suspense and error boundary
   return (
     <ErrorBoundary
+      key={taskId}
       fallback={(error) => <TaskDetailsError error={error} orgId={orgId} taskId={taskId} envId={envId} />}
     >
       <Suspense
@@ -770,6 +771,7 @@ export default function TaskDetails({ orgId, taskId, envId, apiInstanceId, skipT
         }
       >
         <TaskDetailsResource
+          key={taskId}
           orgId={orgId}
           taskId={taskId}
           envId={envId}

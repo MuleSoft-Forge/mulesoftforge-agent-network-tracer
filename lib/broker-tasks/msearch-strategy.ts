@@ -150,7 +150,18 @@ export async function fetchTasksViaMSearch(
   //          errors that don't mention apiInstanceId). Only used when we have
   //          a resolved brokerAppName.
   // De-duplicate by ES _id so we don't double-count.
-  const appIdFilters = logSearchAppIdCandidates(...(logAppIds ?? []), ...(brokerAppName ? [brokerAppName] : []));
+  // A2A requests and responses for Flex-routed APIs are recorded under the
+  // gateway's API-version appId, not the broker deployment/target appId.
+  const gatewayApiAppId = `_api_version_${apiInstanceId}`;
+  // Do not normalize the gateway appId: replacing its underscores produces
+  // `-api-version-…`, an invalid/unrelated value that can cause OSD to reject
+  // the query and discard otherwise valid gateway hits.
+  const appIdFilters = [
+    ...new Set([
+      ...logSearchAppIdCandidates(...(logAppIds ?? []), ...(brokerAppName ? [brokerAppName] : [])),
+      gatewayApiAppId,
+    ]),
+  ];
 
   const isFlexTargetAppId = (id: string): boolean =>
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
@@ -200,8 +211,11 @@ export async function fetchTasksViaMSearch(
       const pageResult = await msearch(orgId, q.lucene, { size: PAGE_SIZE, from, timeRangeMs, envId }, accessToken, baseUrl);
 
       if (msearchSignalsFallback(pageResult)) {
-        debugLog(`[MSEARCH] ${pageResult.error} — signalling fallback`);
-        return null;
+        // A malformed or unsupported auxiliary field query must not throw away
+        // task hits collected by earlier queries (notably FLEX_API gateway
+        // records under `_api_version_<apiInstanceId>`).
+        debugLog(`[MSEARCH] ${pageResult.error} for ${q.label} — skipping query`);
+        break;
       }
 
       if (q.label === "apiInstanceId") totalFromApi = pageResult.total;
@@ -303,7 +317,9 @@ export async function fetchTasksViaMSearch(
 
 const RE = {
   task: /(?:taskId|task_id)=([a-f0-9-]+)/,
+  jsonTask: /"(?:taskId|task_id)"\s*:\s*"([a-f0-9-]+)"/,
   ctx: /(?:contextId|context_id)=([a-f0-9-]+)/,
+  jsonCtx: /"(?:contextId|context_id)"\s*:\s*"([a-f0-9-]+)"/,
   agent: /(?:agent_id|agent)=(\S+)/,
   tool: /(?:LLM selected tool|Executed tool) (\S+)/,
   iter: /iteration=(\d+)/,
@@ -375,12 +391,14 @@ function messageMatchesBrokerRoute(message: string, routeSegments: string[]): bo
 
 function resolveTaskApiInstanceId(
   message: string,
+  appId: string,
   parsedFromMessage: string,
   fallbackApiInstanceId: string,
   routeSegments: string[],
   relaxWhenRouted: boolean
 ): string {
   if (parsedFromMessage) return parsedFromMessage;
+  if (appId === `_api_version_${fallbackApiInstanceId}`) return fallbackApiInstanceId;
   if (relaxWhenRouted && messageMatchesBrokerRoute(message, routeSegments)) {
     return fallbackApiInstanceId;
   }
@@ -399,7 +417,8 @@ function parseHitsToAccumulators(
   for (const h of hits) {
     const hit = h as { _source?: { message?: string; timestamp?: string; appId?: string } };
     const msg = (hit._source?.message as string) || "";
-    const tid = (msg.match(RE.task) || [])[1];
+    const appId = (hit._source?.appId as string) || "";
+    const tid = (msg.match(RE.task) || msg.match(RE.jsonTask) || [])[1];
 
     if (!tid) {
       if (isBrokerErrorHit(msg)) {
@@ -416,16 +435,17 @@ function parseHitsToAccumulators(
       const parsedApiInstance = (msg.match(RE.apiInstance) || [])[1] || "";
       tasks[tid] = {
         taskId: tid,
-        contextId: (msg.match(RE.ctx) || [])[1] || "",
+        contextId: (msg.match(RE.ctx) || msg.match(RE.jsonCtx) || [])[1] || "",
         broker: (msg.match(RE.agent) || [])[1] || "",
         firstTool: "",
         startTime: (hit._source?.timestamp as string) || "",
         endTime: null,
         maxIteration: 0,
         toolsUsed: new Set(),
-        appId: (hit._source?.appId as string) || "",
+        appId,
         apiInstanceId: resolveTaskApiInstanceId(
           msg,
+          appId,
           parsedApiInstance,
           fallbackApiInstanceId,
           routeSegments,
@@ -438,7 +458,7 @@ function parseHitsToAccumulators(
     const task = tasks[tid];
     task.logCount++;
 
-    const ctx = (msg.match(RE.ctx) || [])[1];
+    const ctx = (msg.match(RE.ctx) || msg.match(RE.jsonCtx) || [])[1];
     if (ctx && !task.contextId) task.contextId = ctx;
 
     const agt = (msg.match(RE.agent) || [])[1];
@@ -474,7 +494,6 @@ function parseHitsToAccumulators(
       }
     }
 
-    const appId = (hit._source?.appId as string) || "";
     if (appId && !task.appId) task.appId = appId;
   }
 
