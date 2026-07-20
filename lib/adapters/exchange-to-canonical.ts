@@ -5,6 +5,8 @@ import type {
   NodeType,
 } from "@/lib/agent-network-types";
 import { debugLog, debugWarn } from "@/lib/api-logger";
+import type { NetworkTopology } from "@/lib/mulesoft/exchange-network-topology";
+import type { ExchangeAssetRef } from "@/lib/mulesoft/exchange-asset-metadata";
 
 export interface ExchangeConnection {
   kind: string;
@@ -166,6 +168,214 @@ export async function exchangeVersionToCanonical(
   } catch (error) {
     debugWarn(`Error building exchange canonical graph:`, error);
   }
+
+  return { nodes, edges, mode: "design" };
+}
+
+function nodeIdForRef(ref: ExchangeAssetRef): string {
+  return `${ref.groupId}:${ref.assetId}`;
+}
+
+function logicalNodeId(kind: string, label: string): string {
+  return `logical:${kind}:${label}`;
+}
+
+/**
+ * Builds a design-time graph for a full agent network version using resolved
+ * topology (agent-network-metadata for v2, or v1 yaml + exchange.json fallback).
+ */
+export async function exchangeNetworkToCanonical(
+  topology: NetworkTopology,
+  network: { groupId: string; assetId: string; name: string; version: string }
+): Promise<CanonicalGraph> {
+  const nodes: CanonicalNode[] = [];
+  const edges: CanonicalEdge[] = [];
+  const existingNodeIds = new Set<string>();
+
+  const networkNodeId = `${network.groupId}:${network.assetId}`;
+  nodes.push({
+    id: networkNodeId,
+    label: network.name,
+    version: network.version,
+    type: "BROKER",
+    organizationId: network.groupId,
+    position: { x: 0, y: 0 },
+    exchangeAssetId: network.assetId,
+  });
+  existingNodeIds.add(networkNodeId);
+
+  const ensureConnectionNode = async (
+    conn: { kind: string; ref?: ExchangeAssetRef; name?: string },
+    sourceId: string
+  ): Promise<void> => {
+    let targetId: string;
+    let label: string;
+    let version: string;
+    let orgId: string;
+    let exchangeAssetId: string | undefined;
+    let nodeType = connectionKindToNodeType(conn.kind);
+
+    if (conn.ref?.groupId && conn.ref.assetId) {
+      targetId = nodeIdForRef(conn.ref);
+      label = conn.ref.assetId;
+      version = conn.ref.version;
+      orgId = conn.ref.groupId;
+      exchangeAssetId = conn.ref.assetId;
+    } else {
+      targetId = logicalNodeId(conn.kind, conn.name ?? "unknown");
+      label = conn.name ?? "unknown";
+      version = network.version;
+      orgId = network.groupId;
+      nodeType = connectionKindToNodeType(conn.kind);
+    }
+
+    if (!existingNodeIds.has(targetId)) {
+      let connIcon: string | undefined;
+      if (conn.ref?.groupId && conn.ref.assetId && conn.ref.version) {
+        try {
+          const assetRes = await fetch(
+            `/api/exchange/asset?organizationId=${encodeURIComponent(conn.ref.groupId)}&assetId=${encodeURIComponent(conn.ref.assetId)}&version=${encodeURIComponent(conn.ref.version)}`
+          );
+          if (assetRes.ok) {
+            const assetData = (await assetRes.json()) as ExchangeAssetInfo;
+            if (assetData.name) label = assetData.name;
+            const iconFile = assetData.files?.find(
+              (f) => f.classifier?.toLowerCase() === "icon"
+            );
+            if (iconFile) {
+              connIcon = buildIconPath(
+                assetData.organizationId || conn.ref.groupId,
+                assetData.groupId || conn.ref.groupId,
+                conn.ref.assetId,
+                iconFile
+              );
+            }
+          }
+        } catch {
+          debugWarn(`Failed to fetch asset info for ${targetId}`);
+        }
+      }
+
+      nodes.push({
+        id: targetId,
+        label,
+        version,
+        type: nodeType,
+        organizationId: orgId,
+        position: { x: 0, y: 0 },
+        ...(exchangeAssetId ? { exchangeAssetId } : {}),
+        ...(connIcon ? { icon: connIcon } : {}),
+      });
+      existingNodeIds.add(targetId);
+    }
+
+    const edgeId = `${sourceId}->${targetId}`;
+    if (!edges.some((edge) => edge.id === edgeId)) {
+      edges.push({ id: edgeId, source: sourceId, target: targetId, type: "designTime" });
+    }
+  };
+
+  if (topology.brokers.length === 0) {
+    debugLog(
+      `[exchangeNetworkToCanonical] ${network.assetId}@${network.version} has no broker topology; showing network root only`
+    );
+    return { nodes, edges, mode: "design" };
+  }
+
+  for (const broker of topology.brokers) {
+    let brokerNodeId: string;
+    let brokerLabel = broker.label;
+    let brokerVersion = network.version;
+    let brokerOrg = network.groupId;
+
+    if (broker.ref?.groupId && broker.ref.assetId) {
+      brokerNodeId = nodeIdForRef(broker.ref);
+      brokerVersion = broker.ref.version || network.version;
+      brokerOrg = broker.ref.groupId;
+      brokerLabel = broker.ref.assetId;
+
+      try {
+        const metaRes = await fetch(
+          `/api/exchange/metadata?organizationId=${encodeURIComponent(broker.ref.groupId)}&assetId=${encodeURIComponent(broker.ref.assetId)}&version=${encodeURIComponent(broker.ref.version)}`
+        );
+        if (metaRes.ok) {
+          const metaData = (await metaRes.json()) as ExchangeVersionMetadata;
+          const assetRes = await fetch(
+            `/api/exchange/asset?organizationId=${encodeURIComponent(broker.ref.groupId)}&assetId=${encodeURIComponent(broker.ref.assetId)}&version=${encodeURIComponent(broker.ref.version)}`
+          );
+          if (assetRes.ok) {
+            const assetData = (await assetRes.json()) as ExchangeAssetInfo;
+            if (assetData.name) brokerLabel = assetData.name;
+          }
+
+          if (!existingNodeIds.has(brokerNodeId)) {
+            nodes.push({
+              id: brokerNodeId,
+              label: brokerLabel,
+              version: brokerVersion,
+              type: "BROKER",
+              organizationId: brokerOrg,
+              position: { x: 0, y: 0 },
+              exchangeAssetId: broker.ref.assetId,
+            });
+            existingNodeIds.add(brokerNodeId);
+          }
+
+          edges.push({
+            id: `${networkNodeId}->${brokerNodeId}`,
+            source: networkNodeId,
+            target: brokerNodeId,
+            type: "designTime",
+          });
+
+          const connections = metaData.connections?.length
+            ? metaData.connections
+            : broker.connections;
+          await Promise.all(
+            connections.map((conn) => ensureConnectionNode(conn, brokerNodeId))
+          );
+          continue;
+        }
+      } catch {
+        debugWarn(`Broker metadata fetch failed for ${broker.ref.assetId}`);
+      }
+    }
+
+    brokerNodeId = broker.logicalId
+      ? logicalNodeId("broker", broker.logicalId)
+      : logicalNodeId("broker", broker.label);
+
+    if (!existingNodeIds.has(brokerNodeId)) {
+      nodes.push({
+        id: brokerNodeId,
+        label: brokerLabel,
+        version: brokerVersion,
+        type: "BROKER",
+        organizationId: brokerOrg,
+        position: { x: 0, y: 0 },
+        ...(broker.ref?.assetId ? { exchangeAssetId: broker.ref.assetId } : {}),
+      });
+      existingNodeIds.add(brokerNodeId);
+    }
+
+    edges.push({
+      id: `${networkNodeId}->${brokerNodeId}`,
+      source: networkNodeId,
+      target: brokerNodeId,
+      type: "designTime",
+    });
+
+    await Promise.all(
+      broker.connections.map((conn) => ensureConnectionNode(conn, brokerNodeId))
+    );
+  }
+
+  debugLog(
+    `[exchangeNetworkToCanonical] ${network.assetId}@${network.version} nodes:`,
+    nodes.length,
+    "edges:",
+    edges.length
+  );
 
   return { nodes, edges, mode: "design" };
 }

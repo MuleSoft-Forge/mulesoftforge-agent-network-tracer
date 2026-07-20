@@ -8,6 +8,7 @@ import ExchangeVersionsPanel from "@/components/ExchangeVersionsPanel";
 import ExchangeDiffSummary from "@/components/ExchangeDiffSummary";
 import ExchangeFileDiff from "@/components/ExchangeFileDiff";
 import type { ExchangeFileEntry } from "@/components/ExchangeFileDiff";
+import { exchangeFileEntryKey } from "@/components/ExchangeFileDiff";
 import LlmProxyTab from "@/components/llmProxy/LlmProxyTab";
 import BrokerActivityView from "@/components/BrokerActivityView";
 import { useDebugViewer } from "@/components/debug/useDebugViewer";
@@ -443,9 +444,9 @@ export default function MainContent() {
                                   </p>
                                 ) : (
                                   <div className="space-y-3">
-                                    {singleVersionFiles.published.map((f) => (
+                                    {singleVersionFiles.published.map((f, index) => (
                                       <ExchangeSingleFileCard
-                                        key={`pub-${f.classifier}.${f.packaging}`}
+                                        key={`pub-${exchangeFileEntryKey(f, index)}`}
                                         f={f}
                                       />
                                     ))}
@@ -469,9 +470,9 @@ export default function MainContent() {
                                   </p>
                                 ) : (
                                   <div className="space-y-3">
-                                    {singleVersionFiles.exchangeAsset.map((f) => (
+                                    {singleVersionFiles.exchangeAsset.map((f, index) => (
                                       <ExchangeSingleFileCard
-                                        key={`ex-${f.classifier}.${f.packaging}`}
+                                        key={`ex-${exchangeFileEntryKey(f, index)}`}
                                         f={f}
                                       />
                                     ))}

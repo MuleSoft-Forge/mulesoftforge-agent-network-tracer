@@ -9,6 +9,7 @@ import TaskDetailsPanel from "@/components/task-details/TaskDetailsPanel";
 import TaskDetailsTreeView from "@/components/task-details/TaskDetailsTreeView";
 import TaskDetailsListView from "@/components/task-details/TaskDetailsListView";
 import type { JobCard, LogEntry, TreeStructure, ViewMode, DetailTab, SelectedItem, TraceSpan } from "@/components/task-details/types";
+import { deriveIterationLabel } from "@/lib/broker-tasks/iteration-label";
 import Spinner from "@/components/Spinner";
 
 interface TaskDetailsProps {
@@ -351,10 +352,7 @@ function TaskDetailsContent({ orgId, taskId, envId, data }: TaskDetailsProps & {
           : 0;
         const duration = iterEntries.length > 0 ? ((endTime - startTime) / 1000).toFixed(1) : "0";
 
-        const toolSelection = iterEntries.find((e) => e.type === "LLM_TOOL_SELECTION");
-        const toolName = toolSelection
-          ? (toolSelection.fields.tool || "").replace(/^[a-zA-Z0-9]+_/, "")
-          : "unknown";
+        const toolName = deriveIterationLabel(iterEntries);
 
         // Group steps by type
         const steps: Record<string, LogEntry[]> = {};

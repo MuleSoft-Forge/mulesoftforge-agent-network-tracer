@@ -10,6 +10,16 @@ export interface ExchangeFileEntry {
   classifier: string;
   packaging: string;
   content: string | null;
+  /** Present when the file comes from a referenced Exchange asset (not the network project zip). */
+  sourceRef?: { groupId: string; assetId: string; version: string };
+}
+
+export function exchangeFileEntryKey(f: ExchangeFileEntry, index?: number): string {
+  if (f.sourceRef) {
+    return `${f.sourceRef.groupId}:${f.sourceRef.assetId}:${f.sourceRef.version}:${f.classifier}.${f.packaging}`;
+  }
+  const base = `${f.classifier}.${f.packaging}`;
+  return index !== undefined ? `${base}:${index}` : base;
 }
 
 export interface VersionFiles {
@@ -39,7 +49,7 @@ interface FileDiffData {
 }
 
 function fileKey(f: ExchangeFileEntry): string {
-  return `${f.classifier}::${f.packaging}`;
+  return exchangeFileEntryKey(f);
 }
 
 /** Line-level diffs for two file lists (same role, e.g. both published or both exchange-asset). */

@@ -1,6 +1,6 @@
 /**
- * Exchange version list, file fetch, and compare for v2 agent-network assets.
- * Uses agent-network-metadata topology to fetch referenced broker/MCP/LLM files at their own versions.
+ * Exchange version list, file fetch, and compare for v1 and v2 agent-network assets.
+ * Uses agent-network-metadata when published, with v1 yaml + exchange.json fallback.
  */
 "use client";
 
@@ -8,14 +8,24 @@ import { useState, useEffect, useCallback } from "react";
 import { GitCompare, Eye, Check, Loader2 } from "lucide-react";
 import Spinner from "@/components/Spinner";
 import type { CanonicalGraph } from "@/lib/agent-network-types";
-import { exchangeVersionToCanonical, diffGraphs } from "@/lib/adapters/exchange-to-canonical";
+import { exchangeNetworkToCanonical, diffGraphs } from "@/lib/adapters/exchange-to-canonical";
 import type { GraphDiff } from "@/lib/adapters/exchange-to-canonical";
 import type { VersionFiles, ExchangeFileEntry } from "@/components/ExchangeFileDiff";
 import {
   EXCHANGE_AGENT_NETWORK_CLASSIFIERS,
   parseExchangeMetadataFile,
-  type ParsedExchangeMetadata,
+  type AgentNetworkMetadata,
 } from "@/lib/mulesoft/exchange-asset-metadata";
+import {
+  projectVersionLabel,
+  type AgentNetworkProjectVersion,
+} from "@/lib/mulesoft/agent-network-project-version";
+import {
+  collectTopologyRefs,
+  findProjectSourcesInFiles,
+  resolveNetworkTopology,
+  type NetworkTopology,
+} from "@/lib/mulesoft/exchange-network-topology";
 
 interface ExchangeVersion {
   version: string;
@@ -174,18 +184,23 @@ async function downloadProjectZipFiles(f: ExchangeAssetFile): Promise<ExchangeFi
   }
 }
 
-/**
- * The agent-network asset's own files for this version: the extracted project
- * zip (agent-network.yaml, exchange.json, brokers/*.agent) plus the
- * agent-network-metadata.json topology file. Also returns the parsed topology
- * so the caller can resolve exactly which broker/MCP/LLM asset versions this
- * network version references (see findMetadataJsonFiles callers below).
- */
 async function fetchNetworkOwnFiles(
   agentNetworkInfo: { assetId: string; groupId: string } | null | undefined,
   version: string
-): Promise<{ files: ExchangeFileEntry[]; networkMetadata: ParsedExchangeMetadata | null }> {
-  if (!agentNetworkInfo) return { files: [], networkMetadata: null };
+): Promise<{
+  files: ExchangeFileEntry[];
+  networkMetadata: AgentNetworkMetadata | null;
+  topology: NetworkTopology;
+  projectVersion: AgentNetworkProjectVersion;
+}> {
+  if (!agentNetworkInfo) {
+    return {
+      files: [],
+      networkMetadata: null,
+      topology: { projectVersion: "unknown", brokers: [], registry: [] },
+      projectVersion: "unknown",
+    };
+  }
 
   const assetFiles = await fetchAssetFiles(agentNetworkInfo.groupId, agentNetworkInfo.assetId, version);
   const projectZip = findProjectZip(assetFiles);
@@ -198,55 +213,84 @@ async function fetchNetworkOwnFiles(
 
   const resolvedMetadataEntries = metadataEntries.filter((e): e is ExchangeFileEntry => e !== null);
   const networkMetadataEntry = resolvedMetadataEntries.find((e) => e.classifier === "agent-network-metadata");
-  const networkMetadata = networkMetadataEntry
+  const parsedMetadata = networkMetadataEntry
     ? parseExchangeMetadataFile("agent-network-metadata", networkMetadataEntry.content)
     : null;
+  const networkMetadata =
+    parsedMetadata?.fileKind === "agent-network-metadata" ? parsedMetadata : null;
 
-  return { files: [...zipFiles, ...resolvedMetadataEntries], networkMetadata };
+  const sources = findProjectSourcesInFiles(zipFiles, projectZip?.classifier ?? null);
+  const topology = resolveNetworkTopology({ networkMetadata, sources });
+
+  return {
+    files: [...zipFiles, ...resolvedMetadataEntries],
+    networkMetadata,
+    topology,
+    projectVersion: topology.projectVersion,
+  };
 }
 
 /**
- * Metadata files (a2a-card, agent-metadata, mcp-metadata, llm-metadata) from
- * every broker/MCP/LLM asset this network version's own topology references —
- * each fetched at its *own* referenced version, not the network's version
- * (those commonly differ, e.g. network 1.0.5 referencing broker 1.0.3).
+ * Metadata files from every broker/MCP/LLM asset the resolved topology references.
  */
-async function fetchReferencedAssetFiles(
-  networkMetadata: ParsedExchangeMetadata | null
-): Promise<ExchangeFileEntry[]> {
-  if (!networkMetadata || networkMetadata.fileKind !== "agent-network-metadata") return [];
-
-  const refs = new Map<string, { groupId: string; assetId: string; version: string }>();
-  const addRef = (ref: { groupId: string; assetId: string; version: string }) => {
-    refs.set(`${ref.groupId}:${ref.assetId}:${ref.version}`, ref);
-  };
-  for (const broker of networkMetadata.brokers) {
-    addRef(broker.ref);
-    for (const conn of broker.connections) addRef(conn.ref);
-  }
-  for (const entry of networkMetadata.registry) addRef(entry.ref);
+async function fetchReferencedAssetFiles(topology: NetworkTopology): Promise<ExchangeFileEntry[]> {
+  const refs = collectTopologyRefs(topology);
 
   const perAsset = await Promise.all(
-    Array.from(refs.values())
-      .filter((ref) => ref.version)
-      .map(async (ref) => {
-        const files = await fetchAssetFiles(ref.groupId, ref.assetId, ref.version);
-        const downloaded = await Promise.all(findMetadataJsonFiles(files).map(downloadAssetFile));
-        return downloaded.filter((e): e is ExchangeFileEntry => e !== null);
-      })
+    refs.map(async (ref) => {
+      const files = await fetchAssetFiles(ref.groupId, ref.assetId, ref.version);
+      const downloaded = await Promise.all(findMetadataJsonFiles(files).map(downloadAssetFile));
+      return downloaded
+        .filter((e): e is ExchangeFileEntry => e !== null)
+        .map((entry) => ({
+          ...entry,
+          sourceRef: {
+            groupId: ref.groupId,
+            assetId: ref.assetId,
+            version: ref.version,
+          },
+        }));
+    })
   );
 
   return perAsset.flat();
 }
 
-async function fetchVersionFiles(
+async function loadVersionContext(
   version: string,
-  agentNetworkInfo?: { assetId: string; groupId: string } | null
-): Promise<VersionFiles> {
-  const { files: published, networkMetadata } = await fetchNetworkOwnFiles(agentNetworkInfo, version);
-  const exchangeAsset = await fetchReferencedAssetFiles(networkMetadata);
+  agentNetworkInfo: { assetId: string; groupId: string; name: string }
+): Promise<{
+  topology: NetworkTopology;
+  projectVersion: AgentNetworkProjectVersion;
+  versionFiles: VersionFiles;
+}> {
+  const { files: published, topology, projectVersion } = await fetchNetworkOwnFiles(
+    agentNetworkInfo,
+    version
+  );
+  const exchangeAsset = await fetchReferencedAssetFiles(topology);
+  return {
+    topology,
+    projectVersion,
+    versionFiles: { version, published, exchangeAsset },
+  };
+}
 
-  return { version, published, exchangeAsset };
+async function loadVersionGraph(
+  version: string,
+  agentNetworkInfo: { groupId: string; assetId: string; name: string },
+  topology: NetworkTopology
+): Promise<CanonicalGraph | null> {
+  try {
+    return await exchangeNetworkToCanonical(topology, {
+      groupId: agentNetworkInfo.groupId,
+      assetId: agentNetworkInfo.assetId,
+      name: agentNetworkInfo.name,
+      version,
+    });
+  } catch {
+    return null;
+  }
 }
 
 export default function ExchangeVersionsPanel({
@@ -272,6 +316,8 @@ export default function ExchangeVersionsPanel({
     groupId: string;
     name: string;
   } | null>(null);
+  const [viewingProjectVersion, setViewingProjectVersion] =
+    useState<AgentNetworkProjectVersion | null>(null);
 
   useEffect(() => {
     if (!networkGav.groupId || !networkGav.assetId) {
@@ -291,6 +337,7 @@ export default function ExchangeVersionsPanel({
     setAfterVersion(null);
     setCompareMode(false);
     setResolvedNetworkAsset(null);
+    setViewingProjectVersion(null);
     onGraphLoad(null);
 
     fetchNetworkVersions(networkGav)
@@ -318,44 +365,41 @@ export default function ExchangeVersionsPanel({
 
   const agentNetworkAsset = resolvedNetworkAsset;
 
-  const loadVersionGraph = useCallback(
-    async (version: string) => {
-      setLoadingGraph(true);
-      try {
-        const graph = await exchangeVersionToCanonical(
-          networkGav.groupId,
-          networkGav.assetId,
-          version,
-          networkGav.name
-        );
-        onGraphLoad(graph);
-      } catch {
-        onGraphLoad(null);
-      } finally {
-        setLoadingGraph(false);
-      }
-    },
-    [networkGav.groupId, networkGav.assetId, networkGav.name, onGraphLoad]
-  );
-
   const handleViewVersion = useCallback(
     async (version: string) => {
+      if (!agentNetworkAsset) return;
       setSelectedVersion(version);
       setCompareMode(false);
       setBeforeVersion(null);
       setAfterVersion(null);
       onDiffResult(null, "", "");
       onFilesLoadingChange?.(true);
-      loadVersionGraph(version);
+      setLoadingGraph(true);
 
-      if (onVersionFilesLoaded) {
-        const vf = await fetchVersionFiles(version, agentNetworkAsset);
-        onVersionFilesLoaded(vf);
-      } else {
+      try {
+        const ctx = await loadVersionContext(version, agentNetworkAsset);
+        setViewingProjectVersion(ctx.projectVersion);
+        const graph = await loadVersionGraph(version, agentNetworkAsset, ctx.topology);
+        onGraphLoad(graph);
+        if (onVersionFilesLoaded) {
+          onVersionFilesLoaded(ctx.versionFiles);
+        } else {
+          onFilesLoadingChange?.(false);
+        }
+      } catch {
+        onGraphLoad(null);
         onFilesLoadingChange?.(false);
+      } finally {
+        setLoadingGraph(false);
       }
     },
-    [loadVersionGraph, onDiffResult, onVersionFilesLoaded, onFilesLoadingChange, agentNetworkAsset]
+    [
+      agentNetworkAsset,
+      onDiffResult,
+      onVersionFilesLoaded,
+      onFilesLoadingChange,
+      onGraphLoad,
+    ]
   );
 
   const handleCompareSelect = useCallback(
@@ -370,30 +414,28 @@ export default function ExchangeVersionsPanel({
   );
 
   const runComparison = useCallback(async () => {
-    if (!beforeVersion || !afterVersion) return;
+    if (!beforeVersion || !afterVersion || !agentNetworkAsset) return;
     setComparing(true);
     onFilesLoadingChange?.(true);
     try {
-      const [beforeGraph, afterGraph, beforeFiles, afterFiles] = await Promise.all([
-        exchangeVersionToCanonical(
-          networkGav.groupId,
-          networkGav.assetId,
-          beforeVersion,
-          networkGav.name
-        ),
-        exchangeVersionToCanonical(
-          networkGav.groupId,
-          networkGav.assetId,
-          afterVersion,
-          networkGav.name
-        ),
-        fetchVersionFiles(beforeVersion, agentNetworkAsset),
-        fetchVersionFiles(afterVersion, agentNetworkAsset),
+      const [beforeCtx, afterCtx] = await Promise.all([
+        loadVersionContext(beforeVersion, agentNetworkAsset),
+        loadVersionContext(afterVersion, agentNetworkAsset),
       ]);
+      const [beforeGraph, afterGraph] = await Promise.all([
+        loadVersionGraph(beforeVersion, agentNetworkAsset, beforeCtx.topology),
+        loadVersionGraph(afterVersion, agentNetworkAsset, afterCtx.topology),
+      ]);
+      if (!beforeGraph || !afterGraph) {
+        onDiffResult(null, beforeVersion, afterVersion);
+        onFilesLoadingChange?.(false);
+        return;
+      }
       const diff = diffGraphs(beforeGraph, afterGraph);
       onDiffResult(diff, beforeVersion, afterVersion);
       onCompareGraphs(beforeGraph, afterGraph);
-      onFilesLoaded?.(beforeFiles, afterFiles);
+      onFilesLoaded?.(beforeCtx.versionFiles, afterCtx.versionFiles);
+      setViewingProjectVersion(afterCtx.projectVersion);
     } catch {
       onDiffResult(null, beforeVersion, afterVersion);
       onFilesLoadingChange?.(false);
@@ -403,14 +445,11 @@ export default function ExchangeVersionsPanel({
   }, [
     beforeVersion,
     afterVersion,
-    networkGav.groupId,
-    networkGav.assetId,
-    networkGav.name,
+    agentNetworkAsset,
     onDiffResult,
     onCompareGraphs,
     onFilesLoaded,
     onFilesLoadingChange,
-    agentNetworkAsset,
   ]);
 
   const toggleCompareMode = useCallback(() => {
@@ -458,6 +497,11 @@ export default function ExchangeVersionsPanel({
           <p className="text-[10px] text-indigo-600 font-medium">Agent Network</p>
           <p className="text-xs text-indigo-900 font-semibold truncate">{agentNetworkAsset.name}</p>
           <p className="text-[10px] text-indigo-400 truncate">{agentNetworkAsset.assetId}</p>
+          {viewingProjectVersion && viewingProjectVersion !== "unknown" && (
+            <p className="mt-1 text-[10px] font-medium text-indigo-700">
+              {projectVersionLabel(viewingProjectVersion)}
+            </p>
+          )}
         </div>
       )}
       <div className="flex items-center justify-between shrink-0">

@@ -12,6 +12,12 @@ import { buildAmcLogsUrl } from "@/lib/api/amc-logs";
 import { validationError } from "@/lib/api/error-responses";
 import { resolveDeploymentContext, type TaskCallstackState } from "@/lib/deployment-context/resolvers";
 import { resolveBrokerContext, type BrokerContext } from "@/lib/broker-context";
+import {
+  assignTaskIterations,
+  collectToolNames,
+  deriveMaxIteration,
+  type IterationAssignableEntry,
+} from "@/lib/broker-tasks/assign-task-iterations";
 
 export const dynamic = "force-dynamic";
 
@@ -555,10 +561,11 @@ function summarizeLine(type: string, message: string, fields: Record<string, unk
     }
     case "TOOL_EXECUTED": {
       const toolName = ((fields.tool as string) || "?").replace(/^[a-zA-Z0-9]+_/, "");
+      const nodePrefix = fields.graphNode ? `${fields.graphNode}: ` : "";
       if (/\] on_init: Tool .+ result received/.test(message)) {
-        return `${toolName} result received`;
+        return `${nodePrefix}${toolName} result received`;
       }
-      return `Executed: ${toolName}`;
+      return `${nodePrefix}Executed: ${toolName}`;
     }
     case "TOOL_OUTPUT":
       return fields.toolOutputJson
@@ -988,20 +995,18 @@ function parseRuntimeLogsToEntriesAndJobCard(
     });
   }
   if (entries.length === 0) return null;
+
+  assignTaskIterations(entries as IterationAssignableEntry[]);
+  const assignedEntries = entries as IterationAssignableEntry[];
+  debugLog(
+    `[TASK-CALLSTACK] Runtime parse iteration assignment: max=${deriveMaxIteration(assignedEntries)}, tools=${collectToolNames(assignedEntries).join(", ") || "none"}`
+  );
+
   const inbound = entries.find((e: unknown) => (e as { type?: string }).type === "INBOUND_REQUEST");
   const finalResp = entries.find((e: unknown) => (e as { type?: string }).type === "FINAL_RESPONSE");
   const toolSelections = entries.filter((e: unknown) => (e as { type?: string }).type === "LLM_TOOL_SELECTION");
   const toolExecutions = entries.filter((e: unknown) => (e as { type?: string }).type === "TOOL_EXECUTED");
-  // Derive max iteration from parsed log fields (iteration=N in log messages)
-  const maxIter = Math.max(
-    1,
-    ...(entries as Array<{ fields?: { iteration?: string } }>)
-      .map((e) => {
-        const iterStr = e.fields?.iteration;
-        return iterStr ? parseInt(iterStr, 10) : 0;
-      })
-      .filter((n: number) => !isNaN(n) && n > 0)
-  );
+  const maxIter = deriveMaxIteration(entries as IterationAssignableEntry[]);
             const firstEntry = entries[0] as { timestamp?: string | number };
             const lastEntry = entries[entries.length - 1] as { timestamp?: string | number };
             let duration: string | null = null;
@@ -1011,10 +1016,8 @@ function parseRuntimeLogsToEntriesAndJobCard(
               duration = ((t2 - t1) / 1000).toFixed(1);
             }
   // maxIter already calculated above from parsed log fields
-  const toolStrings = toolSelections
-    .map((e: unknown) => (e as { fields?: { tool?: string } }).fields?.tool as string)
-    .filter((t: string | undefined): t is string => typeof t === "string" && Boolean(t));
-            const allTools: string[] = Array.from(new Set(toolStrings));
+  const toolStrings = collectToolNames(entries as IterationAssignableEntry[]);
+            const allTools: string[] = toolStrings;
             const jobCard = {
               taskId,
     contextId: (entries.find((e: unknown) => (e as { fields?: { contextId?: string } }).fields?.contextId) as { fields?: { contextId?: string } } | undefined)?.fields?.contextId || "",
@@ -2009,17 +2012,18 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Derive max iteration from parsed log fields (iteration=N in log messages)
-    const maxIter = Math.max(
-      1,
-      ...entries
-        .map((e: typeof entries[0]) => {
-          const iterStr = e.fields?.iteration as string | undefined;
-          return iterStr ? parseInt(iterStr, 10) : 0;
-        })
-        .filter((n: number) => !isNaN(n) && n > 0)
+    // Derive iterations — v1 uses iteration=N tags; v2 graph logs are synthesized.
+    assignTaskIterations(entries);
+    const maxIter = deriveMaxIteration(entries);
+    debugLog(
+      `[TASK-CALLSTACK] Iteration assignment: max=${maxIter}, breakdown=${JSON.stringify(
+        entries.reduce((acc: Record<string, number>, e: typeof entries[0]) => {
+          const iter = String(e.fields?.iteration ?? "none");
+          acc[iter] = (acc[iter] || 0) + 1;
+          return acc;
+        }, {})
+      )}`
     );
-    debugLog(`[TASK-CALLSTACK] Max iteration from parsed logs: ${maxIter}`);
 
     // Build Job Card from parsed entries
     debugLog("[TASK-CALLSTACK] Step 10: Building job card from entries...");
@@ -2057,8 +2061,8 @@ export async function GET(request: NextRequest) {
     }
 
     // maxIter already calculated above from parsed log fields
-    const toolStrings = toolSelections.map((e: typeof entries[0]) => e.fields.tool as string).filter((t: string | undefined): t is string => typeof t === "string" && Boolean(t));
-    const allTools: string[] = Array.from(new Set(toolStrings));
+    const toolStrings = collectToolNames(entries);
+    const allTools: string[] = toolStrings;
     debugLog(`[TASK-CALLSTACK] Max iteration: ${maxIter}, Tools: ${allTools.join(", ") || "none"}`);
 
     const brokerName: string = String((entries.find((e: typeof entries[0]) => e.fields.agent) || {}).fields?.agent ?? "");
