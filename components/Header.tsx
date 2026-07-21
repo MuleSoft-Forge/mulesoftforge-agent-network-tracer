@@ -42,6 +42,7 @@ type NavItem = {
 
 const NAV_ITEMS: NavItem[] = [
   { href: "/agent-network", label: "Agent Network", requiresAuth: true },
+  { href: "/compose", label: "Composer", requiresAuth: true },
   { href: "/about", label: "About", requiresAuth: false },
   { href: "/privacy", label: "Privacy", requiresAuth: false },
 ];

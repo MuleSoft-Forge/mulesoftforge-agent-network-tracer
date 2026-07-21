@@ -23,8 +23,8 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Protect /agent-network (routes under /(app) are handled by this path)
-  if (pathname.startsWith("/agent-network")) {
+  // Protect authenticated app routes under /(app)
+  if (pathname.startsWith("/agent-network") || pathname.startsWith("/compose")) {
     if (!(await hasValidSession(request))) {
       // Redirect to sign-in with return URL
       const signInUrl = new URL("/auth/sign-in", request.url);
