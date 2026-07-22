@@ -6,7 +6,7 @@ import { serializeBrokerAgent } from "@/lib/composer/serialize/broker-agent";
 import { brokerFileName } from "@/lib/composer/serialize/util";
 
 export { serializeExchangeJson } from "@/lib/composer/serialize/exchange-json";
-export { serializeAgentNetworkYaml } from "@/lib/composer/serialize/agent-network-yaml";
+export { serializeAgentNetworkYaml, buildAgentNetworkDoc } from "@/lib/composer/serialize/agent-network-yaml";
 export { serializeBrokerAgent } from "@/lib/composer/serialize/broker-agent";
 export { brokerFileName, brokerKey, kebab } from "@/lib/composer/serialize/util";
 

@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -rn \"\\\\\"/api/auth/state\\\\\"\\\\|'/api/auth/state'\\\\|\\\\`/api/auth/state\\\\`\\\\|api/auth/state\" /Users/gjeffcock/Documents/github/mulesoftforge-agent-network-tracer --include=\"*.ts\" --include=\"*.tsx\")",
+      "Bash(npx tsc *)"
+    ]
+  }
+}

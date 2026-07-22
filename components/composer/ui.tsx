@@ -3,15 +3,49 @@
 import type { ReactNode } from "react";
 
 const labelCls = "block text-xs font-medium text-gray-600 mb-1";
+const uppercaseLabelCls =
+  "block text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5";
 const inputCls =
   "w-full rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary";
 
-export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
+export function Field({
+  label,
+  children,
+  hint,
+  uppercaseLabel,
+}: {
+  label: string;
+  children: ReactNode;
+  hint?: string;
+  uppercaseLabel?: boolean;
+}) {
   return (
     <label className="block">
-      <span className={labelCls}>{label}</span>
+      <span className={uppercaseLabel ? uppercaseLabelCls : labelCls}>{label}</span>
       {children}
       {hint ? <span className="mt-1 block text-[11px] text-gray-400">{hint}</span> : null}
+    </label>
+  );
+}
+
+export function Checkbox({
+  label,
+  checked,
+  onChange,
+}: {
+  label: ReactNode;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <label className="flex cursor-pointer items-center gap-2 text-sm text-gray-700">
+      <input
+        type="checkbox"
+        className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-1 focus:ring-primary"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+      {label}
     </label>
   );
 }
@@ -20,25 +54,30 @@ export function TextField({
   label,
   value,
   onChange,
+  onBlur,
   placeholder,
   hint,
   mono,
+  uppercaseLabel,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
+  onBlur?: () => void;
   placeholder?: string;
   hint?: string;
   mono?: boolean;
+  uppercaseLabel?: boolean;
 }) {
   return (
-    <Field label={label} hint={hint}>
+    <Field label={label} hint={hint} uppercaseLabel={uppercaseLabel}>
       <input
         type="text"
         className={`${inputCls} ${mono ? "font-mono" : ""}`}
         value={value}
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
+        onBlur={onBlur}
       />
     </Field>
   );
@@ -48,49 +87,81 @@ export function TextArea({
   label,
   value,
   onChange,
+  onBlur,
   placeholder,
   rows = 4,
   hint,
   mono,
+  uppercaseLabel,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
+  onBlur?: () => void;
   placeholder?: string;
   rows?: number;
   hint?: string;
   mono?: boolean;
+  uppercaseLabel?: boolean;
 }) {
   return (
-    <Field label={label} hint={hint}>
+    <Field label={label} hint={hint} uppercaseLabel={uppercaseLabel}>
       <textarea
         className={`${inputCls} ${mono ? "font-mono text-xs" : ""}`}
         rows={rows}
         value={value}
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
+        onBlur={onBlur}
       />
     </Field>
   );
 }
 
+export type SelectOption<T extends string> = { value: T; label: string };
+
+export type SelectOptionGroup<T extends string> = {
+  label: string;
+  options: Array<SelectOption<T>>;
+};
+
 export function SelectField<T extends string>({
   label,
   value,
   options,
+  groups,
+  trailingOptions,
   onChange,
   hint,
+  uppercaseLabel,
 }: {
   label: string;
   value: T;
-  options: Array<{ value: T; label: string }>;
+  options?: Array<SelectOption<T>>;
+  groups?: Array<SelectOptionGroup<T>>;
+  trailingOptions?: Array<SelectOption<T>>;
   onChange: (v: T) => void;
   hint?: string;
+  uppercaseLabel?: boolean;
 }) {
   return (
-    <Field label={label} hint={hint}>
+    <Field label={label} hint={hint} uppercaseLabel={uppercaseLabel}>
       <select className={inputCls} value={value} onChange={(e) => onChange(e.target.value as T)}>
-        {options.map((o) => (
+        {options?.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+        {groups?.map((group) => (
+          <optgroup key={group.label} label={group.label}>
+            {group.options.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </optgroup>
+        ))}
+        {trailingOptions?.map((o) => (
           <option key={o.value} value={o.value}>
             {o.label}
           </option>
@@ -107,6 +178,7 @@ export function Button({
   disabled,
   type = "button",
   title,
+  className,
 }: {
   children: ReactNode;
   onClick?: () => void;
@@ -114,6 +186,7 @@ export function Button({
   disabled?: boolean;
   type?: "button" | "submit";
   title?: string;
+  className?: string;
 }) {
   const base =
     "inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed";
@@ -124,7 +197,13 @@ export function Button({
     ghost: "text-gray-600 hover:bg-gray-100",
   };
   return (
-    <button type={type} onClick={onClick} disabled={disabled} title={title} className={`${base} ${variants[variant]}`}>
+    <button
+      type={type}
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className={`${base} ${variants[variant]}${className ? ` ${className}` : ""}`}
+    >
       {children}
     </button>
   );

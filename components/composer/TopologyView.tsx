@@ -12,7 +12,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useComposer } from "@/lib/composer/store";
-import { connectionNameForAsset } from "@/lib/composer/model";
+import { assetsReferencedByBroker } from "@/lib/composer/model";
 
 const ASSET_COLOR: Record<string, string> = {
   agent: "#9a63f9",
@@ -23,11 +23,16 @@ const ASSET_COLOR: Record<string, string> = {
 export default function TopologyView() {
   const { project } = useComposer();
   const broker = project.brokers[0];
+  const referencedAssets = useMemo(
+    () => assetsReferencedByBroker(project, broker),
+    [project, broker]
+  );
 
   const { nodes, edges } = useMemo(() => {
     const nodes: Node[] = [];
     const edges: Edge[] = [];
     const brokerId = "broker";
+
     if (broker) {
       nodes.push({
         id: brokerId,
@@ -47,13 +52,8 @@ export default function TopologyView() {
         },
       });
     }
-    const usedConnections = new Set<string>();
-    if (broker) {
-      for (const a of broker.actions) usedConnections.add(a.connectionName);
-      for (const l of broker.llmBindings) usedConnections.add(l.connectionName);
-    }
-    project.assets.forEach((asset, i) => {
-      const conn = connectionNameForAsset(asset);
+
+    referencedAssets.forEach((asset, i) => {
       nodes.push({
         id: asset.id,
         position: { x: 380, y: 40 + i * 90 },
@@ -72,21 +72,29 @@ export default function TopologyView() {
       if (broker) {
         edges.push({
           id: `e-${asset.id}`,
-          source: "broker",
+          source: brokerId,
           target: asset.id,
-          animated: usedConnections.has(conn),
-          style: usedConnections.has(conn) ? undefined : { strokeDasharray: "4 4", stroke: "#d1d5db" },
+          animated: true,
           label: asset.kind,
         });
       }
     });
     return { nodes, edges };
-  }, [project.assets, broker]);
+  }, [broker, referencedAssets]);
 
-  if (project.assets.length === 0) {
+  if (!broker) {
     return (
       <div className="flex h-full items-center justify-center px-8 text-center text-sm text-gray-400">
-        No assets composed yet. Use “Compose from Exchange” to pick existing agents, MCP servers and LLMs.
+        No broker configured yet.
+      </div>
+    );
+  }
+
+  if (referencedAssets.length === 0) {
+    return (
+      <div className="flex h-full items-center justify-center px-8 text-center text-sm text-gray-400">
+        No assets referenced by the broker yet. Wire agents, MCP servers, or LLMs via Actions or LLM bindings on the
+        Broker tab — network-level dependencies alone do not appear here.
       </div>
     );
   }

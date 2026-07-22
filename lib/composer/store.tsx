@@ -11,6 +11,7 @@ import type {
   Broker,
   BrokerAction,
   ComposerProject,
+  CustomVariable,
   GraphNode,
   GraphNodeKind,
   ImportedAsset,
@@ -18,9 +19,13 @@ import type {
   ProjectIdentity,
   VariableOverride,
 } from "@/lib/composer/model";
+import type { DeclaredPolicyBinding } from "@/lib/composer/connectivity/policy-bindings-zod";
+import { sanitizeConnectionPolicies } from "@/lib/composer/connectivity/connection-extras";
+import { pruneUnreferencedPolicyBindings } from "@/lib/composer/connectivity/policy-bindings";
 import { connectionNameForAsset } from "@/lib/composer/model";
 import {
   createActionForAsset,
+  createActionsForMcpAsset,
   createEmptyProject,
   createLlmBindingForAsset,
   createNode,
@@ -32,8 +37,13 @@ export type ComposerAction =
   | { type: "setIdentity"; patch: Partial<ProjectIdentity> }
   | { type: "addAsset"; asset: ImportedAsset }
   | { type: "updateAsset"; id: string; patch: Partial<ImportedAsset> }
+  | { type: "updatePolicyBinding"; bindingName: string; patch: Partial<DeclaredPolicyBinding> }
+  | { type: "ensurePolicyBinding"; bindingName: string; binding: DeclaredPolicyBinding }
   | { type: "removeAsset"; id: string }
   | { type: "setVariableOverride"; key: string; patch: VariableOverride }
+  | { type: "addCustomVariable"; variable: CustomVariable }
+  | { type: "updateCustomVariable"; group: string; field: string; patch: Partial<CustomVariable> }
+  | { type: "removeCustomVariable"; group: string; field: string }
   | { type: "updateBroker"; patch: Partial<Omit<Broker, "id" | "nodes" | "actions" | "llmBindings">> }
   | { type: "updateCard"; patch: Partial<Broker["card"]> }
   | { type: "setDefaultLlm"; bindingName: string | undefined }
@@ -93,18 +103,57 @@ export function composerReducer(project: ComposerProject, action: ComposerAction
           }));
         }
       } else {
-        const created = createActionForAsset(asset);
-        if (created) {
-          next = updateBroker(next, (b) => ({ ...b, actions: [...b.actions, created] }));
+        const usedNames = new Set(next.brokers[0]?.actions.map((a) => a.name) ?? []);
+        if (asset.kind === "mcp") {
+          const created = createActionsForMcpAsset(asset, usedNames);
+          if (created.length > 0) {
+            next = updateBroker(next, (b) => ({ ...b, actions: [...b.actions, ...created] }));
+          }
+        } else {
+          const created = createActionForAsset(asset);
+          if (created) {
+            next = updateBroker(next, (b) => ({ ...b, actions: [...b.actions, created] }));
+          }
         }
       }
       return next;
     }
 
-    case "updateAsset":
+    case "updateAsset": {
+      const patch =
+        action.patch.policies !== undefined
+          ? { ...action.patch, policies: sanitizeConnectionPolicies(action.patch.policies) }
+          : action.patch;
+      const assets = project.assets.map((a) => (a.id === action.id ? { ...a, ...patch } : a));
+      const updated = assets.find((a) => a.id === action.id);
+      const policyBindings = updated
+        ? pruneUnreferencedPolicyBindings(project.policyBindings, { ...project, assets })
+        : project.policyBindings;
+      return { ...project, assets, policyBindings };
+    }
+
+    case "updatePolicyBinding": {
+      const existing = project.policyBindings[action.bindingName] ?? {
+        ref: { name: action.bindingName },
+        configuration: {},
+      };
       return {
         ...project,
-        assets: project.assets.map((a) => (a.id === action.id ? { ...a, ...action.patch } : a)),
+        policyBindings: {
+          ...project.policyBindings,
+          [action.bindingName]: { ...existing, ...action.patch },
+        },
+      };
+    }
+
+    case "ensurePolicyBinding":
+      if (project.policyBindings[action.bindingName]) return project;
+      return {
+        ...project,
+        policyBindings: {
+          ...project.policyBindings,
+          [action.bindingName]: action.binding,
+        },
       };
 
     case "removeAsset": {
@@ -112,7 +161,9 @@ export function composerReducer(project: ComposerProject, action: ComposerAction
       const next = { ...project, assets: project.assets.filter((a) => a.id !== action.id) };
       if (!asset) return next;
       const connName = connectionNameForAsset(asset);
-      return updateBroker(next, (b) => ({
+      const nextAssets = next.assets;
+      const pruned = pruneUnreferencedPolicyBindings(next.policyBindings, { ...next, assets: nextAssets });
+      return updateBroker({ ...next, policyBindings: pruned }, (b) => ({
         ...b,
         actions: b.actions.filter((ac) => ac.connectionName !== connName),
         llmBindings: b.llmBindings.filter((lb) => lb.connectionName !== connName),
@@ -122,11 +173,45 @@ export function composerReducer(project: ComposerProject, action: ComposerAction
     case "setVariableOverride":
       return {
         ...project,
-        variableOverrides: { ...project.variableOverrides, [action.key]: action.patch },
+        variableOverrides: {
+          ...project.variableOverrides,
+          [action.key]: { ...project.variableOverrides?.[action.key], ...action.patch },
+        },
       };
 
-    case "updateBroker":
-      return updateBroker(project, (b) => ({ ...b, ...action.patch }));
+    case "addCustomVariable": {
+      const { group, field } = action.variable;
+      const existing = project.customVariables ?? [];
+      if (existing.some((v) => v.group === group && v.field === field)) return project;
+      return { ...project, customVariables: [...existing, action.variable] };
+    }
+
+    case "updateCustomVariable":
+      return {
+        ...project,
+        customVariables: (project.customVariables ?? []).map((v) =>
+          v.group === action.group && v.field === action.field ? { ...v, ...action.patch } : v
+        ),
+      };
+
+    case "removeCustomVariable":
+      return {
+        ...project,
+        customVariables: (project.customVariables ?? []).filter(
+          (v) => !(v.group === action.group && v.field === action.field)
+        ),
+      };
+
+    case "updateBroker": {
+      const next = updateBroker(project, (b) => ({ ...b, ...action.patch }));
+      if (action.patch.interfacePolicies !== undefined) {
+        return {
+          ...next,
+          policyBindings: pruneUnreferencedPolicyBindings(next.policyBindings, next),
+        };
+      }
+      return next;
+    }
 
     case "updateCard":
       return updateBroker(project, (b) => ({ ...b, card: { ...b.card, ...action.patch } }));

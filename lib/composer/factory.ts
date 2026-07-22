@@ -15,6 +15,8 @@ import {
   connectionNameForAsset,
   toIdentifier,
 } from "@/lib/composer/model";
+import { defaultAuthForAssetKind } from "@/lib/composer/connectivity/defaults";
+import { parseMcpAssetMeta } from "@/lib/composer/mcp-metadata";
 
 export function newId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -100,10 +102,13 @@ export function createEmptyProject(organizationId = ""): ComposerProject {
       version: "1.0.0",
       descriptorVersion: "1.0.0",
       apiVersion: "v2.0",
+      tags: ["broker"],
     },
     assets: [],
     brokers: [createBroker("My Broker")],
+    policyBindings: {},
     variableOverrides: {},
+    customVariables: [],
   };
 }
 
@@ -133,10 +138,54 @@ export function importAsset(input: AssetImportInput): ImportedAsset {
     description: input.description,
     baseName,
     url: input.url ?? "",
-    // LLMs typically need an API key; agents/MCP default to no auth (URL only).
-    auth: input.kind === "llm" ? { kind: "apiKey" } : { kind: "none" },
+    authentication: defaultAuthForAssetKind(input.kind, baseName),
     meta: input.meta,
   };
+}
+
+/** Unique action name among existing broker actions. */
+export function uniqueActionName(base: string, used: Set<string>, fallback = "action"): string {
+  let name = toIdentifier(base, fallback);
+  if (!used.has(name)) {
+    used.add(name);
+    return name;
+  }
+  let i = 2;
+  while (used.has(`${name}${i}`)) i += 1;
+  name = `${name}${i}`;
+  used.add(name);
+  return name;
+}
+
+/** One MCP tool action targeting an imported MCP asset. */
+export function createMcpToolAction(
+  asset: ImportedAsset,
+  toolName: string,
+  usedNames: Set<string>
+): BrokerAction {
+  const connectionName = connectionNameForAsset(asset);
+  const assetBase = toIdentifier(asset.baseName || asset.name || asset.assetId);
+  const toolBase = toIdentifier(toolName);
+  const nameBase = toolBase === assetBase ? toolBase : `${assetBase}_${toolBase}`;
+  return {
+    id: newId(),
+    name: uniqueActionName(nameBase, usedNames, toolBase),
+    actionKind: "mcp:tool",
+    connectionName,
+    toolName,
+  };
+}
+
+/** MCP actions: one per catalog tool when metadata is present, otherwise a single empty action. */
+export function createActionsForMcpAsset(asset: ImportedAsset, usedNames: Set<string>): BrokerAction[] {
+  const meta = parseMcpAssetMeta(asset.meta);
+  if (meta && meta.tools.length > 0) {
+    return meta.tools.map((tool) => createMcpToolAction(asset, tool.name, usedNames));
+  }
+  const created = createActionForAsset(asset);
+  if (!created) return [];
+  created.name = uniqueActionName(created.name, usedNames);
+  return [created];
 }
 
 /** Create a broker action targeting an imported asset (agent -> a2a, mcp -> tool). */

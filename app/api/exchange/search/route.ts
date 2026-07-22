@@ -69,14 +69,22 @@ export async function GET(request: NextRequest) {
   );
 
   const fallbackKind = requestedKinds[0] ?? "agent";
-  const results: ExchangeSearchResultItem[] = hits.map((h) => ({
-    groupId: h.groupId,
-    assetId: h.assetId,
-    name: h.name ?? h.assetId,
-    version: h.version ?? null,
-    kind: normalizeKind(h.type, fallbackKind),
-    rawType: h.type,
-  }));
+  // Exchange can return the same asset more than once (across type facets / versions);
+  // dedupe by groupId:assetId keeping the first (highest-ranked) hit.
+  const byKey = new Map<string, ExchangeSearchResultItem>();
+  for (const h of hits) {
+    const key = `${h.groupId}:${h.assetId}`;
+    if (byKey.has(key)) continue;
+    byKey.set(key, {
+      groupId: h.groupId,
+      assetId: h.assetId,
+      name: h.name ?? h.assetId,
+      version: h.version ?? null,
+      kind: normalizeKind(h.type, fallbackKind),
+      rawType: h.type,
+    });
+  }
+  const results = Array.from(byKey.values());
 
   return NextResponse.json({ results, total: results.length, attempt });
 }

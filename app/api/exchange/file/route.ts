@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { loggedFetch, debugError } from "@/lib/api-logger";
 import { requireAuth } from "@/lib/api/auth-middleware";
 import { resolveAllowedUrl } from "@/lib/api/allowed-hosts";
+import { resolveExchangeFileDownloadUrls } from "@/lib/mulesoft/exchange-file-download";
 
 export const dynamic = "force-dynamic";
 
@@ -44,7 +45,19 @@ export async function GET(request: NextRequest) {
     }
     url = safe.toString();
   } else if (organizationId && assetId && version && classifier && packaging) {
-    url = `${baseUrl}/exchange/api/v2/assets/${encodeURIComponent(organizationId)}/${encodeURIComponent(assetId)}/${encodeURIComponent(version)}/files/${encodeURIComponent(classifier)}.${encodeURIComponent(packaging)}`;
+    const groupId = searchParams.get("groupId") ?? organizationId;
+    const candidates = resolveExchangeFileDownloadUrls(
+      baseUrl,
+      { organizationId, groupId, assetId, version },
+      { classifier, packaging }
+    );
+    url = candidates[0] ?? "";
+    if (!url) {
+      return NextResponse.json(
+        { error: "Could not resolve Exchange file download URL." },
+        { status: 400 }
+      );
+    }
   } else {
     return NextResponse.json(
       { error: "Provide downloadURL, or organizationId + assetId + version + classifier + packaging" },

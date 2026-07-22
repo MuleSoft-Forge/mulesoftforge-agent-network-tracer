@@ -1,0 +1,56 @@
+{
+  "bundleVersion": 1,
+  "specVersion": "2.0.0",
+  "source": {
+    "repository": "agent-fabric-specification",
+    "remoteUrl": "https://github.com/mulesoft-emu/agent-fabric-specification.git",
+    "subpath": "agent-fabric-schema/src/main/resources",
+    "commit": "3cee4291f9b9ed92211412105ab188dfbbc938ab",
+    "ref": "master",
+    "commitDate": "2026-07-15T15:20:22-03:00",
+    "syncedAt": "2026-07-21T17:54:47.749Z"
+  },
+  "files": [
+    {
+      "filename": "agent_network_v2.json",
+      "sha256": "f19294a03a4588df8302832230fe24b2b828d44a69d9674574feed6e7c173b70",
+      "sizeBytes": 42098,
+      "isRoot": true
+    },
+    {
+      "filename": "references.json",
+      "sha256": "e19e247aa380ed224ebe2d93a25bcfdbad024e618d4abb4fd5d2cff6d8c807a7",
+      "sizeBytes": 4365
+    },
+    {
+      "filename": "agent_metadata.json",
+      "sha256": "b59b5c1da99a862f6162ad7c9e0d282e8cc8c025524595ca905c382b50350d88",
+      "sizeBytes": 5811
+    },
+    {
+      "filename": "mcp_metadata.json",
+      "sha256": "ca1385421481b68c9e5bd9291c3a78bcfc26dad22b09514f58232101dae69d6b",
+      "sizeBytes": 34358
+    },
+    {
+      "filename": "a2a.json",
+      "sha256": "48e5f73eccbfc9978fb542c27fb18b30f05df841e92b7c5e1b366abc834dd9c6",
+      "sizeBytes": 82550
+    },
+    {
+      "filename": "a2a_v1.json",
+      "sha256": "93cab01bddc3a9fa5ba19e4b469378dc9c2d7945f1b4a012ba0d8eb7c280ea76",
+      "sizeBytes": 71280
+    },
+    {
+      "filename": "other_card.json",
+      "sha256": "167b988d039b6d1ce5c843991ccaa728c51af28923139c9170670f501d5bf7cd",
+      "sizeBytes": 5133
+    },
+    {
+      "filename": "metadata_provenance.json",
+      "sha256": "cf4487ac892d9342ce7cc302d4f0a9d03e17de0e64e9646d840576e9e33d339a",
+      "sizeBytes": 1420
+    }
+  ]
+}

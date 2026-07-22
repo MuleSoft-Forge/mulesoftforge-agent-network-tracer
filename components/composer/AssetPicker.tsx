@@ -6,6 +6,7 @@ import { useComposer } from "@/lib/composer/store";
 import { importAsset } from "@/lib/composer/factory";
 import { connectionNameForAsset } from "@/lib/composer/model";
 import type { AssetKind } from "@/lib/composer/model";
+import { fetchMcpMetadataFromApi } from "@/components/composer/useMcpTools";
 import { Button, KindBadge } from "@/components/composer/ui";
 
 interface SearchResult {
@@ -73,14 +74,34 @@ export default function AssetPicker({ onClose }: { onClose: () => void }) {
   }
 
   function handleImport(r: SearchResult) {
-    const asset = importAsset({
-      kind: r.kind,
-      groupId: r.groupId,
-      assetId: r.assetId,
-      version: r.version ?? "1.0.0",
-      name: r.name,
-    });
-    dispatch({ type: "addAsset", asset });
+    void (async () => {
+      let meta: unknown;
+      if (r.kind === "mcp" && orgId) {
+        try {
+          const assetStub = {
+            id: "pending",
+            kind: "mcp" as const,
+            groupId: r.groupId,
+            assetId: r.assetId,
+            version: r.version ?? "1.0.0",
+            name: r.name,
+            baseName: r.name,
+          };
+          meta = await fetchMcpMetadataFromApi(orgId, assetStub);
+        } catch {
+          meta = undefined;
+        }
+      }
+      const asset = importAsset({
+        kind: r.kind,
+        groupId: r.groupId,
+        assetId: r.assetId,
+        version: r.version ?? "1.0.0",
+        name: r.name,
+        ...(meta ? { meta } : {}),
+      });
+      dispatch({ type: "addAsset", asset });
+    })();
   }
 
   return (
@@ -141,10 +162,10 @@ export default function AssetPicker({ onClose }: { onClose: () => void }) {
             <div className="px-4 py-10 text-center text-sm text-gray-400">No assets found.</div>
           ) : (
             <ul className="divide-y divide-gray-100">
-              {results.map((r) => {
+              {results.map((r, i) => {
                 const already = existingKeys.has(`${r.groupId}:${r.assetId}`);
                 return (
-                  <li key={`${r.groupId}:${r.assetId}`} className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50">
+                  <li key={`${r.groupId}:${r.assetId}:${r.kind}:${i}`} className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50">
                     <KindBadge kind={r.kind} />
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium text-gray-900">{r.name}</p>

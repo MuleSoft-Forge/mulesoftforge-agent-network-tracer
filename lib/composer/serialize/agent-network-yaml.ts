@@ -1,64 +1,77 @@
 import { stringify } from "yaml";
-import type { BrokerCard, ComposerProject } from "@/lib/composer/model";
+import type { ComposerProject, YamlNetworkInfo } from "@/lib/composer/model";
+import { serializeBrokerCard } from "@/lib/composer/a2a-card";
 import { deriveConnections, primaryBroker } from "@/lib/composer/model";
+import { serializeConnectionAuth } from "@/lib/composer/connectivity/serialize-auth";
+import { applyConnectionExtras, serializeConnectionPolicies } from "@/lib/composer/connectivity/connection-extras";
+import { serializeContextPolicies } from "@/lib/composer/connectivity/policy-bindings";
 import { brokerFileName, brokerKey } from "@/lib/composer/serialize/util";
 
-function cardToObject(card: BrokerCard): Record<string, unknown> {
-  const out: Record<string, unknown> = { name: card.name };
-  if (card.description) out.description = card.description;
-  out.version = card.version;
-  if (card.capabilities) out.capabilities = card.capabilities;
-  if (card.defaultInputModes) out.defaultInputModes = card.defaultInputModes;
-  if (card.defaultOutputModes) out.defaultOutputModes = card.defaultOutputModes;
-  if (card.skills && card.skills.length > 0) {
-    out.skills = card.skills.map((s) => {
-      const skill: Record<string, unknown> = { id: s.id, name: s.name };
-      if (s.description) skill.description = s.description;
-      if (s.tags && s.tags.length > 0) skill.tags = s.tags;
-      if (s.examples && s.examples.length > 0) skill.examples = s.examples;
-      return skill;
-    });
-  }
+function yamlInfoToObject(yamlInfo: YamlNetworkInfo | undefined): Record<string, unknown> {
+  if (!yamlInfo) return {};
+  const out: Record<string, unknown> = {};
+  if (yamlInfo.description) out.description = yamlInfo.description;
+  if (yamlInfo.summary) out.summary = yamlInfo.summary;
+  if (yamlInfo.tags && yamlInfo.tags.length > 0) out.tags = yamlInfo.tags;
   return out;
 }
 
-/** Serialize the model's agent-network.yaml projection (info + connections + broker). */
-export function serializeAgentNetworkYaml(project: ComposerProject): string {
+/**
+ * Build the agent-network.yaml document as a plain object. This is the exact
+ * shape that gets stringified AND schema-validated (see lib/composer/schema),
+ * so the validated object and the emitted file never diverge.
+ */
+export function buildAgentNetworkDoc(project: ComposerProject): Record<string, unknown> {
   const doc: Record<string, unknown> = {
     agentNetwork: "2.0.0",
     info: {
       label: project.identity.name,
       version: project.identity.version,
+      ...yamlInfoToObject(project.identity.yamlInfo),
     },
   };
 
   const connections = deriveConnections(project);
-  if (connections.length > 0) {
+  const contextPolicies = serializeContextPolicies(project);
+  if (connections.length > 0 || contextPolicies) {
     const connObj: Record<string, unknown> = {};
     for (const c of connections) {
       const ref: Record<string, unknown> = { name: c.refName };
       if (c.refNamespace) ref.namespace = c.refNamespace;
       const entry: Record<string, unknown> = { kind: c.kind, ref, url: c.url };
-      if (c.auth) {
-        entry.authentication = { kind: c.auth.kind, apiKey: c.auth.apiKeyToken };
+      if (c.authentication) {
+        entry.authentication = serializeConnectionAuth(c.authentication);
       }
+      applyConnectionExtras(entry, c.access, c.policies);
       connObj[c.connectionName] = entry;
     }
-    doc.context = { connections: connObj };
+    doc.context = {
+      ...(connections.length > 0 ? { connections: connObj } : {}),
+      ...(contextPolicies ? { policies: contextPolicies } : {}),
+    };
   }
 
   const broker = primaryBroker(project);
   if (broker) {
+    const ifaceName = broker.interfaceName || "a2a";
+    const ifacePolicies = serializeConnectionPolicies(broker.interfacePolicies);
+    const iface: Record<string, unknown> = { card: serializeBrokerCard(broker.card) };
+    if (ifacePolicies) iface.policies = ifacePolicies;
     doc.brokers = {
       [brokerKey(broker)]: {
         kind: "AgentScript",
         implementation: `./brokers/${brokerFileName(broker)}`,
         interfaces: {
-          [broker.interfaceName || "a2a"]: { card: cardToObject(broker.card) },
+          [ifaceName]: iface,
         },
       },
     };
   }
 
-  return stringify(doc, { lineWidth: 0 });
+  return doc;
+}
+
+/** Serialize the model's agent-network.yaml projection (info + connections + broker). */
+export function serializeAgentNetworkYaml(project: ComposerProject): string {
+  return stringify(buildAgentNetworkDoc(project), { lineWidth: 0 });
 }

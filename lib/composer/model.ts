@@ -15,6 +15,23 @@
  */
 
 import { z } from "zod";
+import { ConnectionAuthSchema } from "@/lib/composer/connectivity/auth-zod";
+import {
+  ConnectionAccessSchema,
+  ConnectionPoliciesSchema,
+} from "@/lib/composer/connectivity/connection-extras-zod";
+import { PolicyBindingsMapSchema } from "@/lib/composer/connectivity/policy-bindings-zod";
+import {
+  buildDerivedConnection,
+  deriveConnectionVariablesForAsset,
+} from "@/lib/composer/connectivity/connection";
+import { derivePolicyVariableBindings } from "@/lib/composer/connectivity/policy-variable-bindings";
+import type {
+  ConnectionAccess,
+  ConnectionAuth,
+  ConnectionPolicies,
+  DerivedConnectionSpec,
+} from "@/lib/composer/connectivity/types";
 
 /** The one discriminator per composed asset. Everything else is derived. */
 export type AssetKind = "agent" | "mcp" | "llm";
@@ -39,13 +56,8 @@ export const CONNECTION_KIND_BY_KIND: Record<AssetKind, "a2a" | "mcp" | "llm"> =
 
 export const AssetKindSchema = z.enum(["agent", "mcp", "llm"]);
 
-export const AssetAuthSchema = z.object({
-  /** "none" for plain URL agents; "apiKey" for most LLMs/MCPs. */
-  kind: z.enum(["none", "apiKey", "oauth"]).default("none"),
-  /** Deploy-variable group used for the secret token, e.g. "gemini" -> ${gemini.apiKey}. */
-  secretGroup: z.string().optional(),
-  secretField: z.string().optional(),
-});
+export { ConnectionAuthSchema };
+export type { ConnectionAuth, ConnectionAccess, ConnectionPolicies };
 
 export const ImportedAssetSchema = z.object({
   /** Internal id (uuid). */
@@ -61,9 +73,20 @@ export const ImportedAssetSchema = z.object({
   description: z.string().optional(),
   /** Canonical model-owned name; base for connection/registry/variable names. */
   baseName: z.string().min(1),
+  /**
+   * Explicit connection name from an imported file that doesn't follow the
+   * derived `<base>Connection` convention. When set it wins so actions/llm
+   * bindings keep resolving to the real connection. Normally undefined.
+   */
+  connectionName: z.string().optional(),
   /** Deploy-time default URL for the connection (becomes the variable default). */
   url: z.string().optional(),
-  auth: AssetAuthSchema.optional(),
+  /** Connection authentication per agent_network_v2.json (omit when none). */
+  authentication: ConnectionAuthSchema.optional(),
+  /** Connection access modifier. Omit in yaml when internal (default). */
+  access: ConnectionAccessSchema.optional(),
+  /** Inbound/outbound policy bindings on the connection. */
+  policies: ConnectionPoliciesSchema.optional(),
   /** Raw a2a card / mcp metadata / llm metadata, for detail panels only. */
   meta: z.unknown().optional(),
 });
@@ -165,24 +188,55 @@ export const GraphNodeSchema = z.object({
   onExitTarget: z.string().optional(),
 });
 
+export const BrokerCardProviderSchema = z.object({
+  organization: z.string().optional(),
+  url: z.string().optional(),
+});
+
+export const BrokerCardCapabilitiesSchema = z.object({
+  streaming: z.boolean().optional(),
+  pushNotifications: z.boolean().optional(),
+  extendedAgentCard: z.boolean().optional(),
+  /** Capability fields not edited in UI (e.g. extensions) — preserved on round-trip. */
+  extra: z.record(z.string(), z.unknown()).optional(),
+});
+
 export const BrokerCardSkillSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   description: z.string().optional(),
   tags: z.array(z.string()).optional(),
   examples: z.array(z.string()).optional(),
+  inputModes: z.array(z.string()).optional(),
+  outputModes: z.array(z.string()).optional(),
+  /** Skill fields not edited in UI (e.g. securityRequirements) — preserved on round-trip. */
+  extra: z.record(z.string(), z.unknown()).optional(),
+});
+
+export const BrokerCardProtocolBindingSchema = z.enum(["JSONRPC", "GRPC", "HTTP+JSON"]);
+
+export const BrokerCardSupportedInterfaceSchema = z.object({
+  url: z.string().min(1),
+  protocolVersion: z.string().min(1),
+  protocolBinding: z.union([BrokerCardProtocolBindingSchema, z.string().min(1)]),
+  tenant: z.string().optional(),
 });
 
 export const BrokerCardSchema = z.object({
   name: z.string().min(1),
   description: z.string().optional(),
   version: z.string().min(1),
-  capabilities: z
-    .object({ streaming: z.boolean().optional(), pushNotifications: z.boolean().optional() })
-    .optional(),
+  documentationUrl: z.string().optional(),
+  iconUrl: z.string().optional(),
+  provider: BrokerCardProviderSchema.optional(),
+  capabilities: BrokerCardCapabilitiesSchema.optional(),
   defaultInputModes: z.array(z.string()).optional(),
   defaultOutputModes: z.array(z.string()).optional(),
   skills: z.array(BrokerCardSkillSchema).optional(),
+  /** Endpoints where clients invoke this agent (A2A Agent Interface). First entry is preferred. */
+  supportedInterfaces: z.array(BrokerCardSupportedInterfaceSchema).optional(),
+  /** Top-level Agent Card fields not edited in UI — preserved on round-trip. */
+  extra: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const BrokerSchema = z.object({
@@ -191,11 +245,20 @@ export const BrokerSchema = z.object({
   name: z.string().min(1),
   interfaceName: z.string().min(1).default("a2a"),
   card: BrokerCardSchema,
+  /** Inbound/outbound policies on brokers.*.interfaces.a2a.policies. */
+  interfacePolicies: ConnectionPoliciesSchema.optional(),
   systemInstructions: z.string().optional(),
   defaultLlmBindingName: z.string().optional(),
   llmBindings: z.array(LlmBindingSchema).default([]),
   actions: z.array(BrokerActionSchema).default([]),
   nodes: z.array(GraphNodeSchema).default([]),
+});
+
+/** Optional yaml info.* fields beyond label/version (NetworkInfoObject). */
+export const YamlNetworkInfoSchema = z.object({
+  description: z.string().optional(),
+  summary: z.string().optional(),
+  tags: z.array(z.string()).optional(),
 });
 
 export const ProjectIdentitySchema = z.object({
@@ -205,11 +268,30 @@ export const ProjectIdentitySchema = z.object({
   assetId: z.string().min(1),
   version: z.string().min(1),
   descriptorVersion: z.string().min(1).default("1.0.0"),
+  /** Exchange version group for publish/deploy (not yaml info.version). */
   apiVersion: z.string().min(1).default("v2.0"),
+  /** Optional Exchange project description. */
+  description: z.string().optional(),
+  tags: z.array(z.string()).default([]),
+  /** Optional agent-network.yaml info.* fields (separate from exchange.json). */
+  yamlInfo: YamlNetworkInfoSchema.optional(),
 });
 
 /** Optional per-variable overrides (description/default) keyed by `${group}.${field}`. */
 export const VariableOverrideSchema = z.object({
+  description: z.string().optional(),
+  default: z.string().optional(),
+  secret: z.boolean().optional(),
+});
+
+/**
+ * A user-declared deploy variable not derived from a connection/policy — e.g. a
+ * `${group.field}` marker typed into instructions/prompts that must still be
+ * emitted into exchange.json metadata.variables.
+ */
+export const CustomVariableSchema = z.object({
+  group: z.string().min(1),
+  field: z.string().min(1),
   description: z.string().optional(),
   default: z.string().optional(),
   secret: z.boolean().optional(),
@@ -220,14 +302,18 @@ export const ComposerProjectSchema = z.object({
   identity: ProjectIdentitySchema,
   assets: z.array(ImportedAssetSchema).default([]),
   brokers: z.array(BrokerSchema).default([]),
+  /** Declared policy bindings keyed by context.policies map key (connection ref.name). */
+  policyBindings: PolicyBindingsMapSchema,
   variableOverrides: z.record(z.string(), VariableOverrideSchema).optional(),
+  /** Manually declared deploy variables (not derived from connections/policies). */
+  customVariables: z.array(CustomVariableSchema).default([]),
 });
 
 // ---------------------------------------------------------------------------
 // Inferred types
 // ---------------------------------------------------------------------------
 
-export type AssetAuth = z.infer<typeof AssetAuthSchema>;
+export type AssetAuth = ConnectionAuth;
 export type ImportedAsset = z.infer<typeof ImportedAssetSchema>;
 export type OutputProperty = z.infer<typeof OutputPropertySchema>;
 export type ActionInput = z.infer<typeof ActionInputSchema>;
@@ -237,10 +323,15 @@ export type GraphNodeKind = z.infer<typeof GraphNodeKindSchema>;
 export type RouterRoute = z.infer<typeof RouterRouteSchema>;
 export type GraphNode = z.infer<typeof GraphNodeSchema>;
 export type BrokerCardSkill = z.infer<typeof BrokerCardSkillSchema>;
+export type BrokerCardSupportedInterface = z.infer<typeof BrokerCardSupportedInterfaceSchema>;
+export type BrokerCardCapabilities = z.infer<typeof BrokerCardCapabilitiesSchema>;
+export type BrokerCardProvider = z.infer<typeof BrokerCardProviderSchema>;
 export type BrokerCard = z.infer<typeof BrokerCardSchema>;
 export type Broker = z.infer<typeof BrokerSchema>;
+export type YamlNetworkInfo = z.infer<typeof YamlNetworkInfoSchema>;
 export type ProjectIdentity = z.infer<typeof ProjectIdentitySchema>;
 export type VariableOverride = z.infer<typeof VariableOverrideSchema>;
+export type CustomVariable = z.infer<typeof CustomVariableSchema>;
 export type ComposerProject = z.infer<typeof ComposerProjectSchema>;
 
 // ---------------------------------------------------------------------------
@@ -249,14 +340,7 @@ export type ComposerProject = z.infer<typeof ComposerProjectSchema>;
 // and the model never drift.
 // ---------------------------------------------------------------------------
 
-export interface DerivedConnection {
-  connectionName: string;
-  kind: "a2a" | "mcp" | "llm";
-  refName: string;
-  refNamespace?: string;
-  url: string;
-  auth?: { kind: string; apiKeyToken: string };
-}
+export type DerivedConnection = DerivedConnectionSpec;
 
 export interface DerivedDependency {
   groupId: string;
@@ -290,7 +374,7 @@ export function toIdentifier(input: string, fallback = "asset"): string {
 }
 
 export function connectionNameForAsset(asset: ImportedAsset): string {
-  return `${toIdentifier(asset.baseName || asset.name || asset.assetId)}Connection`;
+  return asset.connectionName || `${toIdentifier(asset.baseName || asset.name || asset.assetId)}Connection`;
 }
 
 export function registryNameForAsset(asset: ImportedAsset): string {
@@ -313,44 +397,12 @@ export function deriveDependency(asset: ImportedAsset): DerivedDependency {
 }
 
 export function deriveConnection(asset: ImportedAsset): DerivedConnection {
-  const group = variableGroupForAsset(asset);
-  const connection: DerivedConnection = {
-    connectionName: connectionNameForAsset(asset),
-    kind: CONNECTION_KIND_BY_KIND[asset.kind],
-    refName: registryNameForAsset(asset),
-    refNamespace: asset.namespace || asset.groupId,
-    url: `\${${group}.url}`,
-  };
-  if (asset.auth && asset.auth.kind === "apiKey") {
-    const secretGroup = asset.auth.secretGroup || group;
-    const secretField = asset.auth.secretField || "apiKey";
-    connection.auth = { kind: "apiKey", apiKeyToken: `\${${secretGroup}.${secretField}}` };
-  }
-  return connection;
+  return buildDerivedConnection(asset);
 }
 
-/** Deploy variables for one asset: the url var, plus a secret var when apiKey auth. */
+/** Deploy variables for one asset: url + auth-derived secrets/refs. */
 export function deriveVariablesForAsset(asset: ImportedAsset): DerivedVariable[] {
-  const group = variableGroupForAsset(asset);
-  const vars: DerivedVariable[] = [
-    {
-      group,
-      field: "url",
-      description: `${asset.name} URL`,
-      secret: false,
-      default: asset.url ?? "",
-    },
-  ];
-  if (asset.auth && asset.auth.kind === "apiKey") {
-    vars.push({
-      group: asset.auth.secretGroup || group,
-      field: asset.auth.secretField || "apiKey",
-      description: `${asset.name} API key`,
-      secret: true,
-      default: "",
-    });
-  }
-  return vars;
+  return deriveConnectionVariablesForAsset(asset);
 }
 
 export function deriveDependencies(project: ComposerProject): DerivedDependency[] {
@@ -368,6 +420,22 @@ export function deriveVariables(project: ComposerProject): DerivedVariable[] {
     for (const v of deriveVariablesForAsset(asset)) {
       const key = `${v.group}.${v.field}`;
       if (!byKey.has(key)) byKey.set(key, v);
+    }
+  }
+  for (const v of derivePolicyVariableBindings(project)) {
+    const key = `${v.group}.${v.field}`;
+    if (!byKey.has(key)) byKey.set(key, v);
+  }
+  for (const cv of project.customVariables ?? []) {
+    const key = `${cv.group}.${cv.field}`;
+    if (!byKey.has(key)) {
+      byKey.set(key, {
+        group: cv.group,
+        field: cv.field,
+        description: cv.description,
+        default: cv.default,
+        secret: cv.secret ?? false,
+      });
     }
   }
   if (project.variableOverrides) {
@@ -397,4 +465,19 @@ export function assetByConnectionName(
   connectionName: string
 ): ImportedAsset | undefined {
   return project.assets.find((a) => connectionNameForAsset(a) === connectionName);
+}
+
+/** Connection names wired into the broker via actions or LLM bindings. */
+export function brokerReferencedConnectionNames(broker: Broker): Set<string> {
+  const names = new Set<string>();
+  for (const action of broker.actions) names.add(action.connectionName);
+  for (const binding of broker.llmBindings) names.add(binding.connectionName);
+  return names;
+}
+
+/** Assets the broker actually uses — not the full network registry. */
+export function assetsReferencedByBroker(project: ComposerProject, broker?: Broker): ImportedAsset[] {
+  if (!broker) return [];
+  const referenced = brokerReferencedConnectionNames(broker);
+  return project.assets.filter((asset) => referenced.has(connectionNameForAsset(asset)));
 }

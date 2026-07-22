@@ -107,6 +107,7 @@ export function parseExchangeMetadataFile(
   if (
     base !== "agent-metadata" &&
     base !== "mcp-metadata" &&
+    base !== "mcp" &&
     base !== "llm-metadata" &&
     base !== "agent-network-metadata"
   ) {
@@ -133,6 +134,7 @@ export function parseExchangeMetadataFile(
         provenance: asProvenance(o.provenance),
       };
     case "mcp-metadata":
+    case "mcp":
       return {
         fileKind: "mcp-metadata",
         protocolVersion: asString(o.protocolVersion),

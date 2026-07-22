@@ -28,13 +28,13 @@ export function serializeExchangeJson(project: ComposerProject): string {
     packaging: d.packaging,
   }));
 
-  const obj = {
+  const obj: Record<string, unknown> = {
     main: "agent-network.yaml",
     name: project.identity.name,
     classifier: "agentic-network",
     organizationId: project.identity.organizationId,
     descriptorVersion: project.identity.descriptorVersion,
-    tags: [] as string[],
+    tags: project.identity.tags ?? [],
     metadata: { variables: metadataVariables },
     apiVersion: project.identity.apiVersion,
     dependencies,
@@ -42,6 +42,9 @@ export function serializeExchangeJson(project: ComposerProject): string {
     assetId: project.identity.assetId,
     version: project.identity.version,
   };
+  if (project.identity.description?.trim()) {
+    obj.description = project.identity.description.trim();
+  }
 
   return JSON.stringify(obj, null, 2) + "\n";
 }

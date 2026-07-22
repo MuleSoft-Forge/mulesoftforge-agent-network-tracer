@@ -32,6 +32,7 @@ export const EXCHANGE_SEARCH_TYPES = {
   AGENT_DOMAIN: "agent-domain",
   MCP: "mcp",
   LLM: "llm",
+  POLICY: "policy",
 } as const;
 
 /** ang/_search needs the digital-repository URI form of each type for `assets.@type`. */
@@ -42,6 +43,7 @@ const ANG_TYPE_URI: Record<string, string> = {
   "agent-domain": `${DIGITAL_REPOSITORY_PATH}#AgentDomainAsset`,
   mcp: `${DIGITAL_REPOSITORY_PATH}#MCPAsset`,
   llm: `${DIGITAL_REPOSITORY_PATH}#LLMAsset`,
+  policy: `${DIGITAL_REPOSITORY_PATH}#PolicyAsset`,
 };
 
 interface PseasHit {

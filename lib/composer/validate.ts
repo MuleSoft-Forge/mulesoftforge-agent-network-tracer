@@ -8,9 +8,15 @@
 import type { Broker, ComposerProject, GraphNode } from "@/lib/composer/model";
 import {
   ComposerProjectSchema,
+  CONNECTION_KIND_BY_KIND,
   connectionNameForAsset,
   primaryBroker,
 } from "@/lib/composer/model";
+import { authKindRequiresAuthentication } from "@/lib/composer/connectivity/auth-catalog";
+import { buildAgentNetworkDoc } from "@/lib/composer/serialize/agent-network-yaml";
+import { serializeBrokerCard } from "@/lib/composer/a2a-card";
+import { validateAgentNetworkDoc } from "@/lib/composer/schema/network-schema";
+import { validateBrokerCardDoc } from "@/lib/composer/schema/a2a-card-schema";
 
 export type IssueSeverity = "error" | "warning";
 
@@ -123,7 +129,12 @@ function validateBrokerGraph(
   // LLM bindings reference real llm connections.
   for (const binding of broker.llmBindings) {
     if (!connectionNames.has(binding.connectionName)) {
-      issues.push(err(`LLM binding "${binding.name}" targets unknown connection "${binding.connectionName}".`, { kind: "broker", id: broker.id }));
+      issues.push(
+        err(`LLM binding "${binding.name}" targets unknown connection "${binding.connectionName}".`, {
+          kind: "broker",
+          id: binding.id,
+        })
+      );
     }
   }
 }
@@ -149,6 +160,10 @@ export function validateProject(project: ComposerProject): ValidationResult {
     if (!asset.groupId || !asset.assetId || !asset.version) {
       issues.push(err(`Asset "${asset.name}" is missing GAV coordinates.`, { kind: "asset", id: asset.id }));
     }
+    const connKind = CONNECTION_KIND_BY_KIND[asset.kind];
+    if (authKindRequiresAuthentication(connKind) && !asset.authentication) {
+      issues.push(err(`LLM asset "${asset.name}" requires authentication.`, { kind: "asset", id: asset.id }));
+    }
   }
 
   // Single broker (MVP).
@@ -159,7 +174,18 @@ export function validateProject(project: ComposerProject): ValidationResult {
   }
 
   const broker = primaryBroker(project);
-  if (broker) validateBrokerGraph(project, broker, issues);
+  if (broker) {
+    validateBrokerGraph(project, broker, issues);
+    for (const s of validateBrokerCardDoc(serializeBrokerCard(broker.card))) {
+      issues.push(err(`Schema (A2A card) at ${s.path}: ${s.message}`, { kind: "broker", id: broker.id }));
+    }
+  }
+
+  // Schema-first check: the emitted agent-network.yaml MUST conform to the
+  // official Agent Network v2 JSON Schema (the real source of truth).
+  for (const s of validateAgentNetworkDoc(buildAgentNetworkDoc(project))) {
+    issues.push(err(`Schema (agent-network.yaml) at ${s.path}: ${s.message}`, { kind: "project" }));
+  }
 
   const errors = issues.filter((i) => i.severity === "error");
   const warnings = issues.filter((i) => i.severity === "warning");
