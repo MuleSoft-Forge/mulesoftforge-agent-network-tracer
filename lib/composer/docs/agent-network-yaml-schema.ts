@@ -8,7 +8,7 @@ import { ANF_SCHEMA_MANIFEST, formatAnfSchemaProvenance } from "@/lib/composer/s
 import type { ExchangeJsonFieldDoc, ExchangeJsonNestedDoc } from "@/lib/composer/docs/exchange-json-schema";
 
 export const AGENT_NETWORK_YAML_INTRO =
-  "agent-network.yaml is the Agent Network v2 specification document. It declares network metadata (info), shared connections to external agents/MCP servers/LLMs (context.connections), and broker front doors (brokers). Composer bundles the official JSON Schemas from agent-fabric-specification (see manifest provenance below) and validates every emitted document with Ajv. Pair with exchange.json (Exchange descriptor + dependencies) and brokers/*.agent (broker graph).";
+  "agent-network.yaml is the Agent Network v2 specification document. It declares network metadata (info), shared connections to external agents/MCP servers/LLMs (context.connections), and broker front doors (brokers). Builder bundles the official JSON Schemas from agent-fabric-specification (see manifest provenance below) and validates every emitted document with Ajv. Pair with exchange.json (Exchange descriptor + dependencies) and brokers/*.agent (broker graph).";
 
 export const AGENT_NETWORK_YAML_SOURCES = [
   formatAnfSchemaProvenance(),
@@ -37,21 +37,21 @@ export const AGENT_NETWORK_YAML_TOP_LEVEL: ExchangeJsonFieldDoc[] = [
   {
     field: "context",
     type: "object?",
-    composerUi: "Assets tab",
+    composerUi: "Exchange Assets tab",
     composerSource: "derived",
-    notes: "Reusable document-scoped entities. Composer emits context.connections from composed assets.",
+    notes: "Reusable document-scoped entities. Builder emits context.connections from composed assets.",
   },
   {
     field: "registry",
     type: "object?",
     composerUi: "—",
     composerSource: "not-in-composer",
-    notes: "Alternative to context for inline agent/MCP/LLM definitions. Composer uses context.connections + exchange.json dependencies instead.",
+    notes: "Alternative to context for inline agent/MCP/LLM definitions. Builder uses context.connections + exchange.json dependencies instead.",
   },
   {
     field: "brokers",
     type: "object?",
-    composerUi: "Broker tabs (A2A card, Access, LLM bindings, Actions, Behavior)",
+    composerUi: "Broker tabs (A2A Interface, A2A card, LLM bindings, Actions, Behavior)",
     composerSource: "editable",
     notes: "Map of broker key → BrokerEntity (AgentScript + A2A card). See brokers.* below.",
   },
@@ -72,7 +72,7 @@ export const AGENT_NETWORK_YAML_INFO: ExchangeJsonNestedDoc = {
       type: "string",
       composerUi: "Version",
       composerSource: "editable",
-      notes: "Required. Network element version (Composer mirrors exchange.json asset version).",
+      notes: "Required. Network element version (Builder mirrors exchange.json asset version).",
     },
     {
       field: "description",
@@ -134,7 +134,7 @@ export const AGENT_NETWORK_YAML_CONNECTION: ExchangeJsonNestedDoc = {
       type: "string?",
       composerUi: "Assets (Default URL)",
       composerSource: "derived",
-      notes: "Deploy-time URL. Composer emits ${group.url} referencing exchange.json metadata.variables.",
+      notes: "Deploy-time URL. Builder emits ${group.url} referencing exchange.json metadata.variables.",
     },
     {
       field: "authentication",
@@ -198,7 +198,7 @@ export const AGENT_NETWORK_YAML_BROKER: ExchangeJsonNestedDoc = {
       type: "string",
       composerUi: "Broker name",
       composerSource: "derived",
-      notes: "Broker map key derived from broker name (yaml-safe identifier).",
+      notes: "Yaml-safe snake_case key: lowercase letters, digits, underscores (no trailing _). Used as brokers map key and config.agent_name.",
     },
     {
       field: "kind",
@@ -212,7 +212,7 @@ export const AGENT_NETWORK_YAML_BROKER: ExchangeJsonNestedDoc = {
       type: "string",
       composerUi: "—",
       composerSource: "derived",
-      notes: 'Path to .agent file, e.g. "./brokers/my-broker.agent".',
+      notes: 'Path to .agent file, e.g. "./brokers/my_broker.agent".',
     },
     {
       field: "interfaces.a2a.card",
@@ -224,7 +224,7 @@ export const AGENT_NETWORK_YAML_BROKER: ExchangeJsonNestedDoc = {
     {
       field: "interfaces.a2a.policies",
       type: "object?",
-      composerUi: "Access tab",
+      composerUi: "A2A Interface tab",
       composerSource: "editable",
       notes: "Inbound/outbound policy bindings on the broker A2A interface (ref + inline). Uses same PolicyBindings shape as connections.",
     },
@@ -232,11 +232,11 @@ export const AGENT_NETWORK_YAML_BROKER: ExchangeJsonNestedDoc = {
 };
 
 export const AGENT_NETWORK_YAML_COMPOSER_NOTES = [
-  "Each composed Exchange asset produces one context.connections entry and one exchange.json dependencies[] entry — edit assets only on the Assets tab.",
+  "Each composed Exchange asset produces one context.connections entry and one exchange.json dependencies[] entry — edit assets only on the Exchange Assets tab.",
   "Connection URLs and secrets are deploy variables in exchange.json; yaml uses ${group.field} placeholders.",
-  "Composer emits context.connections, not registry — both satisfy the schema anyOf (registry | context | brokers).",
+  "Builder emits context.connections, not registry — both satisfy the schema anyOf (registry | context | brokers).",
   "LLM connections require authentication in the official schema; set API key auth on LLM assets or validation may fail.",
   "agentNetwork: 2.0.0 is the spec version. info.version is the network element version. exchange.json apiVersion is the Exchange version group — three different version fields.",
   "Live schema validation runs on the current project whenever you edit; issues appear in the composer header and in this dialog.",
-  "When agent-fabric-specification updates, run npm run sync:anf-schemas — manifest.json records commit + syncedAt so you can see if Composer is stale.",
+  "When agent-fabric-specification updates, run npm run sync:anf-schemas — manifest.json records commit + syncedAt so you can see if Builder is stale.",
 ];

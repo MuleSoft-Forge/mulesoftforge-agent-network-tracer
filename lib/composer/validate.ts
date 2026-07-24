@@ -12,6 +12,7 @@ import {
   connectionNameForAsset,
   primaryBroker,
 } from "@/lib/composer/model";
+import { brokerKeyValidationMessage, isValidBrokerKey } from "@/lib/composer/broker-key";
 import { authKindRequiresAuthentication } from "@/lib/composer/connectivity/auth-catalog";
 import { buildAgentNetworkDoc } from "@/lib/composer/serialize/agent-network-yaml";
 import { serializeBrokerCard } from "@/lib/composer/a2a-card";
@@ -175,6 +176,9 @@ export function validateProject(project: ComposerProject): ValidationResult {
 
   const broker = primaryBroker(project);
   if (broker) {
+    if (!isValidBrokerKey(broker.name)) {
+      issues.push(err(brokerKeyValidationMessage(broker.name), { kind: "broker", id: broker.id }));
+    }
     validateBrokerGraph(project, broker, issues);
     for (const s of validateBrokerCardDoc(serializeBrokerCard(broker.card))) {
       issues.push(err(`Schema (A2A card) at ${s.path}: ${s.message}`, { kind: "broker", id: broker.id }));

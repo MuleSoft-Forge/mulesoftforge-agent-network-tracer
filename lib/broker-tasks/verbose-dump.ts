@@ -1,12 +1,8 @@
 /**
  * Loud structured dumps for POST /api/broker-tasks debugging (orgId, tokens, session flags).
  *
- * These dumps include access/refresh tokens, so they are restricted to local
- * development only. The opt-in must ALSO set BROKER_TASKS_VERBOSE_LOG to avoid
- * accidentally printing secrets, and it never activates outside development —
- * even if the env var is set in a deployed environment.
- *
- * This bypasses ENABLE_API_LOGGING so you still see dumps when API logging is off.
+ * Development-only (`NODE_ENV=development`). Never runs on Vercel production/preview.
+ * Requires BROKER_TASKS_VERBOSE_LOG=1 in addition.
  */
 
 export function brokerTasksVerboseDumpEnabled(): boolean {

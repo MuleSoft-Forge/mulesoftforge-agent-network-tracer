@@ -87,7 +87,7 @@ export function useExchangeNetworkImport() {
         });
         if (projectVersion === "v1") {
           throw new Error(
-            `This is an ${projectVersionLabel("v1")} project. The Composer can only open agent network v2 projects for editing.`
+            `This is an ${projectVersionLabel("v1")} project. The Builder can only open agent network v2 projects for editing.`
           );
         }
 

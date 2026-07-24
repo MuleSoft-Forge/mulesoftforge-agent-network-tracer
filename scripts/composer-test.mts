@@ -62,6 +62,15 @@ import {
 } from "@/lib/mulesoft/exchange-mcp-metadata";
 import { resolveExchangeFileDownloadUrls } from "@/lib/mulesoft/exchange-file-download";
 import { parseProjectFiles, type ParseFilesInput } from "@/lib/composer/parse";
+import { parseBrokerAgent } from "@/lib/composer/parse/broker-agent";
+import { instructionTextForEditor } from "@/lib/composer/instruction-text";
+import { buildExpressionCatalog, flattenExpressionCatalog, requestScopeMembers } from "@/lib/composer/agentfabric-expression-catalog";
+import {
+  BROKER_KEY_PATTERN,
+  brokerKeyValidationMessage,
+  isValidBrokerKey,
+  normalizeBrokerKey,
+} from "@/lib/composer/broker-key";
 import {
   findUndeclaredMarkers,
   scanVariableMarkers,
@@ -75,6 +84,7 @@ import {
 import { serializeBrokerCard } from "@/lib/composer/a2a-card";
 import { evaluateA2aCard } from "@/lib/composer/a2a-card-checks";
 import { selectProjectSourceFiles } from "@/lib/composer/import/select-project-files";
+import { importLocalProjectEntries } from "@/lib/composer/import/import-local-project";
 import { detectProjectVersion } from "@/lib/mulesoft/agent-network-project-version";
 import type { BrokerCard, ComposerProject } from "@/lib/composer/model";
 import type { SerializedFile } from "@/lib/composer/serialize";
@@ -250,7 +260,106 @@ console.log("\n[6] YAML/JSON always parse for a rich project");
 }
 
 // ---------------------------------------------------------------------------
-console.log("\n[7] Round-trip: serialize -> parse -> serialize is stable");
+console.log("\n[6b] AgentScript procedure blocks (`->`) parse to instruction text");
+{
+  const agentText = `# @dialect: AGENTFABRIC=1.0
+
+system:
+  instructions: ->
+    | You are the support broker.
+
+config:
+  agent_name: broker
+  default_llm: default
+
+llm default:
+  connection: "llm://default"
+  provider: OpenAI
+  model: gpt-4o
+
+generator classify:
+  llm: @llm.default
+  prompt: ->
+    | {!@trigger.message}
+  system:
+    instructions: ->
+      | Classify the request.
+
+orchestrator plan:
+  llm: @llm.default
+  reasoning:
+    instructions: ->
+      | Think step by step.
+
+generator empty-prompt:
+  llm: @llm.default
+  prompt: ->
+
+trigger start:
+  on exit:
+    transition to @generator.classify
+`;
+
+  const parsed = parseBrokerAgent(agentText);
+  check("broker system instructions from procedure block", parsed.systemInstructions === "You are the support broker.");
+  const gen = parsed.nodes.find((n) => n.name === "classify");
+  check("generator prompt from procedure block", gen?.prompt === "{!@trigger.message}");
+  check("generator system instructions from procedure block", gen?.systemInstructions === "Classify the request.");
+  check("prompt is not bare procedure marker", gen?.prompt !== "->");
+  const orch = parsed.nodes.find((n) => n.name === "plan");
+  check("orchestrator reasoning from procedure block", orch?.reasoningInstructions === "Think step by step.");
+  check("reasoning is not bare procedure marker", orch?.reasoningInstructions !== "->");
+  const emptyGen = parsed.nodes.find((n) => n.name === "empty-prompt");
+  check("empty procedure prompt omitted", emptyGen?.prompt === undefined);
+  check("instructionTextForEditor hides legacy marker", instructionTextForEditor("->") === "");
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n[6c] Broker map keys (snake_case)");
+{
+  check("customer_service_agent valid", isValidBrokerKey("customer_service_agent"));
+  check("billing_agent valid", isValidBrokerKey("billing_agent"));
+  check("customerServiceAgent invalid", !isValidBrokerKey("customerServiceAgent"));
+  check("my_broker_ invalid (trailing underscore)", !isValidBrokerKey("my_broker_"));
+  check("pattern constant matches validator", BROKER_KEY_PATTERN.test("agent2"));
+  check("normalize camelCase", normalizeBrokerKey("customerServiceAgent") === "customer_service_agent");
+  check("normalize spaces", normalizeBrokerKey("My Broker") === "my_broker");
+  check("normalize trailing underscore", normalizeBrokerKey("my_broker_") === "my_broker");
+  check("validation message mentions camelCase", brokerKeyValidationMessage("customerServiceAgent").includes("customer_service_agent"));
+
+  let p = createEmptyProject("ORG");
+  check("empty project default broker key", p.brokers[0].name === "my_broker");
+  check("empty project valid broker key", isValidBrokerKey(p.brokers[0].name));
+  check(
+    "invalid broker key fails validation",
+    !validateProject(apply(p, { type: "updateBroker", patch: { name: "my_broker_" } })).ok
+  );
+  const yaml = serializeAgentNetworkYaml(createEmptyProject("ORG"));
+  check("serialized yaml uses snake_case broker key", yaml.includes("  my_broker:"));
+  check("serialized implementation path", yaml.includes("./brokers/my_broker.agent"));
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n[6d] AgentFabric expression catalog");
+{
+  let p = createEmptyProject("ORG");
+  const broker = p.brokers[0];
+  const catalog = buildExpressionCatalog(broker);
+  const flat = flattenExpressionCatalog(catalog);
+  check("request scope members documented", requestScopeMembers().includes("payload"));
+  check("catalog includes user message snippet", flat.some((e) => e.insert === "{!@request.payload.message.parts[0].text}"));
+  const trigger = broker.nodes.find((n) => n.kind === "trigger");
+  const gen = broker.nodes.find((n) => n.kind === "generator");
+  if (trigger && gen) {
+    check("catalog includes trigger input ref", flat.some((e) => e.insert === `@trigger.${trigger.name}.input`));
+    check("catalog includes generator output ref", flat.some((e) => e.insert === `@generator.${gen.name}.output`));
+    const excluded = buildExpressionCatalog(broker, { excludeNodeId: gen.id });
+    const excludedFlat = flattenExpressionCatalog(excluded);
+    check("excludeNodeId omits current node refs", !excludedFlat.some((e) => e.insert.includes(`@generator.${gen.name}.`)));
+  }
+}
+
+// ---------------------------------------------------------------------------
 {
   function toInput(files: SerializedFile[]): ParseFilesInput {
     const input: ParseFilesInput = {};
@@ -421,6 +530,7 @@ console.log("\n[8] Import files whose connection name != derived convention");
   if (res.ok) {
     const v = validateProject(res.project);
     check("llm binding resolves to real connection (no unknown-connection error)", v.ok, JSON.stringify(v.errors));
+    check("import normalizes broker key to snake_case", res.project.brokers[0].name === "my_broker");
     const asset = res.project.assets[0];
     check("asset keeps exact connection name", asset.connectionName === "openaiConnection", asset.connectionName);
     // Re-serialize keeps the same connection key so it still links.
@@ -1081,7 +1191,7 @@ brokers:
     brokers: [
       {
         id: "b1",
-        name: "myBroker",
+        name: "my_broker",
         interfaceName: "a2a",
         card: card!,
         llmBindings: [],
@@ -1493,6 +1603,174 @@ console.log("\n[custom variables & marker scanning]");
       (rt.project.customVariables ?? []).some((v) => v.group === "custom" && v.field === "endpoint")
     );
   }
+
+  // Runtime system limits: flat exchange.json variables round-trip.
+  let p4 = createEmptyProject("ORG");
+  p4 = apply(p4, {
+    type: "addCustomVariable",
+    variable: {
+      field: "MODULE_GRAPH_ERROR_SETTINGS_MAX_HANDOFF_ITERATIONS",
+      flat: true,
+      description: "max node-to-node transitions per turn",
+      default: "30",
+      secret: false,
+    },
+  });
+  const exLimits = JSON.parse(serializeExchangeJson(p4));
+  check(
+    "runtime limit serializes flat in exchange.json",
+    exLimits.metadata.variables.MODULE_GRAPH_ERROR_SETTINGS_MAX_HANDOFF_ITERATIONS?.default === "30"
+  );
+  check(
+    "runtime limit not nested under bogus group",
+    exLimits.metadata.variables.MODULE_GRAPH_ERROR_SETTINGS_MAX_HANDOFF_ITERATIONS?.description !== undefined
+  );
+  const files4 = serializeProject(p4);
+  const rt4 = parseProjectFiles({
+    exchangeJson: files4.find((f) => f.path === "exchange.json")!.content,
+    agentYaml: files4.find((f) => f.path === "agent-network.yaml")!.content,
+    brokerAgent: files4.find((f) => f.path.startsWith("brokers/"))!.content,
+  });
+  check("runtime limit round-trip parses", rt4.ok, rt4.ok ? "" : rt4.errors.join("; "));
+  if (rt4.ok) {
+    check(
+      "runtime limit round-trip preserves flat flag",
+      (rt4.project.customVariables ?? []).some(
+        (v) => v.flat && v.field === "MODULE_GRAPH_ERROR_SETTINGS_MAX_HANDOFF_ITERATIONS"
+      )
+    );
+  }
+}
+
+console.log("\n[echo round-trip]");
+{
+  const onboardPart =
+    'a2a.textPart("You have been onboarded! Your employee ID is " + @orchestrator.hrSystemOnboard.output.employeeId)';
+
+  const statusAgent = [
+    "# @dialect: AGENTFABRIC=1.0",
+    "",
+    "system:",
+    '  instructions: ""',
+    "",
+    "echo setStatus:",
+    '  kind: "a2a:status_update_event"',
+    '  state: "TASK_STATE_COMPLETED"',
+    "  message: a2a.message({",
+    "    messageId: uuid(),",
+    "    parts: [",
+    `      ${onboardPart}`,
+    "    ]",
+    "  })",
+  ].join("\n");
+
+  const artifactAgent = [
+    "# @dialect: AGENTFABRIC=1.0",
+    "",
+    "system:",
+    '  instructions: ""',
+    "",
+    "echo addArtifact:",
+    '  kind: "a2a:artifact_update_event"',
+    "  artifact: a2a.artifact({",
+    "    artifactId: uuid(),",
+    '    name: "myArtifact",',
+    '    description: "this is optional",',
+    "    parts: [",
+    `      ${onboardPart}`,
+    "    ],",
+    "    metadata: {},",
+    "  }),",
+    "  append: false",
+    "  lastChunk: false",
+  ].join("\n");
+
+  function normExpr(s: string): string {
+    return s.replace(/\s+/g, " ").trim();
+  }
+
+  function echoRoundTrip(agentText: string, nodeName: string) {
+    const parsed = parseBrokerAgent(agentText);
+    const pn = parsed.nodes.find((n) => n.name === nodeName);
+    if (!pn) return { ok: false, reason: "node missing" };
+    const broker = {
+      id: "b1",
+      name: "test_broker",
+      interfaceName: "a2a",
+      systemInstructions: "",
+      nodes: [
+        {
+          id: "n1",
+          kind: "echo" as const,
+          name: pn.name,
+          position: { x: 0, y: 0 },
+          echoKind: pn.echoKind,
+          state: pn.state,
+          message: pn.message,
+          artifactExpr: pn.artifactExpr,
+          echoAppend: pn.echoAppend,
+          echoLastChunk: pn.echoLastChunk,
+          metadataExpr: pn.metadataExpr,
+        },
+      ],
+      llmBindings: [],
+      actions: [],
+      card: { name: "test", version: "1.0.0" },
+    };
+    const serialized = serializeBrokerAgent(broker);
+    const again = parseBrokerAgent(serialized).nodes.find((n) => n.name === nodeName);
+    if (!again) return { ok: false, reason: "re-parse missing node" };
+    return { ok: true, first: pn, second: again, serialized };
+  }
+
+  const statusRt = echoRoundTrip(statusAgent, "setStatus");
+  check("status echo parses", Boolean(statusRt.ok && statusRt.first?.message?.includes("hrSystemOnboard")));
+  if (statusRt.ok && statusRt.first && statusRt.second) {
+    check(
+      "status echo message round-trip",
+      normExpr(statusRt.first.message ?? "") === normExpr(statusRt.second.message ?? "")
+    );
+    check("status echo serialized includes a2a.message", statusRt.serialized.includes("a2a.message("));
+    check("status echo serialized includes concat expression", statusRt.serialized.includes("hrSystemOnboard"));
+  }
+
+  const artifactRt = echoRoundTrip(artifactAgent, "addArtifact");
+  check("artifact echo parses", Boolean(artifactRt.ok && artifactRt.first?.artifactExpr?.includes("myArtifact")));
+  if (artifactRt.ok && artifactRt.first && artifactRt.second) {
+    check(
+      "artifact echo expression round-trip",
+      normExpr(artifactRt.first.artifactExpr ?? "") === normExpr(artifactRt.second.artifactExpr ?? "")
+    );
+    check("artifact echo append round-trip", artifactRt.second.echoAppend === false);
+    check("artifact echo lastChunk round-trip", artifactRt.second.echoLastChunk === false);
+    check("artifact echo serialized includes artifact:", artifactRt.serialized.includes("artifact: a2a.artifact("));
+    check("artifact echo serialized excludes message:", !artifactRt.serialized.includes("message:"));
+  }
+
+  const bareStatus = parseBrokerAgent(
+    'echo done:\n  kind: "a2a:status_update_event"\n  state: "TASK_STATE_COMPLETED"\n  message: @generator.summarize.output\n'
+  );
+  check("bare @ message parses", bareStatus.nodes[0]?.message === "@generator.summarize.output");
+}
+
+console.log("\n[local project import]");
+{
+  const entries = [
+    { filename: "exchange.json", content: JSON.stringify({ name: "Local Net", groupId: "org-1", assetId: "local-net", version: "2.0.0", dependencies: [] }) },
+    { filename: "agent-network.yaml", content: ["agentNetwork: 2.0.0", "label: Local Net", "brokers:", "  b:", "    kind: AgentScript"].join("\n") },
+    { filename: "brokers/b.agent", content: "agent b:\n  instructions: hi\n  on_exit: ->\n    transition to @echo.response\necho response:\n  kind: a2a:status_update_event\n  message: ok\n" },
+  ];
+  const ok = importLocalProjectEntries(entries, "org-fallback");
+  check("importLocalProjectEntries succeeds", ok.project.identity.name === "Local Net");
+  check("importLocalProjectEntries uses fallback org", ok.project.identity.organizationId === "org-1" || ok.project.assets.every((a) => true));
+
+  let threw = false;
+  try {
+    importLocalProjectEntries([{ filename: "agent-network.yaml", content: "schemaVersion: 1.0.0\nconnections:\n  x: {}\nbrokers:\n  b: {}" }]);
+  } catch {
+    threw = true;
+  }
+  check("importLocalProjectEntries rejects v1 yaml", threw);
 }
 
 console.log(`\n==== ${passed} passed, ${failed} failed ====`);

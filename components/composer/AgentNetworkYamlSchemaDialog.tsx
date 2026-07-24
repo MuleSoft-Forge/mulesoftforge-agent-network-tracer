@@ -36,7 +36,7 @@ function FieldTable({ fields }: { fields: ExchangeJsonFieldDoc[] }) {
           <tr>
             <th className="px-3 py-2">Field</th>
             <th className="px-3 py-2">Type</th>
-            <th className="px-3 py-2">Composer UI</th>
+            <th className="px-3 py-2">Builder UI</th>
             <th className="px-3 py-2">Source</th>
             <th className="px-3 py-2">Notes</th>
           </tr>
@@ -168,7 +168,7 @@ function SchemaProvenancePanel() {
           <dd className="font-mono text-gray-800">{detail.commitDate ?? "—"}</dd>
         </div>
         <div>
-          <dt className="text-gray-500">Synced into Composer</dt>
+          <dt className="text-gray-500">Synced into Builder</dt>
           <dd className="font-mono text-gray-800">{detail.syncedAt}</dd>
         </div>
         <div>
@@ -212,7 +212,7 @@ function SchemaViewerPanel() {
         </Button>
       </div>
       <p className="mb-2 text-xs text-gray-600">
-        These are the exact schema files Composer validates against — copied from{" "}
+        These are the exact schema files Builder validates against — copied from{" "}
         <span className="font-mono">agent-fabric-schema/src/main/resources/</span>.
       </p>
       <div className="mb-2 flex flex-wrap gap-1">
@@ -297,10 +297,10 @@ export default function AgentNetworkYamlSchemaDialog({ onClose }: { onClose: () 
 
           <section>
             <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
-              Composer field mapping
+              Builder field mapping
             </h3>
             <p className="mb-3 text-xs text-gray-500">
-              How Composer UI fields project into the schema shape above (summary only — the JSON Schema is authoritative).
+              How Builder UI fields project into the schema shape above (summary only — the JSON Schema is authoritative).
             </p>
             <FieldTable fields={AGENT_NETWORK_YAML_TOP_LEVEL} />
           </section>
@@ -311,7 +311,7 @@ export default function AgentNetworkYamlSchemaDialog({ onClose }: { onClose: () 
 
           <section>
             <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
-              Composer notes
+              Builder notes
             </h3>
             <ul className="list-disc space-y-1.5 pl-5 text-xs leading-relaxed text-gray-600">
               {AGENT_NETWORK_YAML_COMPOSER_NOTES.map((n) => (

@@ -4,14 +4,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
   AlertTriangle,
-  Network,
-  GitBranch,
   PanelBottomClose,
   PanelBottomOpen,
   ChevronDown,
-  Code2,
+  HelpCircle,
   X,
 } from "lucide-react";
+import { MuleIcon } from "@/components/composer/MuleIcon";
 import { ComposerProvider, useComposer } from "@/lib/composer/store";
 import { validateProject, type ValidationIssue } from "@/lib/composer/validate";
 import { resolveIssueNavigation } from "@/lib/composer/issue-navigation";
@@ -19,7 +18,6 @@ import { Button } from "@/components/composer/ui";
 import BrokerGraphEditor from "@/components/composer/BrokerGraphEditor";
 import AgentScriptPanel from "@/components/composer/AgentScriptPanel";
 import ComposerLanding from "@/components/composer/ComposerLanding";
-import TopologyView from "@/components/composer/TopologyView";
 import NodeInspector from "@/components/composer/NodeInspector";
 import {
   ComposerNav,
@@ -28,8 +26,8 @@ import {
   type PanelTab,
 } from "@/components/composer/ProjectPanels";
 import FilePreview from "@/components/composer/FilePreview";
+import { HelpModeProvider, useHelpMode } from "@/lib/composer/help/help-mode";
 
-type CenterTab = "graph" | "topology";
 type GraphViewMode = "composer" | "agentscript";
 
 const PREVIEW_HEIGHT_KEY = "composer-preview-height";
@@ -172,12 +170,12 @@ function Inner({
   onDismissWarnings: () => void;
 }) {
   const { project } = useComposer();
+  const { helpMode, toggleHelpMode } = useHelpMode();
   const shellRef = useRef<HTMLDivElement>(null);
-  const [centerTab, setCenterTab] = useState<CenterTab>("graph");
   const [graphViewMode, setGraphViewMode] = useState<GraphViewMode>("composer");
   const [panelTab, setPanelTab] = useState<PanelTab>("identity");
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [previewOpen, setPreviewOpen] = useState(true);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [previewHeight, setPreviewHeight] = useState(PREVIEW_INITIAL_PX);
   const showCanvas = isGraphPanelTab(panelTab);
 
@@ -240,7 +238,6 @@ function Inner({
       const { tab, focusId } = resolveIssueNavigation(issue);
       setPanelTab(tab);
       if (tab === "graph") {
-        setCenterTab("graph");
         setSelectedNodeId(focusId ?? null);
       } else {
         setSelectedNodeId(null);
@@ -253,52 +250,45 @@ function Inner({
     <div ref={shellRef} className="flex h-full flex-col bg-gray-50">
       <div className="flex items-center justify-between gap-4 border-b border-gray-200 bg-white px-4 py-2">
         <div className="flex items-center gap-3">
-          <h1 className="text-sm font-semibold text-gray-900">Agent Network Composer</h1>
+          <h1 className="text-sm font-semibold text-gray-900">Agent Network Builder</h1>
           <span className="text-gray-300">/</span>
           <span className="max-w-[220px] truncate text-sm text-gray-600">{project.identity.name}</span>
         </div>
         <ValidationStrip onIssueClick={handleValidationIssueClick} />
         <div className="flex items-center gap-2">
           {showCanvas && (
-            <>
-              <div className="flex rounded-md border border-gray-300 p-0.5">
-                <button
-                  onClick={() => setCenterTab("graph")}
-                  className={`flex items-center gap-1 rounded px-2 py-1 text-xs font-medium ${centerTab === "graph" ? "bg-primary/10 text-primary" : "text-gray-500"}`}
-                >
-                  <GitBranch className="h-3.5 w-3.5" /> Broker graph
-                </button>
-                <button
-                  onClick={() => setCenterTab("topology")}
-                  className={`flex items-center gap-1 rounded px-2 py-1 text-xs font-medium ${centerTab === "topology" ? "bg-primary/10 text-primary" : "text-gray-500"}`}
-                >
-                  <Network className="h-3.5 w-3.5" /> Topology
-                </button>
-              </div>
-              {centerTab === "graph" && (
-                <div className="flex rounded-md border border-gray-300 p-0.5">
-                  <button
-                    onClick={() => {
-                      setGraphViewMode("composer");
-                      setSelectedNodeId(null);
-                    }}
-                    className={`flex items-center gap-1 rounded px-2 py-1 text-xs font-medium ${graphViewMode === "composer" ? "bg-primary/10 text-primary" : "text-gray-500"}`}
-                  >
-                    <GitBranch className="h-3.5 w-3.5" /> Composer
-                  </button>
-                  <button
-                    onClick={() => {
-                      setGraphViewMode("agentscript");
-                      setSelectedNodeId(null);
-                    }}
-                    className={`flex items-center gap-1 rounded px-2 py-1 text-xs font-medium ${graphViewMode === "agentscript" ? "bg-primary/10 text-primary" : "text-gray-500"}`}
-                  >
-                    <Code2 className="h-3.5 w-3.5" /> AgentScript
-                  </button>
-                </div>
-              )}
-            </>
+            <div className="flex rounded-md border border-gray-300 p-0.5">
+              <button
+                onClick={() => {
+                  setGraphViewMode("composer");
+                  setSelectedNodeId(null);
+                }}
+                className={`flex items-center gap-1 rounded px-2 py-1 text-xs font-medium ${graphViewMode === "composer" ? "bg-primary/10 text-primary" : "text-gray-500"}`}
+              >
+                <MuleIcon name="organize" size={14} /> Builder
+              </button>
+              <button
+                onClick={() => {
+                  setGraphViewMode("agentscript");
+                  setSelectedNodeId(null);
+                }}
+                className={`flex items-center gap-1 rounded px-2 py-1 text-xs font-medium ${graphViewMode === "agentscript" ? "bg-primary/10 text-primary" : "text-gray-500"}`}
+              >
+                <MuleIcon name="sourceCode" size={14} /> AgentScript
+              </button>
+            </div>
           )}
+          <button
+            type="button"
+            onClick={toggleHelpMode}
+            title="Help mode — highlight guidance throughout the builder"
+            className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors ${
+              helpMode ? "bg-primary/10 text-primary ring-1 ring-primary/20" : "text-gray-500 hover:bg-gray-100"
+            }`}
+          >
+            <HelpCircle className="h-3.5 w-3.5" />
+            Help
+          </button>
           <Button variant="ghost" onClick={() => setPreviewOpen((v) => !v)} title="Toggle file preview">
             {previewOpen ? <PanelBottomClose className="h-4 w-4" /> : <PanelBottomOpen className="h-4 w-4" />}
           </Button>
@@ -339,17 +329,13 @@ function Inner({
         {showCanvas && (
           <>
             <div className="min-w-0 flex-1 bg-white">
-              {centerTab === "graph" ? (
-                graphViewMode === "composer" ? (
-                  <BrokerGraphEditor selectedId={selectedNodeId} onSelect={setSelectedNodeId} />
-                ) : (
-                  <AgentScriptPanel />
-                )
+              {graphViewMode === "composer" ? (
+                <BrokerGraphEditor selectedId={selectedNodeId} onSelect={setSelectedNodeId} />
               ) : (
-                <TopologyView />
+                <AgentScriptPanel />
               )}
             </div>
-            {selectedNodeId && graphViewMode === "composer" && centerTab === "graph" && (
+            {selectedNodeId && graphViewMode === "composer" && (
               <div className="w-[380px] shrink-0 overflow-hidden border-l border-gray-200 bg-white">
                 <NodeInspector nodeId={selectedNodeId} onDeleted={() => setSelectedNodeId(null)} />
               </div>
@@ -377,12 +363,14 @@ function Root() {
 
   if (phase === "choosing") {
     return (
-      <ComposerLanding
-        onEnter={(warnings) => {
-          setImportWarnings(warnings ?? []);
-          setPhase("editing");
-        }}
-      />
+      <div className="flex h-full min-h-0 flex-col">
+        <ComposerLanding
+          onEnter={(warnings) => {
+            setImportWarnings(warnings ?? []);
+            setPhase("editing");
+          }}
+        />
+      </div>
     );
   }
 
@@ -392,7 +380,9 @@ function Root() {
 export default function ComposerShell() {
   return (
     <ComposerProvider>
-      <Root />
+      <HelpModeProvider>
+        <Root />
+      </HelpModeProvider>
     </ComposerProvider>
   );
 }

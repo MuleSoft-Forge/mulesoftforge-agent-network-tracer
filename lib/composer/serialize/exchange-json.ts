@@ -1,5 +1,6 @@
 import type { ComposerProject } from "@/lib/composer/model";
 import { deriveDependencies, deriveVariables } from "@/lib/composer/model";
+import { isFlatVariable } from "@/lib/composer/variable-keys";
 
 interface ExchangeVariableField {
   description?: string;
@@ -10,14 +11,20 @@ interface ExchangeVariableField {
 /** Serialize the model's exchange.json projection (identity + variables + dependencies). */
 export function serializeExchangeJson(project: ComposerProject): string {
   const variables = deriveVariables(project);
-  const metadataVariables: Record<string, Record<string, ExchangeVariableField>> = {};
+  const metadataVariables: Record<string, unknown> = {};
   for (const v of variables) {
-    if (!metadataVariables[v.group]) metadataVariables[v.group] = {};
-    metadataVariables[v.group][v.field] = {
+    const entry: ExchangeVariableField = {
       ...(v.description ? { description: v.description } : {}),
       default: v.default ?? "",
       secret: v.secret,
     };
+    if (isFlatVariable(v)) {
+      metadataVariables[v.field] = entry;
+      continue;
+    }
+    const groupObj = (metadataVariables[v.group] as Record<string, ExchangeVariableField> | undefined) ?? {};
+    groupObj[v.field] = entry;
+    metadataVariables[v.group] = groupObj;
   }
 
   const dependencies = deriveDependencies(project).map((d) => ({

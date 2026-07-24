@@ -1,8 +1,8 @@
 "use client";
 
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
-import { GitBranch } from "lucide-react";
 import type { AgentFabricGraphNodeData } from "@/lib/composer/agentfabric-graph-types";
+import { KindIcon } from "@/components/composer/graph/KindIcon";
 import { parseProtocolOutputs, routerOutputHandleId } from "@/lib/composer/agentfabric-graph";
 import { NodeHandles } from "@/components/composer/graph/nodes/NodeHandles";
 
@@ -27,7 +27,7 @@ export function AfRouterNode({ data, selected }: NodeProps<Node<AgentFabricGraph
       />
       <div className="flex items-start gap-3 px-4 py-3">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-amber-100">
-          <GitBranch size={16} className="text-amber-600" />
+          <KindIcon kind="router" size={18} />
         </div>
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-semibold text-amber-800">{data.label}</div>

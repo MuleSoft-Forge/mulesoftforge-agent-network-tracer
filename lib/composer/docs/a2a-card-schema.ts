@@ -7,7 +7,7 @@ import { formatAnfSchemaProvenance } from "@/lib/composer/schema/anf/index";
 import type { ExchangeJsonFieldDoc, ExchangeJsonNestedDoc } from "@/lib/composer/docs/exchange-json-schema";
 
 export const A2A_CARD_INTRO =
-  "The broker A2A card is the network's public front door. It lives at brokers.{brokerKey}.interfaces.a2a.card in agent-network.yaml and must conform to the A2A v1 Agent Card definition in a2a_v1.json (referenced from agent_network_v2.json). Composer validates the emitted card with Ajv and preserves schema fields not yet exposed in the UI under card.extra / capabilities.extra / skill.extra.";
+  "The broker A2A card is the network's public front door. It lives at brokers.{brokerKey}.interfaces.a2a.card in agent-network.yaml and must conform to the A2A v1 Agent Card definition in a2a_v1.json (referenced from agent_network_v2.json). Builder validates the emitted card with Ajv and preserves schema fields not yet exposed in the UI under card.extra / capabilities.extra / skill.extra.";
 
 export const A2A_CARD_SOURCES = [
   formatAnfSchemaProvenance(),
@@ -214,7 +214,7 @@ export const A2A_CARD_SKILL: ExchangeJsonNestedDoc = {
 };
 
 export const A2A_CARD_COMPOSER_NOTES = [
-  "Composer serializes camelCase fields only (a2a_v1 snake_case aliases are normalized on import).",
+  "Builder serializes camelCase fields only (a2a_v1 snake_case aliases are normalized on import).",
   "Fields not in the A2A card tab UI are stored in card.extra, capabilities.extra, or skill.extra and round-trip through yaml unchanged.",
   "Live validation runs on serializeBrokerCard(broker.card) against a2a_v1.json#/definitions/Agent Card.",
   "The full a2a_v1.json bundle also defines protocol messages (tasks, artifacts, …) — only Agent Card applies to the yaml card block.",

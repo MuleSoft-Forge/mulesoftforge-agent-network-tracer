@@ -1,25 +1,13 @@
 import type { Broker } from "@/lib/composer/model";
-import { toIdentifier } from "@/lib/composer/model";
-
-/** kebab-case slug for file names. */
-export function kebab(input: string): string {
-  return (
-    input
-      .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
-      .replace(/[^a-zA-Z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .toLowerCase() || "broker"
-  );
-}
 
 /** File name (under brokers/) for a broker's .agent file. */
 export function brokerFileName(broker: Broker): string {
-  return `${kebab(broker.name || "broker")}.agent`;
+  return `${broker.name || "broker"}.agent`;
 }
 
-/** Sanitize a broker name for use as an identifier in yaml keys / URIs. */
+/** Yaml brokers map key — identical to broker.name. */
 export function brokerKey(broker: Broker): string {
-  return toIdentifier(broker.name || "broker", "broker");
+  return broker.name || "broker";
 }
 
 /** Indent every line of a block by `spaces`. */

@@ -1,26 +1,17 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Bot, Cpu, Sparkles, Network as NetworkIcon, Link2 } from "lucide-react";
+import { MuleIcon } from "@/components/composer/MuleIcon";
 import type {
   ParsedExchangeMetadata,
   ExchangeConnection,
   ExchangeAssetRef,
 } from "@/lib/mulesoft/exchange-asset-metadata";
 
-const KIND_ICON: Record<string, typeof Bot> = {
-  agent: Bot,
-  a2a: Bot,
-  mcp: Cpu,
-  llm: Sparkles,
-  broker: NetworkIcon,
-};
-
 function KindBadge({ kind }: { kind: string }) {
-  const Icon = KIND_ICON[kind.toLowerCase()] ?? Link2;
   return (
     <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-600">
-      <Icon className="h-3 w-3" />
+      <MuleIcon connectionKind={kind} size={12} />
       {kind}
     </span>
   );
@@ -177,7 +168,7 @@ export default function ExchangeMetadataView({ metadata }: { metadata: ParsedExc
                 {metadata.brokers.map((b, i) => (
                   <div key={`${b.ref.assetId}-${i}`} className="rounded-md border border-gray-200 p-2 space-y-1.5">
                     <div className="flex items-center gap-1.5">
-                      <NetworkIcon className="h-3.5 w-3.5 text-gray-400" />
+                      <MuleIcon name="agentNetwork" size={14} />
                       <RefLabel ref={b.ref} />
                       {b.kind && <KindBadge kind={b.kind} />}
                     </div>

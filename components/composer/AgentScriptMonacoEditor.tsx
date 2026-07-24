@@ -4,6 +4,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from 
 import type * as Monaco from "monaco-editor";
 import { setupMonacoWorkers } from "@/lib/composer/monaco-setup";
 import { lintAgentFabricSource } from "@/lib/composer/agentscript-lint";
+import { registerAgentFabricCompletions } from "@/lib/composer/agentscript-completions";
 
 const LINT_DEBOUNCE_MS = 400;
 
@@ -56,6 +57,7 @@ const AgentScriptMonacoEditor = forwardRef<AgentScriptEditorHandle, AgentScriptM
     useEffect(() => {
       let disposed = false;
       let editor: Monaco.editor.IStandaloneCodeEditor | null = null;
+      let completionDisposable: Monaco.IDisposable | null = null;
 
       async function mount() {
         if (!containerRef.current) return;
@@ -76,6 +78,10 @@ const AgentScriptMonacoEditor = forwardRef<AgentScriptEditorHandle, AgentScriptM
         } catch {
           // Editor still works with basic tokenization when parser init fails.
         }
+
+        // Native schema/AST-aware completion (namespaces, node members, fields,
+        // enum values, with-params) backed by the official LanguageService.
+        completionDisposable = registerAgentFabricCompletions(monaco);
 
         editor = monaco.editor.create(containerRef.current, {
           value: valueRef.current,
@@ -115,7 +121,9 @@ const AgentScriptMonacoEditor = forwardRef<AgentScriptEditorHandle, AgentScriptM
 
       return () => {
         disposed = true;
+        monacoRef.current = null;
         if (lintTimerRef.current) clearTimeout(lintTimerRef.current);
+        completionDisposable?.dispose();
         editor?.dispose();
         editorRef.current = null;
       };

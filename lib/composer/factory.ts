@@ -68,15 +68,17 @@ export function createNode(kind: GraphNodeKind, name: string, position: { x: num
   };
 }
 
-export function createBroker(name: string): Broker {
+/** @param key Broker map key (snake_case). @param displayName A2A card name; defaults to key. */
+export function createBroker(key: string, displayName?: string): Broker {
   const echo = createEchoNode();
   const trigger = createTriggerNode(echo.id);
+  const cardName = displayName ?? key;
   return {
     id: newId(),
-    name,
+    name: key,
     interfaceName: "a2a",
     card: {
-      name,
+      name: cardName,
       description: "",
       version: "1.0.0",
       capabilities: { streaming: false, pushNotifications: true },
@@ -105,7 +107,7 @@ export function createEmptyProject(organizationId = ""): ComposerProject {
       tags: ["broker"],
     },
     assets: [],
-    brokers: [createBroker("My Broker")],
+    brokers: [createBroker("my_broker", "My Broker")],
     policyBindings: {},
     variableOverrides: {},
     customVariables: [],

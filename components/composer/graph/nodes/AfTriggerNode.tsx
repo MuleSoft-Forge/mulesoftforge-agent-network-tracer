@@ -1,8 +1,8 @@
 "use client";
 
 import type { Node, NodeProps } from "@xyflow/react";
-import { MessageSquare } from "lucide-react";
 import type { AgentFabricGraphNodeData } from "@/lib/composer/agentfabric-graph-types";
+import { KindIcon } from "@/components/composer/graph/KindIcon";
 import { NodeHandles, AF_TRIGGER_SIDES } from "@/components/composer/graph/nodes/NodeHandles";
 
 export function AfTriggerNode({ data, selected }: NodeProps<Node<AgentFabricGraphNodeData>>) {
@@ -16,7 +16,7 @@ export function AfTriggerNode({ data, selected }: NodeProps<Node<AgentFabricGrap
     >
       <NodeHandles sides={AF_TRIGGER_SIDES} connectedHandles={data.connectedHandles} accentColor="#2dd4bf" />
       <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-teal-100">
-        <MessageSquare size={18} className="text-teal-600" />
+        <KindIcon kind="trigger" size={20} />
       </div>
       <div className="min-w-0">
         <div className="truncate text-sm font-semibold text-teal-700">{data.label}</div>

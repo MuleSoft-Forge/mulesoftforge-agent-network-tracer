@@ -5,6 +5,7 @@ import type {
   LlmBinding,
   OutputProperty,
 } from "@/lib/composer/model";
+import { defaultArtifactExpr, formatMessageExpr } from "@/lib/composer/echo-expressions";
 import { brokerKey, indentBlock } from "@/lib/composer/serialize/util";
 
 const DIALECT_HEADER = "# @dialect: AGENTFABRIC=1.0";
@@ -175,14 +176,18 @@ function emitRouter(node: GraphNode, byId: Map<string, GraphNode>): string[] {
 
 function emitEcho(node: GraphNode): string[] {
   const lines: string[] = [`echo ${node.name}:`];
-  lines.push(`  kind: ${q(node.echoKind || "a2a:status_update_event")}`);
-  if ((node.echoKind || "a2a:status_update_event") === "a2a:status_update_event") {
+  const kind = node.echoKind || "a2a:status_update_event";
+  lines.push(`  kind: ${q(kind)}`);
+
+  if (kind === "a2a:artifact_update_event") {
+    lines.push(`  artifact: ${node.artifactExpr ?? defaultArtifactExpr()}`);
+    if (node.echoAppend !== undefined) lines.push(`  append: ${node.echoAppend}`);
+    if (node.echoLastChunk !== undefined) lines.push(`  lastChunk: ${node.echoLastChunk}`);
+  } else {
     lines.push(`  state: ${q(node.state || "TASK_STATE_COMPLETED")}`);
+    lines.push(`  message: ${formatMessageExpr(node.message ?? "")}`);
+    if (node.metadataExpr) lines.push(`  metadata: ${node.metadataExpr}`);
   }
-  const msg = node.message ?? "";
-  // Treat text starting with @ as an expression; otherwise a quoted literal.
-  const part = msg.trimStart().startsWith("@") ? `a2a.textPart(${msg})` : `a2a.textPart(${q(msg)})`;
-  lines.push(`  message: a2a.message({messageId: uuid(), parts: [${part}]})`);
   lines.push("");
   return lines;
 }

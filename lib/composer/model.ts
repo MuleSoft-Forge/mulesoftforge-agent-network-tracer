@@ -26,6 +26,7 @@ import {
   deriveConnectionVariablesForAsset,
 } from "@/lib/composer/connectivity/connection";
 import { derivePolicyVariableBindings } from "@/lib/composer/connectivity/policy-variable-bindings";
+import { variableStorageKey } from "@/lib/composer/variable-keys";
 import type {
   ConnectionAccess,
   ConnectionAuth,
@@ -178,7 +179,14 @@ export const GraphNodeSchema = z.object({
   /** echo. */
   echoKind: z.enum(["a2a:status_update_event", "a2a:artifact_update_event"]).optional(),
   state: z.string().optional(),
+  /** Status echo: simple text, expression, or full `a2a.message({...})` (stored verbatim when imported). */
   message: z.string().optional(),
+  /** Artifact echo: full `a2a.artifact({...})` expression. */
+  artifactExpr: z.string().optional(),
+  echoAppend: z.boolean().optional(),
+  echoLastChunk: z.boolean().optional(),
+  /** Status echo optional metadata dict expression. */
+  metadataExpr: z.string().optional(),
 
   /**
    * Single on_exit transition target (node id) for non-router, non-echo nodes
@@ -241,7 +249,7 @@ export const BrokerCardSchema = z.object({
 
 export const BrokerSchema = z.object({
   id: z.string().min(1),
-  /** Used identically in yaml brokers key, .agent config.agent_name, trigger target. */
+  /** Broker map key: yaml brokers key, .agent config.agent_name, brokers/*.agent filename. */
   name: z.string().min(1),
   interfaceName: z.string().min(1).default("a2a"),
   card: BrokerCardSchema,
@@ -288,10 +296,13 @@ export const VariableOverrideSchema = z.object({
  * A user-declared deploy variable not derived from a connection/policy — e.g. a
  * `${group.field}` marker typed into instructions/prompts that must still be
  * emitted into exchange.json metadata.variables.
+ *
+ * When `flat: true`, `field` is the full exchange.json key (runtime system limits).
  */
 export const CustomVariableSchema = z.object({
-  group: z.string().min(1),
+  group: z.string().min(1).optional(),
   field: z.string().min(1),
+  flat: z.boolean().optional(),
   description: z.string().optional(),
   default: z.string().optional(),
   secret: z.boolean().optional(),
@@ -353,6 +364,8 @@ export interface DerivedDependency {
 export interface DerivedVariable {
   group: string;
   field: string;
+  /** When true, serializes as a top-level exchange.json metadata.variables key. */
+  flat?: boolean;
   description?: string;
   secret: boolean;
   default?: string;
@@ -427,11 +440,12 @@ export function deriveVariables(project: ComposerProject): DerivedVariable[] {
     if (!byKey.has(key)) byKey.set(key, v);
   }
   for (const cv of project.customVariables ?? []) {
-    const key = `${cv.group}.${cv.field}`;
+    const key = variableStorageKey(cv);
     if (!byKey.has(key)) {
       byKey.set(key, {
-        group: cv.group,
+        group: cv.group ?? "",
         field: cv.field,
+        ...(cv.flat ? { flat: true } : {}),
         description: cv.description,
         default: cv.default,
         secret: cv.secret ?? false,

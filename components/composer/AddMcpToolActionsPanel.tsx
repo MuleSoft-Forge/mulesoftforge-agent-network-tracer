@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Plus } from "lucide-react";
+import { MuleIcon } from "@/components/composer/MuleIcon";
 import type { Broker, ComposerProject, ImportedAsset } from "@/lib/composer/model";
 import { connectionNameForAsset } from "@/lib/composer/model";
 import { createMcpToolAction } from "@/lib/composer/factory";
@@ -126,11 +127,14 @@ export default function AddMcpToolActionsPanel({
 
   return (
     <div className="space-y-3 rounded-md border border-dashed border-gray-200 bg-gray-50/50 p-3">
-      <div>
-        <p className="text-xs font-medium text-gray-700">Add MCP tool action</p>
-        <p className="text-[11px] text-gray-500">
-          Each tool gets its own action (same MCP connection, different tool_name).
-        </p>
+      <div className="flex items-start gap-2">
+        <MuleIcon name="mcp" size={18} className="mt-0.5 shrink-0" />
+        <div>
+          <p className="text-xs font-medium text-gray-700">Add MCP tool action</p>
+          <p className="text-[11px] text-gray-500">
+            Each tool gets its own action (same MCP connection, different tool_name).
+          </p>
+        </div>
       </div>
       {mcpAssets.map((asset) => (
         <McpAssetToolAddRow

@@ -27,6 +27,8 @@ import {
   deriveVariables,
   toIdentifier,
 } from "@/lib/composer/model";
+import { normalizeBrokerKey } from "@/lib/composer/broker-key";
+import { variableStorageKey } from "@/lib/composer/variable-keys";
 import { newId } from "@/lib/composer/factory";
 import {
   parseBrokerAgent,
@@ -132,7 +134,7 @@ function buildAssets(
 function buildVariableOverrides(exchange: ParsedExchangeJson): Record<string, VariableOverride> {
   const overrides: Record<string, VariableOverride> = {};
   for (const v of exchange.variables) {
-    overrides[`${v.group}.${v.field}`] = {
+    overrides[variableStorageKey(v)] = {
       ...(v.description ? { description: v.description } : {}),
       default: v.default,
       secret: v.secret,
@@ -149,14 +151,12 @@ function buildCustomVariables(
   exchange: ParsedExchangeJson,
   derivedProject: ComposerProject
 ): CustomVariable[] {
-  const derivedKeys = new Set(
-    deriveVariables(derivedProject).map((v) => `${v.group}.${v.field}`)
-  );
+  const derivedKeys = new Set(deriveVariables(derivedProject).map((v) => variableStorageKey(v)));
   const custom: CustomVariable[] = [];
   for (const v of exchange.variables) {
-    if (derivedKeys.has(`${v.group}.${v.field}`)) continue;
+    if (derivedKeys.has(variableStorageKey(v))) continue;
     custom.push({
-      group: v.group,
+      ...(v.flat ? { flat: true } : { group: v.group }),
       field: v.field,
       ...(v.description ? { description: v.description } : {}),
       ...(v.default ? { default: v.default } : {}),
@@ -182,6 +182,10 @@ function toGraphNode(pn: ParsedGraphNode, id: string, position: { x: number; y: 
   if (pn.echoKind) node.echoKind = pn.echoKind;
   if (pn.state) node.state = pn.state;
   if (pn.message !== undefined) node.message = pn.message;
+  if (pn.artifactExpr !== undefined) node.artifactExpr = pn.artifactExpr;
+  if (pn.echoAppend !== undefined) node.echoAppend = pn.echoAppend;
+  if (pn.echoLastChunk !== undefined) node.echoLastChunk = pn.echoLastChunk;
+  if (pn.metadataExpr !== undefined) node.metadataExpr = pn.metadataExpr;
   return node;
 }
 
@@ -283,8 +287,10 @@ export function parseProjectFiles(input: ParseFilesInput): ParseFilesResult {
 
   const assets = buildAssets(exchange, yamlDoc.connections, input.fallbackGroupId);
 
-  const brokerName =
-    agent.agentName ?? yamlDoc.broker?.key ?? toIdentifier(yamlDoc.broker?.card.name ?? "broker", "broker");
+  const brokerName = normalizeBrokerKey(
+    agent.agentName ?? yamlDoc.broker?.key ?? yamlDoc.broker?.card.name ?? "broker",
+    "broker"
+  );
 
   const broker: Broker = {
     id: newId(),

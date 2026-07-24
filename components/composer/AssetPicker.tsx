@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Search, Plus, X, Loader2 } from "lucide-react";
+import { MuleIcon } from "@/components/composer/MuleIcon";
 import { useComposer } from "@/lib/composer/store";
 import { importAsset } from "@/lib/composer/factory";
 import { connectionNameForAsset } from "@/lib/composer/model";
@@ -108,9 +109,12 @@ export default function AssetPicker({ onClose }: { onClose: () => void }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true">
       <div className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-2xl">
         <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
-          <div>
-            <h2 className="text-sm font-semibold text-gray-900">Compose from Exchange</h2>
-            <p className="text-xs text-gray-500">Pick existing published assets — you compose, never create.</p>
+          <div className="flex items-center gap-2">
+            <MuleIcon name="exchange" size={20} />
+            <div>
+              <h2 className="text-sm font-semibold text-gray-900">Compose from Exchange</h2>
+              <p className="text-xs text-gray-500">Pick existing published assets — you compose, never create.</p>
+            </div>
           </div>
           <button onClick={onClose} className="rounded p-1 text-gray-500 hover:bg-gray-100" aria-label="Close">
             <X className="h-4 w-4" />
@@ -139,12 +143,13 @@ export default function AssetPicker({ onClose }: { onClose: () => void }) {
               <button
                 key={f.value}
                 onClick={() => toggleKind(f.value)}
-                className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${
+                className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium ${
                   kinds.includes(f.value)
                     ? "border-primary bg-primary/10 text-primary"
                     : "border-gray-300 text-gray-500 hover:bg-gray-50"
                 }`}
               >
+                <MuleIcon assetKind={f.value} size={12} />
                 {f.label}
               </button>
             ))}

@@ -122,11 +122,21 @@ export function applyDagreOverviewLayout(
     };
   });
 
+  return wireHandles(positionedNodes, edges);
+}
+
+/**
+ * Assign each edge a concrete source/target handle and record which handles are connected.
+ */
+function wireHandles(
+  positionedNodes: AgentFabricGraphNode[],
+  edges: AgentFabricGraphEdge[]
+): AgentFabricLayoutResult {
   const sourcePool = new Map<string, string[]>();
   const targetPool = new Map<string, string[]>();
   const consumedSet = new Map<string, Set<string>>();
 
-  for (const node of nodes) {
+  for (const node of positionedNodes) {
     const sides = getOverviewSides(node.data.nodeType);
     const sources: string[] = [];
     if (sides.bottom?.type === "source") sources.push("bottom");

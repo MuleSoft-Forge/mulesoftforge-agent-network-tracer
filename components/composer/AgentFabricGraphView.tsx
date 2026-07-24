@@ -16,6 +16,7 @@ import { extractAgentFabricGraph } from "@/lib/composer/agentscript-graph";
 import { lexicalPositionForNode, protocolGraphToReactFlow } from "@/lib/composer/agentfabric-graph";
 import { applyDagreOverviewLayout } from "@/lib/composer/agentfabric-graph-layout";
 import { agentFabricNodeTypes } from "@/components/composer/graph/nodes";
+import { MuleIcon } from "@/components/composer/MuleIcon";
 
 const defaultEdgeOptions = {
   style: { stroke: "#64748b", strokeWidth: 2 },
@@ -117,7 +118,8 @@ export default function AgentFabricGraphView({ source, onNavigateToSource }: Age
 
   if (loading && !graph) {
     return (
-      <div className="flex h-full items-center justify-center text-xs text-gray-400">
+      <div className="flex h-full flex-col items-center justify-center gap-2 text-xs text-gray-400">
+        <MuleIcon name="graph" size={32} className="opacity-50" />
         Building graph…
       </div>
     );
@@ -138,7 +140,8 @@ export default function AgentFabricGraphView({ source, onNavigateToSource }: Age
 
   if (!graph || graph.nodes.length === 0) {
     return (
-      <div className="flex h-full items-center justify-center text-xs text-gray-400">
+      <div className="flex h-full flex-col items-center justify-center gap-2 text-xs text-gray-400">
+        <MuleIcon name="agentNetwork" size={80} className="opacity-60" />
         No graph nodes in script
       </div>
     );

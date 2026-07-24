@@ -30,6 +30,7 @@ import {
   createLlmBindingForAsset,
   createNode,
 } from "@/lib/composer/factory";
+import { customVariablesMatch } from "@/lib/composer/variable-keys";
 
 export type ComposerAction =
   | { type: "loadProject"; project: ComposerProject }
@@ -43,7 +44,7 @@ export type ComposerAction =
   | { type: "setVariableOverride"; key: string; patch: VariableOverride }
   | { type: "addCustomVariable"; variable: CustomVariable }
   | { type: "updateCustomVariable"; group: string; field: string; patch: Partial<CustomVariable> }
-  | { type: "removeCustomVariable"; group: string; field: string }
+  | { type: "removeCustomVariable"; group: string; field: string; flat?: boolean }
   | { type: "updateBroker"; patch: Partial<Omit<Broker, "id" | "nodes" | "actions" | "llmBindings">> }
   | { type: "updateCard"; patch: Partial<Broker["card"]> }
   | { type: "setDefaultLlm"; bindingName: string | undefined }
@@ -56,6 +57,7 @@ export type ComposerAction =
   | { type: "addNode"; kind: GraphNodeKind; position: { x: number; y: number } }
   | { type: "updateNode"; id: string; patch: Partial<GraphNode> }
   | { type: "moveNode"; id: string; position: { x: number; y: number } }
+  | { type: "layoutNodes"; positions: Record<string, { x: number; y: number }> }
   | { type: "removeNode"; id: string }
   | { type: "connect"; sourceId: string; targetId: string }
   | { type: "disconnect"; sourceId: string; targetId: string };
@@ -180,9 +182,8 @@ export function composerReducer(project: ComposerProject, action: ComposerAction
       };
 
     case "addCustomVariable": {
-      const { group, field } = action.variable;
       const existing = project.customVariables ?? [];
-      if (existing.some((v) => v.group === group && v.field === field)) return project;
+      if (existing.some((v) => customVariablesMatch(v, action.variable))) return project;
       return { ...project, customVariables: [...existing, action.variable] };
     }
 
@@ -197,8 +198,10 @@ export function composerReducer(project: ComposerProject, action: ComposerAction
     case "removeCustomVariable":
       return {
         ...project,
-        customVariables: (project.customVariables ?? []).filter(
-          (v) => !(v.group === action.group && v.field === action.field)
+        customVariables: (project.customVariables ?? []).filter((v) =>
+          action.flat
+            ? !(v.flat && v.field === action.field)
+            : !(v.group === action.group && v.field === action.field && !v.flat)
         ),
       };
 
@@ -265,6 +268,15 @@ export function composerReducer(project: ComposerProject, action: ComposerAction
       return updateBroker(project, (b) => ({
         ...b,
         nodes: b.nodes.map((n) => (n.id === action.id ? { ...n, position: action.position } : n)),
+      }));
+
+    case "layoutNodes":
+      return updateBroker(project, (b) => ({
+        ...b,
+        nodes: b.nodes.map((n) => {
+          const position = action.positions[n.id];
+          return position ? { ...n, position } : n;
+        }),
       }));
 
     case "removeNode":

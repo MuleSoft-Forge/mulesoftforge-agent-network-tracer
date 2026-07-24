@@ -68,7 +68,7 @@ export const EXCHANGE_JSON_TOP_LEVEL: ExchangeJsonFieldDoc[] = [
     type: "string",
     composerUi: "Organization id (same field)",
     composerSource: "derived",
-    notes: "Exchange GAV groupId. Composer sets groupId = organizationId.",
+    notes: "Exchange GAV groupId. Builder sets groupId = organizationId.",
   },
   {
     field: "assetId",
@@ -82,7 +82,7 @@ export const EXCHANGE_JSON_TOP_LEVEL: ExchangeJsonFieldDoc[] = [
     type: "string",
     composerUi: "Version",
     composerSource: "editable",
-    notes: "Asset semver published to Exchange. Same value as yaml info.version in Composer today.",
+    notes: "Asset semver published to Exchange. Same value as yaml info.version in Builder today.",
   },
   {
     field: "descriptorVersion",
@@ -104,7 +104,7 @@ export const EXCHANGE_JSON_TOP_LEVEL: ExchangeJsonFieldDoc[] = [
     type: "string[]",
     composerUi: "Tags",
     composerSource: "editable",
-    notes: "Comma-separated in Composer; emitted as a JSON string array.",
+    notes: "Comma-separated in Builder; emitted as a JSON string array.",
   },
   {
     field: "description",
@@ -116,7 +116,7 @@ export const EXCHANGE_JSON_TOP_LEVEL: ExchangeJsonFieldDoc[] = [
   {
     field: "dependencies",
     type: "array",
-    composerUi: "Assets tab",
+    composerUi: "Exchange Assets tab",
     composerSource: "derived",
     notes: "One entry per composed Exchange asset. See dependency shape below.",
   },
@@ -125,7 +125,7 @@ export const EXCHANGE_JSON_TOP_LEVEL: ExchangeJsonFieldDoc[] = [
     type: "object",
     composerUi: "Variables tab",
     composerSource: "derived",
-    notes: "Deploy metadata. Composer emits metadata.variables from connections.",
+    notes: "Deploy metadata. Builder emits metadata.variables from connections.",
   },
 ];
 
@@ -165,7 +165,7 @@ export const EXCHANGE_JSON_DEPENDENCY: ExchangeJsonNestedDoc = {
       type: "string",
       composerUi: "—",
       composerSource: "hardcoded",
-      notes: 'Always "zip" for composed agentic assets in Composer.',
+      notes: 'Always "zip" for composed agentic assets in Builder.',
     },
   ],
 };
@@ -200,8 +200,8 @@ export const EXCHANGE_JSON_VARIABLE: ExchangeJsonNestedDoc = {
 export const EXCHANGE_JSON_COMPOSER_NOTES = [
   "No formal exchange.json JSON Schema ships with agent_network_v2.json — validate agent-network.yaml against that schema; exchange.json follows the Exchange project descriptor convention.",
   "apiVersion is the Exchange version group used when resolving published dependency versions at deploy time — do not confuse it with yaml info.version or agentNetwork: 2.0.0.",
-  "groupId and organizationId are the same value in Composer output.",
-  "Dependencies are never typed manually — compose assets on the Assets tab and they appear here automatically.",
+  "groupId and organizationId are the same value in Builder output.",
+  "Dependencies are never typed manually — compose assets on the Exchange Assets tab and they appear here automatically.",
   "Deploy variables are derived from connection URLs and auth; edit descriptions/defaults on the Variables tab.",
   "See the live projection in the file preview (exchange.json) or use Edit mode to paste a real project.",
 ];
@@ -209,7 +209,7 @@ export const EXCHANGE_JSON_COMPOSER_NOTES = [
 export function composerSourceLabel(source: ComposerFieldSource): string {
   switch (source) {
     case "editable":
-      return "Editable in Composer";
+      return "Editable in Builder";
     case "model-default":
       return "In model (default)";
     case "derived":
@@ -217,7 +217,7 @@ export function composerSourceLabel(source: ComposerFieldSource): string {
     case "hardcoded":
       return "Fixed in serializer";
     case "not-in-composer":
-      return "Not in Composer";
+      return "Not in Builder";
     default: {
       const _exhaustive: never = source;
       return _exhaustive;

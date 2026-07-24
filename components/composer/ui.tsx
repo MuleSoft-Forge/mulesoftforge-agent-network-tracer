@@ -1,27 +1,30 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { MuleIcon } from "@/components/composer/MuleIcon";
+import { HelpLabel } from "@/components/composer/HelpLabel";
+import type { HelpEntry } from "@/lib/composer/help/help-catalog";
+import type { AssetKind } from "@/lib/composer/model";
 
-const labelCls = "block text-xs font-medium text-gray-600 mb-1";
-const uppercaseLabelCls =
-  "block text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5";
 const inputCls =
   "w-full rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary";
 
 export function Field({
   label,
+  help,
   children,
   hint,
   uppercaseLabel,
 }: {
   label: string;
+  help?: HelpEntry;
   children: ReactNode;
   hint?: string;
   uppercaseLabel?: boolean;
 }) {
   return (
     <label className="block">
-      <span className={uppercaseLabel ? uppercaseLabelCls : labelCls}>{label}</span>
+      <HelpLabel label={label} help={help} uppercase={uppercaseLabel} />
       {children}
       {hint ? <span className="mt-1 block text-[11px] text-gray-400">{hint}</span> : null}
     </label>
@@ -57,6 +60,7 @@ export function TextField({
   onBlur,
   placeholder,
   hint,
+  help,
   mono,
   uppercaseLabel,
 }: {
@@ -66,11 +70,12 @@ export function TextField({
   onBlur?: () => void;
   placeholder?: string;
   hint?: string;
+  help?: HelpEntry;
   mono?: boolean;
   uppercaseLabel?: boolean;
 }) {
   return (
-    <Field label={label} hint={hint} uppercaseLabel={uppercaseLabel}>
+    <Field label={label} help={help} hint={hint} uppercaseLabel={uppercaseLabel}>
       <input
         type="text"
         className={`${inputCls} ${mono ? "font-mono" : ""}`}
@@ -91,6 +96,7 @@ export function TextArea({
   placeholder,
   rows = 4,
   hint,
+  help,
   mono,
   uppercaseLabel,
 }: {
@@ -101,11 +107,12 @@ export function TextArea({
   placeholder?: string;
   rows?: number;
   hint?: string;
+  help?: HelpEntry;
   mono?: boolean;
   uppercaseLabel?: boolean;
 }) {
   return (
-    <Field label={label} hint={hint} uppercaseLabel={uppercaseLabel}>
+    <Field label={label} help={help} hint={hint} uppercaseLabel={uppercaseLabel}>
       <textarea
         className={`${inputCls} ${mono ? "font-mono text-xs" : ""}`}
         rows={rows}
@@ -133,6 +140,7 @@ export function SelectField<T extends string>({
   trailingOptions,
   onChange,
   hint,
+  help,
   uppercaseLabel,
 }: {
   label: string;
@@ -142,10 +150,11 @@ export function SelectField<T extends string>({
   trailingOptions?: Array<SelectOption<T>>;
   onChange: (v: T) => void;
   hint?: string;
+  help?: HelpEntry;
   uppercaseLabel?: boolean;
 }) {
   return (
-    <Field label={label} hint={hint} uppercaseLabel={uppercaseLabel}>
+    <Field label={label} help={help} hint={hint} uppercaseLabel={uppercaseLabel}>
       <select className={inputCls} value={value} onChange={(e) => onChange(e.target.value as T)}>
         {options?.map((o) => (
           <option key={o.value} value={o.value}>
@@ -224,9 +233,12 @@ const KIND_BADGE: Record<string, string> = {
   llm: "bg-navy/10 text-navy",
 };
 
-export function KindBadge({ kind }: { kind: "agent" | "mcp" | "llm" }) {
+export function KindBadge({ kind }: { kind: AssetKind }) {
   return (
-    <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${KIND_BADGE[kind] ?? "bg-gray-100 text-gray-600"}`}>
+    <span
+      className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${KIND_BADGE[kind] ?? "bg-gray-100 text-gray-600"}`}
+    >
+      <MuleIcon assetKind={kind} size={12} />
       {kind}
     </span>
   );

@@ -2,11 +2,13 @@
 
 import { useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Trash2 } from "lucide-react";
-import type { Broker, BrokerAction, ComposerProject, ImportedAsset } from "@/lib/composer/model";
+import type { Broker, BrokerAction, ComposerProject, ImportedAsset, AssetKind } from "@/lib/composer/model";
 import { assetByConnectionName, connectionNameForAsset } from "@/lib/composer/model";
 import { useComposer } from "@/lib/composer/store";
 import McpActionToolField from "@/components/composer/McpActionToolField";
 import { McpAssetToolAddRow, usedToolNamesForConnection } from "@/components/composer/AddMcpToolActionsPanel";
+import { HelpPanelIntro } from "@/components/composer/HelpLabel";
+import { helpForSection } from "@/lib/composer/help/section-help-catalog";
 import { Button, KindBadge, TextField } from "@/components/composer/ui";
 
 interface ActionGroup {
@@ -104,16 +106,14 @@ function ActionAssetCard({
   group,
   broker,
   project,
-  defaultExpanded,
 }: {
   group: ActionGroup;
   broker: Broker;
   project: ComposerProject;
-  defaultExpanded: boolean;
 }) {
-  const [expanded, setExpanded] = useState(defaultExpanded);
+  const [expanded, setExpanded] = useState(false);
   const { asset, connectionName, actions } = group;
-  const kind = asset?.kind ?? (actions[0]?.actionKind === "mcp:tool" ? "mcp" : "agent");
+  const kind: AssetKind = asset?.kind ?? (actions[0]?.actionKind === "mcp:tool" ? "mcp" : "agent");
   const title = asset?.name ?? connectionName;
 
   return (
@@ -175,18 +175,18 @@ export default function BrokerActionsPanel({
   const hasActionableAssets = groups.length > 0;
 
   if (!hasActionableAssets && broker.actions.length === 0) {
-    return <p className="text-xs text-gray-400">No actions yet. Compose agents or MCP servers under Assets.</p>;
+    return <p className="text-xs text-gray-400">No actions yet. Compose agents or MCP servers under Exchange Assets.</p>;
   }
 
   return (
     <div className="space-y-2">
+      <HelpPanelIntro help={helpForSection("panel.actions")} />
       {groups.map((group, index) => (
         <ActionAssetCard
           key={group.connectionName}
           group={group}
           broker={broker}
           project={project}
-          defaultExpanded={groups.length === 1 || index === 0}
         />
       ))}
     </div>

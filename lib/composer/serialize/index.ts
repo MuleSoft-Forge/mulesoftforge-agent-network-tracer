@@ -8,10 +8,10 @@ import { brokerFileName } from "@/lib/composer/serialize/util";
 export { serializeExchangeJson } from "@/lib/composer/serialize/exchange-json";
 export { serializeAgentNetworkYaml, buildAgentNetworkDoc } from "@/lib/composer/serialize/agent-network-yaml";
 export { serializeBrokerAgent } from "@/lib/composer/serialize/broker-agent";
-export { brokerFileName, brokerKey, kebab } from "@/lib/composer/serialize/util";
+export { brokerFileName, brokerKey } from "@/lib/composer/serialize/util";
 
 export interface SerializedFile {
-  /** Path relative to project root, e.g. "brokers/my-broker.agent". */
+  /** Path relative to project root, e.g. "brokers/my_broker.agent". */
   path: string;
   language: "json" | "yaml" | "agent";
   content: string;

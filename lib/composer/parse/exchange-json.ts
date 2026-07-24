@@ -3,6 +3,8 @@
  * the per-variable overrides (description/default/secret) so they round-trip.
  */
 
+import { isFlatExchangeVariableEntry } from "@/lib/composer/variable-keys";
+
 export interface ParsedDependency {
   groupId: string;
   assetId: string;
@@ -13,6 +15,7 @@ export interface ParsedDependency {
 export interface ParsedVariable {
   group: string;
   field: string;
+  flat?: boolean;
   description?: string;
   default: string;
   secret: boolean;
@@ -64,6 +67,17 @@ function parseVariables(metadata: Record<string, unknown> | undefined): ParsedVa
   for (const [group, fieldsRaw] of Object.entries(varsObj)) {
     const fields = asRecord(fieldsRaw);
     if (!fields) continue;
+    if (isFlatExchangeVariableEntry(fields)) {
+      out.push({
+        group: "",
+        field: group,
+        flat: true,
+        ...(asString(fields.description) ? { description: asString(fields.description) } : {}),
+        default: asString(fields.default) ?? "",
+        secret: fields.secret === true,
+      });
+      continue;
+    }
     for (const [field, valRaw] of Object.entries(fields)) {
       const v = asRecord(valRaw);
       if (!v) continue;

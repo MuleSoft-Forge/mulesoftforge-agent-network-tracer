@@ -23,8 +23,15 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // Legacy slug → Builder
+  if (pathname === "/compose" || pathname.startsWith("/compose/")) {
+    const url = request.nextUrl.clone();
+    url.pathname = `/builder${pathname.slice("/compose".length)}`;
+    return NextResponse.redirect(url);
+  }
+
   // Protect authenticated app routes under /(app)
-  if (pathname.startsWith("/agent-network") || pathname.startsWith("/compose")) {
+  if (pathname.startsWith("/agent-network") || pathname.startsWith("/builder")) {
     if (!(await hasValidSession(request))) {
       // Redirect to sign-in with return URL
       const signInUrl = new URL("/auth/sign-in", request.url);

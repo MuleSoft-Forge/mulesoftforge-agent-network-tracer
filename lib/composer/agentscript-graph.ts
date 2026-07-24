@@ -1,19 +1,6 @@
-import { getParser, init } from "@sf-agentscript/agentforce/browser";
 import { parseAndLint } from "@sf-agentscript/language";
 import { agentfabricDialect, getGraph, type Graph } from "@sf-agentscript/agentfabric-dialect";
-
-let parserReady = false;
-let parserInit: Promise<void> | null = null;
-
-async function ensureParser(): Promise<void> {
-  if (parserReady) return;
-  if (!parserInit) {
-    parserInit = init().then(() => {
-      parserReady = true;
-    });
-  }
-  await parserInit;
-}
+import { parseAgentFabricSource } from "@/lib/composer/agentscript-parser";
 
 export interface AgentFabricGraphResult {
   graph: Graph | null;
@@ -27,9 +14,7 @@ export async function extractAgentFabricGraph(source: string): Promise<AgentFabr
   }
 
   try {
-    await ensureParser();
-    const parser = getParser();
-    const tree = parser.parse(source);
+    const tree = await parseAgentFabricSource(source);
     const result = parseAndLint(tree.rootNode, agentfabricDialect);
     const errors = result.diagnostics
       .filter((d) => d.severity === 1)

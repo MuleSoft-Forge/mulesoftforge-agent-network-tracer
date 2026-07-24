@@ -1,8 +1,12 @@
 /** @type {import('next').NextConfig} */
+const isProd = process.env.NODE_ENV === "production";
+
 const nextConfig = {
   reactStrictMode: true,
   // Hide the floating "N" dev indicator (only affects development)
   devIndicators: false,
+  // Strip console.* from production client + server bundles (Vercel deploys).
+  compiler: isProd ? { removeConsole: true } : undefined,
   transpilePackages: [
     "@sf-agentscript/monaco",
     "@sf-agentscript/language",

@@ -22,7 +22,7 @@ function FieldTable({ fields }: { fields: ExchangeJsonFieldDoc[] }) {
           <tr>
             <th className="px-3 py-2">Field</th>
             <th className="px-3 py-2">Type</th>
-            <th className="px-3 py-2">Composer UI</th>
+            <th className="px-3 py-2">Builder UI</th>
             <th className="px-3 py-2">Source</th>
             <th className="px-3 py-2">Notes</th>
           </tr>
@@ -99,7 +99,7 @@ export default function ExchangeJsonSchemaDialog({ onClose }: { onClose: () => v
           <NestedSection doc={EXCHANGE_JSON_VARIABLE} />
 
           <section>
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Composer notes</h3>
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Builder notes</h3>
             <ul className="list-disc space-y-1.5 pl-5 text-xs leading-relaxed text-gray-600">
               {EXCHANGE_JSON_COMPOSER_NOTES.map((n) => (
                 <li key={n}>{n}</li>

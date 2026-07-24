@@ -342,7 +342,6 @@ export function BrokerCardEditor({
       <Collapsible
         title="More settings: provider, capabilities and defaults"
         subtitle="Provider identity, supported capabilities, and default content modes."
-        defaultOpen
       >
         <div className="grid grid-cols-2 gap-2">
           <TextField
@@ -507,7 +506,6 @@ export function BrokerCardEditor({
       <Collapsible
         title="Additional skills"
         subtitle={`${extraSkills.length} extra skill${extraSkills.length === 1 ? "" : "s"}`}
-        defaultOpen={extraSkills.length > 0}
       >
         {extraSkills.map((skill, i) => (
           <SkillEditor

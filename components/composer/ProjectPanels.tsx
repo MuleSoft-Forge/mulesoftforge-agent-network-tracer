@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Boxes, BookOpen, ChevronDown, ChevronRight, Trash2 } from "lucide-react";
+import { BookOpen, ChevronDown, ChevronRight, ExternalLink, Trash2 } from "lucide-react";
 import { useComposer } from "@/lib/composer/store";
+import { MuleIcon } from "@/components/composer/MuleIcon";
 import { connectionNameForAsset, toIdentifier, variableGroupForAsset, type Broker, type ImportedAsset, type YamlNetworkInfo } from "@/lib/composer/model";
+import { BROKER_KEY_HINT, normalizeBrokerKey } from "@/lib/composer/broker-key";
 import AssetPicker from "@/components/composer/AssetPicker";
 import BrokerActionsPanel from "@/components/composer/BrokerActionsPanel";
 import AgentNetworkYamlSchemaDialog from "@/components/composer/AgentNetworkYamlSchemaDialog";
@@ -13,7 +15,10 @@ import { ConnectionExtrasEditor } from "@/components/composer/ConnectionExtrasEd
 import { BrokerCardEditor } from "@/components/composer/BrokerCardEditor";
 import A2aCardLivePreview from "@/components/composer/A2aCardLivePreview";
 import { VariablesPanel } from "@/components/composer/VariablesPanel";
+import { HelpPanelIntro } from "@/components/composer/HelpLabel";
+import { helpForSection } from "@/lib/composer/help/section-help-catalog";
 import { createBroker } from "@/lib/composer/factory";
+import { instructionTextForEditor } from "@/lib/composer/instruction-text";
 import { PolicyBindingsPanel } from "@/components/composer/PolicyBindingsPanel";
 import type { DeclaredPolicyBinding } from "@/lib/composer/connectivity/policy-bindings-zod";
 import { useExchangePolicies, type ExchangePolicyCatalog } from "@/components/composer/useExchangePolicies";
@@ -41,18 +46,18 @@ interface TabGroup {
 export const PANEL_TAB_GROUPS: TabGroup[] = [
   {
     title: "Agent network",
-    hint: "Shared across all brokers",
+    hint: "",
     tabs: [
       { id: "identity", label: "Project" },
-      { id: "assets", label: "Assets" },
+      { id: "assets", label: "Exchange Assets" },
       { id: "variables", label: "Variables" },
     ],
   },
   {
     title: "Broker",
-    hint: "Access → card → AS Instructions → AS LLM → AS Actions → AS Graph",
+    hint: "",
     tabs: [
-      { id: "access", label: "Access" },
+      { id: "access", label: "A2A Interface" },
       { id: "a2a-card", label: "A2A card" },
       { id: "behavior", label: "AS Instructions" },
       { id: "llms", label: "AS LLM" },
@@ -84,30 +89,23 @@ export function ComposerNav({
   tab: PanelTab;
   onTabChange: (tab: PanelTab) => void;
 }) {
-  const { project } = useComposer();
-  const broker = project.brokers[0];
-
   return (
     <nav className="flex h-full w-[176px] shrink-0 flex-col space-y-3 overflow-y-auto border-r border-gray-200 bg-white px-2 py-2.5">
       {PANEL_TAB_GROUPS.map((group) => (
         <div key={group.title}>
           <p className="px-2 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
             {group.title}
-            {group.title === "Broker" && broker ? (
-              <span className="mt-0.5 block truncate font-normal normal-case text-gray-500">
-                {broker.card.name || broker.name}
-              </span>
-            ) : null}
           </p>
-          <p className="mb-1 px-2 text-[10px] text-gray-400">{group.hint}</p>
+          {group.hint ? <p className="mb-1 px-2 text-[10px] text-gray-400">{group.hint}</p> : null}
           <div className="space-y-0.5">
             {group.tabs.map((t) => (
               <button
                 key={t.id}
                 type="button"
                 onClick={() => onTabChange(t.id)}
-                className={`${tabBtn} ${tab === t.id ? tabActive : tabIdle}`}
+                className={`${tabBtn} flex items-center gap-2 ${tab === t.id ? tabActive : tabIdle}`}
               >
+                <MuleIcon tab={t.id} size={14} className="opacity-80" />
                 {t.label}
               </button>
             ))}
@@ -153,7 +151,7 @@ function YamlInfoSection({
   yamlInfo: YamlNetworkInfo | undefined;
   onPatch: (yamlInfo: YamlNetworkInfo) => void;
 }) {
-  const [expanded, setExpanded] = useState(() => hasYamlInfoContent(yamlInfo));
+  const [expanded, setExpanded] = useState(false);
 
   return (
     <div className="overflow-hidden rounded-md border border-gray-200">
@@ -449,10 +447,17 @@ export function ComposerPanelContent({ tab }: { tab: PanelTab }) {
                       before wiring LLMs, actions, or the graph.
                     </p>
                     <TextField
-                      label="Broker name"
+                      label="Broker key"
                       value={broker.name}
                       onChange={(v) => dispatch({ type: "updateBroker", patch: { name: v } })}
-                      hint="Used across the yaml key, config.agent_name and trigger target."
+                      onBlur={() => {
+                        const normalized = normalizeBrokerKey(broker.name, "broker");
+                        if (normalized !== broker.name) {
+                          dispatch({ type: "updateBroker", patch: { name: normalized } });
+                        }
+                      }}
+                      hint={`Yaml brokers map key, config.agent_name, and .agent filename. ${BROKER_KEY_HINT}`}
+                      mono
                     />
                     <div className="flex items-center justify-end">
                       <SchemaDocLink label="A2A card schema" onClick={() => setSchemaDialog("a2a-card")} />
@@ -496,16 +501,15 @@ export function ComposerPanelContent({ tab }: { tab: PanelTab }) {
             <BrokerRequired broker={broker}>
               {broker && (
                 <>
-                  <p className="text-xs text-gray-400">
-                    Step 1 — control who may call this broker and which authentication policies apply on the A2A
-                    interface. Maps to{" "}
-                    <SchemaDocLink label="agent-network.yaml" onClick={() => setSchemaDialog("yaml")} />
-                    {" "}
-                    <span className="font-mono">brokers.*.interfaces.a2a.policies</span>.
-                  </p>
+                  <HelpPanelIntro help={helpForSection("panel.a2aInterface")}>
+                    <p className="mt-2 text-[11px] text-gray-500">
+                      Maps to <span className="font-mono">brokers.*.interfaces.a2a.policies</span> in{" "}
+                      <SchemaDocLink label="agent-network.yaml" onClick={() => setSchemaDialog("yaml")} />.
+                    </p>
+                  </HelpPanelIntro>
                   <PolicyBindingsPanel
                     organizationId={project.identity.organizationId}
-                    variableGroup={toIdentifier(broker.name)}
+                    variableGroup={broker.name}
                     policies={broker.interfacePolicies}
                     policyCatalog={brokerPolicyCatalog}
                     policyBindings={project.policyBindings}
@@ -530,17 +534,20 @@ export function ComposerPanelContent({ tab }: { tab: PanelTab }) {
             <BrokerRequired broker={broker}>
               {broker && (
                 <>
-                  <p className="text-xs text-gray-400">
-                    Step 3 — runtime persona. Maps to{" "}
-                    <span className="font-mono">system.instructions</span> in{" "}
-                    <span className="font-mono">brokers/*.agent</span>.
-                  </p>
+                  <HelpPanelIntro help={helpForSection("panel.brokerBehavior")}>
+                    <p className="mt-2 text-[11px] text-gray-500">
+                      Maps to <span className="font-mono">system.instructions</span> in{" "}
+                      <span className="font-mono">brokers/*.agent</span>.
+                    </p>
+                  </HelpPanelIntro>
                   <TextArea
                     label="System instructions"
-                    value={broker.systemInstructions ?? ""}
+                    value={instructionTextForEditor(broker.systemInstructions)}
                     onChange={(v) => dispatch({ type: "updateBroker", patch: { systemInstructions: v } })}
                     rows={5}
-                    hint="Global broker persona applied when LLM nodes run."
+                    help={helpForSection("field.systemInstructions")}
+                    placeholder="Global broker persona applied when LLM nodes run."
+                    hint="Default persona for all LLM nodes unless a node overrides system.instructions."
                   />
                 </>
               )}
@@ -559,7 +566,7 @@ export function ComposerPanelContent({ tab }: { tab: PanelTab }) {
                 <span className="font-mono">dependencies[]</span>.
               </p>
               <Button variant="primary" className="w-full" onClick={() => setPickerOpen(true)}>
-                <Boxes className="h-4 w-4" /> Compose from Exchange
+                <MuleIcon name="exchange" size={16} /> Compose from Exchange
               </Button>
               {project.assets.length === 0 && <p className="text-xs text-gray-400">No composed assets yet.</p>}
               <div className="space-y-2">
@@ -606,7 +613,7 @@ export function ComposerPanelContent({ tab }: { tab: PanelTab }) {
               {broker && (
                 <>
                   <p className="text-xs text-gray-400">
-                    Step 4 — LLM connections for reasoning. Compose the provider under Assets first, then bind provider
+                    Step 4 — LLM connections for reasoning. Compose the provider under Exchange Assets first, then bind provider
                     and model here. Referenced from graph nodes as{" "}
                     <span className="font-mono">@llm.&lt;name&gt;</span>.
                   </p>
@@ -625,7 +632,7 @@ export function ComposerPanelContent({ tab }: { tab: PanelTab }) {
                     }
                   />
                   {broker.llmBindings.length === 0 && (
-                    <p className="text-xs text-gray-400">No LLM bindings yet. Compose an LLM under Assets first.</p>
+                    <p className="text-xs text-gray-400">No LLM bindings yet. Compose an LLM under Exchange Assets first.</p>
                   )}
                   {broker.llmBindings.map((b) => (
                     <div key={b.id} className="space-y-2 rounded-md border border-gray-200 p-2">

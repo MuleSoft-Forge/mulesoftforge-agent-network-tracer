@@ -22,7 +22,7 @@ const TAB_LABELS: Record<IssuePanelTab, string> = {
   identity: "Project",
   assets: "Assets",
   variables: "Variables",
-  access: "Access",
+  access: "A2A Interface",
   "a2a-card": "A2A card",
   behavior: "AS Instructions",
   llms: "AS LLM",
@@ -65,6 +65,8 @@ export function resolveIssueNavigation(issue: ValidationIssue): IssueNavigation 
     tab = "actions";
   } else if (target?.kind === "node") {
     tab = "graph";
+  } else if (/^Broker key "/.test(issue.message)) {
+    tab = "a2a-card";
   } else if (target?.kind === "broker") {
     tab = "graph";
   } else if (target?.kind === "project") {

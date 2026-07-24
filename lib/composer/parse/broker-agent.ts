@@ -8,6 +8,8 @@
  */
 
 import type { GraphNodeKind, OutputProperty } from "@/lib/composer/model";
+import { readExpressionValue } from "@/lib/composer/echo-expressions";
+import { normalizeParsedInstructionText } from "@/lib/composer/instruction-text";
 
 export interface ParsedLlmBinding {
   name: string;
@@ -56,6 +58,10 @@ export interface ParsedGraphNode {
   echoKind?: "a2a:status_update_event" | "a2a:artifact_update_event";
   state?: string;
   message?: string;
+  artifactExpr?: string;
+  echoAppend?: boolean;
+  echoLastChunk?: boolean;
+  metadataExpr?: string;
   onExitTargetName?: string;
 }
 
@@ -132,16 +138,92 @@ function dedent(lines: string[], n: number): string {
   return lines.map((l) => (l.length >= n ? l.slice(n) : l.replace(/^\s+/, ""))).join("\n");
 }
 
-/** Find `key:` in `lines`; return its block-scalar or inline value. */
+/** Lines nested under `lines[startIdx]` within a slice (indent > keyIndent). */
+function collectDeeperFromSlice(lines: string[], startIdx: number, keyIndent: number): string[] {
+  const out: string[] = [];
+  for (let j = startIdx + 1; j < lines.length; j++) {
+    const l = lines[j];
+    if (isBlank(l)) {
+      out.push(l);
+      continue;
+    }
+    if (getIndent(l) <= keyIndent) break;
+    out.push(l);
+  }
+  while (out.length > 0 && isBlank(out[out.length - 1])) out.pop();
+  return out;
+}
+
+/** Collect consecutive text lines at `baseIndent` starting at `startIdx`. */
+function collectIndentedTextBlock(lines: string[], startIdx: number, baseIndent: number): string {
+  const parts: string[] = [];
+  for (let j = startIdx; j < lines.length; j++) {
+    const l = lines[j];
+    if (isBlank(l)) {
+      parts.push("");
+      continue;
+    }
+    const ind = getIndent(l);
+    if (ind < baseIndent) break;
+    if (ind === baseIndent && j > startIdx && /^[\w]+:/.test(l.trim())) break;
+    parts.push(ind >= baseIndent ? l.slice(baseIndent) : l.trimStart());
+  }
+  return parts.join("\n").trimEnd();
+}
+
+/** Body of `key: ->` — nested `| …` block or indented expression/text lines. */
+function readProcedureBlock(lines: string[], lineIdx: number, keyIndent: number): string | undefined {
+  const deeper = collectDeeper(lines, lineIdx, keyIndent);
+  if (deeper.length === 0) return undefined;
+
+  for (let j = 0; j < deeper.length; j++) {
+    const dl = deeper[j];
+    if (isBlank(dl)) continue;
+    const dt = dl.trim();
+    const dIndent = getIndent(dl);
+
+    if (dt.startsWith("|")) {
+      const inline = dt.slice(1).trim();
+      if (inline) return inline;
+      const block = dedent(collectDeeperFromSlice(deeper, j, dIndent), dIndent + 2);
+      return block.trimEnd() || undefined;
+    }
+
+    if (/^[\w]+:\s*(->\s*)?$/.test(dt)) continue;
+
+    return collectIndentedTextBlock(deeper, j, dIndent) || undefined;
+  }
+  return undefined;
+}
+
+/** Read text for `key: value` at `lines[lineIdx]` (inline, `|`, or `->` procedure). */
+function readMappingValue(lines: string[], lineIdx: number): string | undefined {
+  const line = lines[lineIdx];
+  const keyIndent = getIndent(line);
+  const m = line.trim().match(/^([\w]+):\s*(.*)$/);
+  if (!m) return undefined;
+  const val = m[2].trim();
+
+  if (val === "|") {
+    const content = dedent(collectDeeper(lines, lineIdx, keyIndent), keyIndent + 2);
+    return content.trimEnd() || undefined;
+  }
+
+  if (val === "->") {
+    return readProcedureBlock(lines, lineIdx, keyIndent);
+  }
+
+  if (val === "") return undefined;
+
+  return unquote(val);
+}
+
+/** Find `key:` in `lines`; return its block-scalar, procedure, or inline value. */
 function readTextByKey(lines: string[], key: string): string | undefined {
   const re = new RegExp(`^(\\s*)${key}:\\s*(.*)$`);
   for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(re);
-    if (!m) continue;
-    const ind = m[1].length;
-    const val = m[2];
-    if (val === "|") return dedent(collectDeeper(lines, i, ind), ind + 2);
-    return unquote(val);
+    if (!lines[i].match(re)) continue;
+    return readMappingValue(lines, i);
   }
   return undefined;
 }
@@ -323,6 +405,13 @@ function readTransition(body: string[], i: number): string | undefined {
   return undefined;
 }
 
+function parseBool(raw: string): boolean | undefined {
+  const s = raw.trim().toLowerCase();
+  if (s === "true") return true;
+  if (s === "false") return false;
+  return undefined;
+}
+
 function parseNode(kind: GraphNodeKind, name: string, body: string[]): ParsedGraphNode {
   const node: ParsedGraphNode = { kind, name };
   for (let i = 0; i < body.length; i++) {
@@ -354,17 +443,38 @@ function parseNode(kind: GraphNodeKind, name: string, body: string[]): ParsedGra
         node.state = unquote(val);
         break;
       case "message":
-        node.message = parseEchoMessage(val);
+        node.message = readExpressionValue(body, i);
         break;
-      case "prompt":
-        node.prompt = val === "|" ? dedent(collectDeeper(body, i, 2), 4) : unquote(val);
+      case "artifact":
+        node.artifactExpr = readExpressionValue(body, i);
         break;
-      case "system":
-        node.systemInstructions = readTextByKey(collectDeeper(body, i, 2), "instructions");
+      case "append": {
+        const b = parseBool(val);
+        if (b !== undefined) node.echoAppend = b;
         break;
+      }
+      case "lastChunk": {
+        const b = parseBool(val);
+        if (b !== undefined) node.echoLastChunk = b;
+        break;
+      }
+      case "metadata":
+        node.metadataExpr = readExpressionValue(body, i);
+        break;
+      case "prompt": {
+        const text = normalizeParsedInstructionText(readMappingValue(body, i));
+        if (text !== undefined) node.prompt = text;
+        break;
+      }
+      case "system": {
+        const text = normalizeParsedInstructionText(readTextByKey(collectDeeper(body, i, 2), "instructions"));
+        if (text !== undefined) node.systemInstructions = text;
+        break;
+      }
       case "reasoning": {
         const sub = collectDeeper(body, i, 2);
-        node.reasoningInstructions = readTextByKey(sub, "instructions");
+        const text = normalizeParsedInstructionText(readTextByKey(sub, "instructions"));
+        if (text !== undefined) node.reasoningInstructions = text;
         const refs = readActionRefs(sub);
         if (refs.length > 0) node.actionRefs = refs;
         break;
@@ -439,20 +549,12 @@ function parseRoutes(sub: string[]): ParsedRoute[] {
   return routes;
 }
 
-/** Extract the textPart argument from `a2a.message({... a2a.textPart(<arg>)...})`. */
-function parseEchoMessage(val: string): string {
-  const m = val.match(/a2a\.textPart\((.*)\)\s*\]/);
-  const arg = (m ? m[1] : "").trim();
-  if (arg.startsWith('"')) return unquote(arg);
-  return arg;
-}
-
 export function parseBrokerAgent(text: string): ParsedBrokerAgent {
   const groups = splitTopLevel(text);
   const result: ParsedBrokerAgent = { llmBindings: [], actions: [], nodes: [] };
   for (const g of groups) {
     if (g.header === "system:") {
-      result.systemInstructions = readTextByKey(g.body, "instructions") ?? "";
+      result.systemInstructions = normalizeParsedInstructionText(readTextByKey(g.body, "instructions")) ?? "";
       continue;
     }
     if (g.header === "config:") {

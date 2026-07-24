@@ -4,9 +4,8 @@
  * Logs all API calls with full request/response details for debugging.
  * Set ENABLE_API_LOGGING=true locally to enable `debugLog` / `loggedFetch` output.
  *
- * On deployed Vercel builds (`VERCEL=1` and `NODE_ENV=production`), verbose logging
- * is always off so dashboard env mistakes cannot enable it. Local `vercel dev` is
- * unaffected (`NODE_ENV=development`).
+ * Logging is **development-only** (`NODE_ENV=development`). Production builds
+ * (including Vercel production and preview) never emit logs, regardless of env vars.
  *
  * IMPORTANT: Never logs customer data - all sensitive fields are sanitized.
  * Tokens (Authorization bearer, access_token, refresh_token, client_secret) are
@@ -15,18 +14,18 @@
  * deliberately narrow so production logs never include tokens.
  */
 
-/** Deployed Vercel (serverless/edge) — not local `next dev` or typical `vercel dev`. */
-function isVercelProductionBuild(): boolean {
-  return process.env.VERCEL === "1" && process.env.NODE_ENV === "production";
+/** Local `next dev` / `vercel dev` only — never true on deployed production/preview. */
+function isDevelopmentRuntime(): boolean {
+  return process.env.NODE_ENV === "development";
 }
 
 /**
  * Check if API logging is enabled.
- * Set ENABLE_API_LOGGING=true to enable logging (local / non-Vercel only).
+ * Set ENABLE_API_LOGGING=true to enable logging (local development only).
  * If not set, logging is disabled by default.
  */
 export function isLoggingEnabled(): boolean {
-  if (isVercelProductionBuild()) {
+  if (!isDevelopmentRuntime()) {
     return false;
   }
   const enabled = process.env.ENABLE_API_LOGGING;
@@ -45,7 +44,7 @@ const FULL_RESPONSE_MAX_CHARS = 50000;
  * Set DEBUG_FULL_RESPONSES=true (or 1) to enable.
  */
 export function isFullResponseLoggingEnabled(): boolean {
-  if (isVercelProductionBuild()) {
+  if (!isDevelopmentRuntime()) {
     return false;
   }
   const v = process.env.DEBUG_FULL_RESPONSES;
@@ -59,7 +58,7 @@ export function isFullResponseLoggingEnabled(): boolean {
  * a preview / staging / production deployment cannot leak tokens.
  */
 function isTokenLoggingEnabled(): boolean {
-  if (process.env.NODE_ENV !== "development") return false;
+  if (!isDevelopmentRuntime()) return false;
   const v = process.env.DEBUG_INCLUDE_TOKENS;
   return v === "true" || v === "1";
 }
@@ -69,13 +68,13 @@ function isTokenLoggingEnabled(): boolean {
  * Prefer this over raw `console.log` for noisy traces.
  */
 export function devLog(...args: unknown[]): void {
-  if (process.env.NODE_ENV !== "development") return;
+  if (!isDevelopmentRuntime()) return;
   console.log(...args);
 }
 
 /** Same as {@link devLog} for warnings. */
 export function devWarn(...args: unknown[]): void {
-  if (process.env.NODE_ENV !== "development") return;
+  if (!isDevelopmentRuntime()) return;
   console.warn(...args);
 }
 
