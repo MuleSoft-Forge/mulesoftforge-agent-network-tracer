@@ -166,3 +166,37 @@ export const ExchangeMetadataRequestSchema = z.object({
     message: "Either provide organizationId, assetId, and version, or provide path",
   }
 );
+
+// ============================================================================
+// Feedback / bug report
+// ============================================================================
+
+const ConsoleEntrySchema = z.object({
+  level: z.enum(["error", "warn"]),
+  message: z.string().max(4000),
+  timestamp: z.string().max(64),
+});
+
+const BugReportContextSchema = z.object({
+  route: z.string().max(500),
+  userAgent: z.string().max(500),
+  viewportWidth: z.number().int().nonnegative(),
+  viewportHeight: z.number().int().nonnegative(),
+  appVersion: z.string().max(64),
+  desktop: z.boolean(),
+  desktopPlatform: z.string().max(32).nullable(),
+  reportedAt: z.string().max(64),
+});
+
+export const FeedbackRequestSchema = z.object({
+  description: z.string().trim().min(10).max(8000),
+  includeConsole: z.boolean(),
+  screenshotDataUrl: z
+    .string()
+    .regex(/^data:image\/png;base64,[A-Za-z0-9+/=]+$/)
+    .max(2_200_000)
+    .optional(),
+  context: BugReportContextSchema,
+  consoleEntries: z.array(ConsoleEntrySchema).max(30),
+  privacyConfirmed: z.literal(true),
+});

@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import BugReportShell from "@/components/feedback/BugReportShell";
 import { isAuthenticated } from "@/lib/session";
 
 export default async function AppLayout({
@@ -9,8 +10,11 @@ export default async function AppLayout({
   }
 
   return (
-    <main className="min-h-0 flex-1 overflow-auto">
-      {children}
-    </main>
+    <>
+      <BugReportShell />
+      <main className="min-h-0 flex-1 overflow-auto">
+        {children}
+      </main>
+    </>
   );
 }

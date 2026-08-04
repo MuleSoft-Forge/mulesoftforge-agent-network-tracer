@@ -1,8 +1,16 @@
 /** @type {import('next').NextConfig} */
 const isProd = process.env.NODE_ENV === "production";
 
+const appVersion =
+  process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ??
+  process.env.npm_package_version ??
+  "dev";
+
 const nextConfig = {
   reactStrictMode: true,
+  env: {
+    NEXT_PUBLIC_APP_VERSION: appVersion,
+  },
   // Emit a self-contained server (server.js + minimal node_modules) so the
   // Electron main process can spawn it as a child process. Vercel ignores this.
   output: "standalone",

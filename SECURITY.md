@@ -32,6 +32,11 @@ Agent Network Studio is designed to keep credentials and project data local:
   with Anypoint on this machine. Use “Clear saved settings” to remove them.
 - **Debug endpoints are development-only.** Routes under `app/api/auth/debug/*`
   return `404` unless `NODE_ENV === "development"`.
+- **Bug reports are opt-in.** The floating bug icon can attach a description,
+  optional screenshot, route/version metadata, and recent console errors to a
+  GitHub Issue when `GITHUB_FEEDBACK_TOKEN` is configured. Users must confirm
+  the report contains no customer secrets. Do not include tokens or raw API
+  bodies in reports.
 
 ## Handling credentials
 

@@ -4527,5 +4527,31 @@ console.log("\n[suite landing redirect]");
   check("safeRedirectPath accepts", safeRedirectPath("/builder") === "/builder");
 }
 
+console.log("\n[feedback issue formatting]");
+{
+  const { buildIssueBody, buildIssueTitle } = await import("@/lib/feedback/format-issue");
+  const title = buildIssueTitle("Invoke tab shows wrong broker after refresh");
+  check("buildIssueTitle prefixes user report", title.startsWith("[User report]"));
+  check("buildIssueTitle includes snippet", title.includes("Invoke tab"));
+  const body = buildIssueBody({
+    description: "Something broke",
+    includeConsole: true,
+    privacyConfirmed: true,
+    context: {
+      route: "/builder",
+      userAgent: "test",
+      viewportWidth: 1200,
+      viewportHeight: 800,
+      appVersion: "abc1234",
+      desktop: false,
+      desktopPlatform: null,
+      reportedAt: "2026-01-01T00:00:00.000Z",
+    },
+    consoleEntries: [{ level: "error", message: "TypeError: x", timestamp: "2026-01-01T00:00:01.000Z" }],
+  });
+  check("buildIssueBody includes route", body.includes("`/builder`"));
+  check("buildIssueBody includes console", body.includes("TypeError: x"));
+}
+
 console.log(`\n==== ${passed} passed, ${failed} failed ====`);
 process.exit(failed === 0 ? 0 : 1);
