@@ -9,6 +9,7 @@ export type ComposerFieldSource =
   | "editable"
   | "model-default"
   | "derived"
+  | "derived-from-interface-policies"
   | "hardcoded"
   | "not-in-composer";
 
@@ -256,6 +257,8 @@ export function composerSourceLabel(source: ComposerFieldSource): string {
       return "In model (default)";
     case "derived":
       return "Derived";
+    case "derived-from-interface-policies":
+      return "Derived from A2A Interface policies";
     case "hardcoded":
       return "Fixed in serializer";
     case "not-in-composer":
