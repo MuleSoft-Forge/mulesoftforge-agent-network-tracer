@@ -1,0 +1,191 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Agent Metadata Specification",
+  "@context": {
+    "@type": [
+      "http://anypoint.com/vocabs/agents#AgentMetadata"
+    ],
+    "@base": "http://anypoint.com/vocabs/agents#"
+  },
+  "$ref": "#/definitions/AgentMetadata",
+  "definitions": {
+    "AgentMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "description": "The communication protocol(s) supported by this agent (e.g., 'a2a' for Agent-to-Agent protocol)",
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "a2a",
+                "a2a_v1",
+                "other"
+              ],
+              "description": "The name of the protocol. For example a2a or a2a_v1"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "a2a",
+                  "a2a_v1",
+                  "other"
+                ],
+                "description": "The name of the protocol. For example a2a or a2a_v1"
+              }
+            }
+          ]
+        },
+        "platform": {
+          "description": "The name of the platform this agent run on",
+          "type": "string"
+        },
+        "kind": {
+          "description": "The type of agent (e.g., 'broker', 'orchestrator', 'evaluator')",
+          "type": "string"
+        },
+        "name": {
+          "description": "The human-readable name of the agent",
+          "type": "string"
+        },
+        "description": {
+          "description": "Description of the agent",
+          "type": "string"
+        },
+        "ref": {
+          "description": "The reference to the agent asset using GAV coordinates",
+          "deprecated": true,
+          "$ref": "references.json#/definitions/GAV"
+        },
+        "connections": {
+          "description": "The list of services (MCP, Agents and LLM) that this agent is consuming.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true,
+            "oneOf": [
+              {
+                "$ref": "#/definitions/AgentLink"
+              },
+              {
+                "$ref": "#/definitions/MCPLink"
+              },
+              {
+                "$ref": "#/definitions/LLMLink"
+              }
+            ]
+          }
+        },
+        "provenance": {
+          "$ref": "metadata_provenance.json#/definitions/ProvenanceDefinition"
+        },
+        "extensions": {
+          "$comment": "This section is not going to be indexed",
+          "description": "Optional platform-specific or custom extensions for this agent metadata",
+          "additionalProperties": true,
+          "type": "object",
+          "properties": {
+            "agentId": {
+              "description": "The unique identifier of the agent in its native platform",
+              "type": "string"
+            },
+            "environment": {
+              "description": "The cloud region or geographic zone where the agent runs",
+              "type": "string"
+            },
+            "foundationModel": {
+              "description": "The underlying AI model the agent uses.",
+              "type": "string"
+            },
+            "instruction": {
+              "description": "The agent's system prompt / instruction — what it's been told to do.",
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "AgentLink": {
+      "@context": {
+        "@type": [
+          "http://anypoint.com/vocabs/agents/link#Agent"
+        ],
+        "@base": "http://anypoint.com/vocabs/agents/link#"
+      },
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "description": "The type of connection - must be 'agent' for agent connections",
+          "type": "string",
+          "const": "agent"
+        },
+        "name": {
+          "description": "The human-readable name of the connected agent",
+          "type": "string"
+        },
+        "ref": {
+          "$ref": "references.json#/definitions/GAV"
+        }
+      }
+    },
+    "MCPLink": {
+      "@context": {
+        "@type": [
+          "http://anypoint.com/vocabs/agents/link#MCP"
+        ],
+        "@base": "http://anypoint.com/vocabs/agents/link#"
+      },
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "description": "The type of connection - must be 'mcp' for MCP server connections",
+          "type": "string",
+          "const": "mcp"
+        },
+        "name": {
+          "description": "The human-readable name of the connected MCP server",
+          "type": "string"
+        },
+        "ref": {
+          "$ref": "references.json#/definitions/GAV"
+        },
+        "allowed": {
+          "description": "An optional list of tool names from the MCP server that are allowed to be used",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "LLMLink": {
+      "@context": {
+        "@type": [
+          "http://anypoint.com/vocabs/agents/link#LLM"
+        ],
+        "@base": "http://anypoint.com/vocabs/agents/link#"
+      },
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "description": "The type of connection - must be 'llm' for LLM connections",
+          "type": "string",
+          "const": "llm"
+        },
+        "name": {
+          "description": "The human-readable name of the connected LLM",
+          "type": "string"
+        },
+        "ref": {
+          "$ref": "references.json#/definitions/GAV"
+        }
+      }
+    }
+  }
+}

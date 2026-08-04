@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Entitlements for the MAIN app bundle (ad-hoc signed, not sandboxed).
+
+  Deliberately does NOT contain com.apple.security.inherit: that entitlement
+  means "inherit a sandbox from my parent" and is only valid for helper
+  processes. On the main bundle there is no sandboxed parent under
+  LaunchServices, so the app is refused and double-clicking it silently does
+  nothing. Helpers get it via entitlementsInherit (entitlements.mac.inherit.plist).
+
+  Library validation is disabled because ad-hoc signing otherwise rejects
+  Electron's own helper binaries.
+-->
+<plist version="1.0">
+  <dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+  </dict>
+</plist>
