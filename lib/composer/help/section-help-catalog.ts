@@ -366,7 +366,7 @@ const SECTION_HELP: Record<SectionHelpId, HelpEntry> = {
       "Edits the root system.instructions block and optional config: / dialect header fields in brokers/*.agent. System instructions are the default LLM persona; config label and description are internal Agent Script metadata (not the A2A card).",
     whenToUse: [
       "Set broker-wide tone, safety rules, or process steps",
-      "Round-trip dialect version or config metadata from an imported .agent file",
+      "Edit optional config.label and config.description metadata",
     ],
     docsUrl: `${AF_AGENT_SCRIPT_REFERENCE_URL}#system-section`,
   },
@@ -375,15 +375,12 @@ const SECTION_HELP: Record<SectionHelpId, HelpEntry> = {
     title: "Agent dialect version",
     tagline: "AGENTFABRIC dialect binding in the .agent file header.",
     whatItDoes:
-      "Maps to # @dialect: AGENTFABRIC=x.y at the top of brokers/*.agent. Binds the script to a specific AgentFabric dialect version; deploying to a runtime that does not support that version fails.",
-    whenToUse: [
-      "Preserve an imported file's dialect header on round-trip",
-      "When documentation requires a specific dialect version",
-    ],
-    whenNotToUse: ["Routine edits — leave blank and Builder emits the default (1.0)"],
+      "Maps to # @dialect: AGENTFABRIC=1.0 at the top of brokers/*.agent. Binds the script to AgentFabric dialect 1.0; Builder always emits this value and keeps the field protected.",
+    whenToUse: ["Reference only — Builder fixes this at 1.0 for all broker .agent files"],
+    whenNotToUse: ["Manual edits — not editable in Builder"],
     gotchas: [
-      "SEMVER major.minor (e.g. 1.1) binds to that version or later",
       "Not the same as agent-network.yaml agentNetwork version",
+      "Imported files with a different dialect header are normalized to 1.0 on export",
     ],
     docsUrl: `${AF_AGENT_SCRIPT_REFERENCE_URL}#dialect-referencing-and-versioning`,
   },

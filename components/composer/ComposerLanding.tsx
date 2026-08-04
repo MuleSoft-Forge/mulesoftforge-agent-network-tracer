@@ -347,7 +347,7 @@ export default function ComposerLanding({
                     <h2 className="text-sm font-semibold text-gray-900">Start blank</h2>
                   </div>
                   <p className="text-xs leading-relaxed text-composer-label-muted">
-                    One broker, empty graph — ready for assets, LLMs, and nodes.
+                    Empty identity, broker shell, and graph — fill in project details and build from scratch.
                   </p>
                 </div>
                 <Button variant="primary" className="mt-5 w-full" onClick={handleCreateNew}>

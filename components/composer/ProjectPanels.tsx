@@ -997,11 +997,13 @@ export function ComposerPanelContent({
                   />
                   <TextField
                     label="Agent dialect version"
-                    value={broker.agentDialectVersion ?? ""}
-                    onChange={(v) => dispatch({ type: "updateBroker", patch: { agentDialectVersion: v.trim() || undefined } })}
+                    value="1.0"
+                    onChange={() => {}}
+                    readOnly
+                    protected
                     mono
                     help={helpForSection("field.agentDialectVersion")}
-                    hint="File header: # @dialect: AGENTFABRIC=x.y (default 1.0 when blank)."
+                    hint="Protected — AGENTFABRIC dialect version (always 1.0)."
                   />
                   <TextField
                     label="Config label"

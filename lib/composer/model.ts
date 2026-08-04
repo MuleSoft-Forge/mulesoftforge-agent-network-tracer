@@ -389,7 +389,7 @@ export const BrokerCardSupportedInterfaceSchema = z.object({
 });
 
 export const BrokerCardSchema = z.object({
-  name: z.string().min(1),
+  name: z.string(),
   description: z.string().optional(),
   version: z.string().min(1),
   documentationUrl: z.string().optional(),
@@ -414,7 +414,7 @@ export const BrokerCardSchema = z.object({
 export const BrokerSchema = z.object({
   id: z.string().min(1),
   /** Broker map key: yaml brokers key, .agent config.agent_name, brokers/*.agent filename. */
-  name: z.string().min(1),
+  name: z.string(),
   interfaceName: z.string().min(1).default("a2a"),
   card: BrokerCardSchema,
   /** Inbound/outbound policies on brokers.*.interfaces.a2a.policies. */
@@ -459,10 +459,10 @@ export const YamlNetworkInfoSchema = z.object({
 });
 
 export const ProjectIdentitySchema = z.object({
-  name: z.string().min(1),
+  name: z.string(),
   /** Org id == network project groupId. */
-  organizationId: z.string().min(1),
-  assetId: z.string().min(1),
+  organizationId: z.string(),
+  assetId: z.string(),
   version: z.string().min(1),
   descriptorVersion: z.string().min(1).default("1.0.0"),
   /** Exchange version group for publish/deploy (not yaml info.version). */
