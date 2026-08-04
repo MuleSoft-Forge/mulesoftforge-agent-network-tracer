@@ -13,6 +13,7 @@ import type {
   BrokerCardSkill,
   BrokerCardSupportedInterface,
 } from "@/lib/composer/model";
+import type { DerivedA2aCardSecurity } from "@/lib/composer/a2a-card-security-from-policies";
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -343,7 +344,10 @@ function serializeCapabilities(caps: BrokerCardCapabilities): Record<string, unk
   return omitEmptyRecord(out);
 }
 
-function serializeSkill(skill: BrokerCardSkill): Record<string, unknown> {
+function serializeSkill(
+  skill: BrokerCardSkill,
+  derivedSecurity?: DerivedA2aCardSecurity | null
+): Record<string, unknown> {
   const out: Record<string, unknown> = { ...(skill.extra ?? {}), id: skill.id, name: skill.name };
   if (skill.description) out.description = skill.description;
   if (skill.tags && skill.tags.length > 0) out.tags = skill.tags;
@@ -351,7 +355,11 @@ function serializeSkill(skill: BrokerCardSkill): Record<string, unknown> {
   if (examples && examples.length > 0) out.examples = examples;
   if (skill.inputModes && skill.inputModes.length > 0) out.inputModes = skill.inputModes;
   if (skill.outputModes && skill.outputModes.length > 0) out.outputModes = skill.outputModes;
-  if (skill.securityRequirements && skill.securityRequirements.length > 0) {
+  if (derivedSecurity !== undefined) {
+    if (derivedSecurity?.securityRequirements?.length) {
+      out.securityRequirements = derivedSecurity.securityRequirements;
+    }
+  } else if (skill.securityRequirements && skill.securityRequirements.length > 0) {
     out.securityRequirements = skill.securityRequirements;
   }
   return out;
@@ -367,7 +375,10 @@ function serializeSupportedInterface(item: BrokerCardSupportedInterface): Record
 }
 
 /** Serialize the Composer broker card to an Agent Card object for agent-network.yaml. */
-export function serializeBrokerCard(card: BrokerCard): Record<string, unknown> {
+export function serializeBrokerCard(
+  card: BrokerCard,
+  derivedSecurity?: DerivedA2aCardSecurity | null
+): Record<string, unknown> {
   const typed: Record<string, unknown> = {
     name: card.name,
     version: card.version,
@@ -392,16 +403,25 @@ export function serializeBrokerCard(card: BrokerCard): Record<string, unknown> {
     typed.defaultOutputModes = card.defaultOutputModes;
   }
   if (card.skills && card.skills.length > 0) {
-    typed.skills = card.skills.map(serializeSkill);
+    typed.skills = card.skills.map((skill) => serializeSkill(skill, derivedSecurity));
   }
   if (card.supportedInterfaces && card.supportedInterfaces.length > 0) {
     typed.supportedInterfaces = card.supportedInterfaces.map(serializeSupportedInterface);
   }
-  if (card.securityRequirements && card.securityRequirements.length > 0) {
-    typed.securityRequirements = card.securityRequirements;
-  }
-  if (card.securitySchemes && Object.keys(card.securitySchemes).length > 0) {
-    typed.securitySchemes = card.securitySchemes;
+  if (derivedSecurity !== undefined) {
+    if (derivedSecurity?.securityRequirements?.length) {
+      typed.securityRequirements = derivedSecurity.securityRequirements;
+    }
+    if (derivedSecurity?.securitySchemes && Object.keys(derivedSecurity.securitySchemes).length > 0) {
+      typed.securitySchemes = derivedSecurity.securitySchemes;
+    }
+  } else {
+    if (card.securityRequirements && card.securityRequirements.length > 0) {
+      typed.securityRequirements = card.securityRequirements;
+    }
+    if (card.securitySchemes && Object.keys(card.securitySchemes).length > 0) {
+      typed.securitySchemes = card.securitySchemes;
+    }
   }
   if (card.signatures && card.signatures.length > 0) typed.signatures = card.signatures;
 

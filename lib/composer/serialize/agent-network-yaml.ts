@@ -1,6 +1,7 @@
 import { stringify } from "yaml";
 import type { ComposerProject, YamlNetworkInfo } from "@/lib/composer/model";
 import { serializeBrokerCard } from "@/lib/composer/a2a-card";
+import { deriveA2aCardSecurityFromInterfacePolicies } from "@/lib/composer/a2a-card-security-from-policies";
 import { deriveConnections, primaryBroker } from "@/lib/composer/model";
 import { serializeConnectionAuth } from "@/lib/composer/connectivity/serialize-auth";
 import { applyConnectionExtras, serializeConnectionPolicies } from "@/lib/composer/connectivity/connection-extras";
@@ -76,7 +77,10 @@ export function buildAgentNetworkDoc(project: ComposerProject): Record<string, u
   if (broker) {
     const ifaceName = broker.interfaceName || "a2a";
     const ifacePolicies = serializeConnectionPolicies(broker.interfacePolicies);
-    const iface: Record<string, unknown> = { card: serializeBrokerCard(broker.card) };
+    const derivedSecurity = deriveA2aCardSecurityFromInterfacePolicies(broker, project) ?? null;
+    const iface: Record<string, unknown> = {
+      card: serializeBrokerCard(broker.card, derivedSecurity),
+    };
     if (ifacePolicies) iface.policies = ifacePolicies;
     doc.brokers = {
       [brokerKey(broker)]: {

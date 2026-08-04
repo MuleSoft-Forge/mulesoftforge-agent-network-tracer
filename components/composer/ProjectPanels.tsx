@@ -27,6 +27,7 @@ import {
   normalizeExchangeAssetId,
   restrictExchangeAssetIdInput,
 } from "@/lib/composer/exchange-asset-id";
+import { deriveA2aCardSecurityFromInterfacePolicies } from "@/lib/composer/a2a-card-security-from-policies";
 import AssetPicker from "@/components/composer/AssetPicker";
 import BrokerActionsPanel from "@/components/composer/BrokerActionsPanel";
 import AgentNetworkYamlSchemaDialog from "@/components/composer/AgentNetworkYamlSchemaDialog";
@@ -36,7 +37,7 @@ import { ConnectionExtrasEditor } from "@/components/composer/ConnectionExtrasEd
 import { BrokerCardEditor } from "@/components/composer/BrokerCardEditor";
 import A2aCardLivePreview from "@/components/composer/A2aCardLivePreview";
 import { VariablesPanel } from "@/components/composer/VariablesPanel";
-import { HelpPanelIntro } from "@/components/composer/HelpLabel";
+import { HelpPanelLine } from "@/components/composer/HelpLabel";
 import { helpForSection } from "@/lib/composer/help/section-help-catalog";
 import { createBroker } from "@/lib/composer/factory";
 import {
@@ -591,6 +592,51 @@ function BrokerRequired({ broker, children }: { broker: Broker | undefined; chil
   return children;
 }
 
+function CollapsibleSection({
+  title,
+  subtitle,
+  defaultOpen = false,
+  open,
+  onOpenChange,
+  anchorId,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  defaultOpen?: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  anchorId?: string;
+  children: ReactNode;
+}) {
+  const [internalOpen, setInternalOpen] = useState(defaultOpen);
+  const isOpen = open ?? internalOpen;
+  const setOpen = onOpenChange ?? setInternalOpen;
+
+  return (
+    <div id={anchorId} className={anchorId ? "scroll-mt-4" : undefined}>
+      <div className="overflow-hidden rounded-anypoint border border-composer-border">
+        <button
+          type="button"
+          onClick={() => setOpen(!isOpen)}
+          className="flex w-full items-center gap-2 bg-gray-50 px-3 py-2 text-left transition-anypoint hover:bg-gray-100"
+        >
+          {isOpen ? (
+            <ChevronDown className="h-4 w-4 shrink-0 text-gray-400" />
+          ) : (
+            <ChevronRight className="h-4 w-4 shrink-0 text-gray-400" />
+          )}
+          <span className="min-w-0 flex-1">
+            <span className="block text-xs font-semibold text-gray-700">{title}</span>
+            {subtitle ? <span className="block truncate text-[11px] text-composer-label-muted">{subtitle}</span> : null}
+          </span>
+        </button>
+        {isOpen ? <div className="space-y-3 border-t border-composer-border p-3">{children}</div> : null}
+      </div>
+    </div>
+  );
+}
+
 function SchemaDocLink({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <button
@@ -618,6 +664,7 @@ export function ComposerPanelContent({
   const { project, dispatch } = useComposer();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [schemaDialog, setSchemaDialog] = useState<"exchange" | "yaml" | "a2a-card" | null>(null);
+  const [protectedDefaultsOpen, setProtectedDefaultsOpen] = useState(false);
   const broker = project.brokers[0];
   const exchangeAssets = useMemo(() => exchangeDependencyAssets(project), [project]);
   const registryLocalAssetCount = project.assets.length - exchangeAssets.length;
@@ -638,9 +685,22 @@ export function ComposerPanelContent({
     const version = project.identity.version?.trim() || "…";
     return `${groupId}:${assetId}:${version}`;
   }, [project.identity.organizationId, project.identity.assetId, project.identity.version]);
+  const derivedCardSecurity = useMemo(
+    () => (broker ? deriveA2aCardSecurityFromInterfacePolicies(broker, project) : undefined),
+    [broker, project]
+  );
 
   useEffect(() => {
     if (!pendingFocus || pendingFocus.tab !== tab) return;
+
+    if (
+      tab === "identity" &&
+      pendingFocus.anchor &&
+      (pendingFocus.anchor === PROJECT_ANCHOR.organizationId ||
+        pendingFocus.anchor === PROJECT_ANCHOR.descriptorVersion)
+    ) {
+      setProtectedDefaultsOpen(true);
+    }
 
     const timer = window.setTimeout(() => {
       if (pendingFocus.anchor) {
@@ -685,59 +745,70 @@ export function ComposerPanelContent({
                 </HelpHint>
 
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    <FieldAnchor id={PROJECT_ANCHOR.organizationId}>
-                      <TextField
-                        label="Organization id (groupId)"
-                        value={project.identity.organizationId}
-                        onChange={() => {}}
-                        readOnly
-                        protected
-                        mono
-                        required
-                        hint="Protected — set from the business group when you create or import. Return to the Builder landing page to change org."
-                      />
-                    </FieldAnchor>
-                    <FieldAnchor id={PROJECT_ANCHOR.descriptorVersion}>
-                      <TextField
-                        label="Descriptor version"
-                        value={project.identity.descriptorVersion}
-                        onChange={() => {}}
-                        readOnly
-                        protected
-                        mono
-                        required
-                        help={helpForSection("field.projectDescriptorVersion")}
-                        hint="Protected — MuleSoft ExchangeDescriptor format version (default 1.0.0)."
-                      />
-                      <FieldDetail
-                        title={EXCHANGE_DESCRIPTOR_VERSION_UI_DETAIL.title}
-                        summary={EXCHANGE_DESCRIPTOR_VERSION_UI_DETAIL.summary}
+                    <div className="sm:col-span-2">
+                      <CollapsibleSection
+                        title="Protected Exchange defaults"
+                        subtitle="Organization, descriptor version, main entry, and classifier — fixed or set at create/import."
+                        open={protectedDefaultsOpen}
+                        onOpenChange={setProtectedDefaultsOpen}
                       >
-                        <ul className="mt-1.5 list-disc space-y-1 pl-4">
-                          {EXCHANGE_DESCRIPTOR_VERSION_UI_DETAIL.points.map((point) => (
-                            <li key={point}>{point}</li>
-                          ))}
-                        </ul>
-                      </FieldDetail>
-                    </FieldAnchor>
-                    <TextField
-                      label="Exchange main"
-                      value="agent-network.yaml"
-                      onChange={() => {}}
-                      readOnly
-                      protected
-                      mono
-                      hint="Fixed entry point for Agent Network projects — always agent-network.yaml."
-                    />
-                    <TextField
-                      label="Exchange classifier"
-                      value="agentic-network"
-                      onChange={() => {}}
-                      readOnly
-                      protected
-                      mono
-                      hint="Fixed Exchange classifier for Agent Network v2 projects."
-                    />
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                          <FieldAnchor id={PROJECT_ANCHOR.organizationId}>
+                            <TextField
+                              label="Organization id (groupId)"
+                              value={project.identity.organizationId}
+                              onChange={() => {}}
+                              readOnly
+                              protected
+                              mono
+                              required
+                              hint="Protected — set from the business group when you create or import. Return to the Builder landing page to change org."
+                            />
+                          </FieldAnchor>
+                          <FieldAnchor id={PROJECT_ANCHOR.descriptorVersion}>
+                            <TextField
+                              label="Descriptor version"
+                              value={project.identity.descriptorVersion}
+                              onChange={() => {}}
+                              readOnly
+                              protected
+                              mono
+                              required
+                              help={helpForSection("field.projectDescriptorVersion")}
+                              hint="Protected — MuleSoft ExchangeDescriptor format version (default 1.0.0)."
+                            />
+                            <FieldDetail
+                              title={EXCHANGE_DESCRIPTOR_VERSION_UI_DETAIL.title}
+                              summary={EXCHANGE_DESCRIPTOR_VERSION_UI_DETAIL.summary}
+                            >
+                              <ul className="mt-1.5 list-disc space-y-1 pl-4">
+                                {EXCHANGE_DESCRIPTOR_VERSION_UI_DETAIL.points.map((point) => (
+                                  <li key={point}>{point}</li>
+                                ))}
+                              </ul>
+                            </FieldDetail>
+                          </FieldAnchor>
+                          <TextField
+                            label="Exchange main"
+                            value="agent-network.yaml"
+                            onChange={() => {}}
+                            readOnly
+                            protected
+                            mono
+                            hint="Fixed entry point for Agent Network projects — always agent-network.yaml."
+                          />
+                          <TextField
+                            label="Exchange classifier"
+                            value="agentic-network"
+                            onChange={() => {}}
+                            readOnly
+                            protected
+                            mono
+                            hint="Fixed Exchange classifier for Agent Network v2 projects."
+                          />
+                        </div>
+                      </CollapsibleSection>
+                    </div>
 
                     <FieldAnchor id={PROJECT_ANCHOR.assetId}>
                       <TextField
@@ -864,7 +935,7 @@ export function ComposerPanelContent({
                 <div className="flex flex-col gap-4 xl:flex-row">
                   <div className="min-w-0 flex-1 space-y-3">
                     <p className="text-xs text-gray-400">
-                      Step 2 — public contract. Maps to{" "}
+                      Public contract. Maps to{" "}
                       <SchemaDocLink label="agent-network.yaml" onClick={() => setSchemaDialog("yaml")} />
                       {" "}
                       <span className="font-mono">brokers.*.interfaces.a2a.card</span>. Define what clients discover
@@ -895,11 +966,15 @@ export function ComposerPanelContent({
                       focusAnchor={a2aFocusAnchor}
                       onFocusAnchorHandled={onFocusHandled}
                       onChange={(patch) => dispatch({ type: "updateCard", patch })}
+                      derivedSecurity={derivedCardSecurity}
+                      securityFromInterface
+                      onNavigateToA2aInterface={() => onProjectFocus?.({ tab: "access" })}
                     />
                   </div>
                   <div className="w-full shrink-0 self-start xl:sticky xl:top-0 xl:w-[380px]">
                     <A2aCardLivePreview
                       card={broker.card}
+                      derivedSecurity={derivedCardSecurity}
                       onFocusField={(anchor) => onProjectFocus?.({ tab: "a2a-card", anchor })}
                       onReset={() => {
                         const defaults = createBroker(broker.name).card;
@@ -932,12 +1007,14 @@ export function ComposerPanelContent({
             <BrokerRequired broker={broker}>
               {broker && (
                 <>
-                  <HelpPanelIntro help={helpForSection("panel.a2aInterface")}>
-                    <p className="mt-2 text-[11px] text-gray-500">
-                      Maps to <span className="font-mono">brokers.*.interfaces.&lt;name&gt;.policies</span> in{" "}
-                      <SchemaDocLink label="agent-network.yaml" onClick={() => setSchemaDialog("yaml")} />.
-                    </p>
-                  </HelpPanelIntro>
+                  <HelpPanelLine help={helpForSection("panel.a2aInterface")}>
+                    {" Maps to "}
+                    <span className="font-mono">brokers.*.interfaces.&lt;name&gt;.policies</span> in{" "}
+                    <SchemaDocLink label="agent-network.yaml" onClick={() => setSchemaDialog("yaml")} />.
+                    {" Inbound auth policies also generate "}
+                    <span className="font-mono">card.securitySchemes</span> and{" "}
+                    <span className="font-mono">card.securityRequirements</span> on export.
+                  </HelpPanelLine>
                   <SelectField
                     label="Broker interface key"
                     uppercaseLabel
@@ -978,14 +1055,13 @@ export function ComposerPanelContent({
             <BrokerRequired broker={broker}>
               {broker && (
                 <>
-                  <HelpPanelIntro help={helpForSection("panel.brokerBehavior")}>
-                    <p className="mt-2 text-[11px] text-gray-500">
-                      Maps to <span className="font-mono">system.instructions</span>,{" "}
-                      <span className="font-mono">config.label</span>, and{" "}
-                      <span className="font-mono">config.description</span> in{" "}
-                      <span className="font-mono">brokers/*.agent</span>.
-                    </p>
-                  </HelpPanelIntro>
+                  <HelpPanelLine help={helpForSection("panel.brokerBehavior")}>
+                    {" Maps to "}
+                    <span className="font-mono">system.instructions</span>,{" "}
+                    <span className="font-mono">config.label</span>, and{" "}
+                    <span className="font-mono">config.description</span> in{" "}
+                    <span className="font-mono">brokers/*.agent</span>.
+                  </HelpPanelLine>
                   <TextArea
                     label="System instructions"
                     value={instructionTextForEditor(broker.systemInstructions)}
@@ -1072,7 +1148,7 @@ export function ComposerPanelContent({
               {broker && (
                 <>
                   <p className="text-xs text-gray-400">
-                    Step 5 — tools and sub-agents this broker can invoke, grouped by composed asset. MCP servers get
+                    Tools and sub-agents this broker can invoke, grouped by composed asset. MCP servers get
                     one action per tool from Exchange mcp-metadata.json. Referenced from graph nodes as{" "}
                     <span className="font-mono">@actions.&lt;name&gt;</span>.
                   </p>
@@ -1087,7 +1163,7 @@ export function ComposerPanelContent({
               {broker && (
                 <>
                   <p className="text-xs text-gray-400">
-                    Step 4 — LLM connections for reasoning. Compose the provider under Exchange Assets first, then bind provider
+                    LLM connections for reasoning. Compose the provider under Exchange Assets first, then bind provider
                     and model here. Referenced from graph nodes as{" "}
                     <span className="font-mono">@llm.&lt;name&gt;</span>.
                   </p>

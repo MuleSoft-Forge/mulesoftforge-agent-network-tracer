@@ -344,8 +344,11 @@ const SECTION_HELP: Record<SectionHelpId, HelpEntry> = {
     title: "A2A interface",
     tagline: "How external clients invoke this broker.",
     whatItDoes:
-      "The A2A interface defines the broker's public agent card and inbound/outbound policy bindings. External clients use this front door to send messages into the graph trigger.",
-    whenToUse: ["Configure authentication policies on inbound A2A traffic", "Set the broker card clients discover"],
+      "The A2A interface defines inbound/outbound policy bindings on the broker front door. Auth-related inbound policies also generate card securitySchemes and securityRequirements in agent-network.yaml on export.",
+    whenToUse: [
+      "Configure authentication policies on inbound A2A traffic",
+      "Generate Agent Card security metadata for external A2A clients",
+    ],
     docsUrl: A2A_INTERFACE_DOCS_URL,
   },
   "panel.actions": {

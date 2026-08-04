@@ -97,16 +97,16 @@ export const A2A_CARD_TOP_LEVEL: ExchangeJsonFieldDoc[] = [
   {
     field: "securitySchemes",
     type: "object?",
-    composerUi: "—",
-    composerSource: "not-in-composer",
-    notes: "OpenAPI-style security scheme map (apiKey, http, oauth2, oidc, mTLS). Preserved in card.extra.",
+    composerUi: "A2A card tab · Security (read-only, generated)",
+    composerSource: "derived-from-interface-policies",
+    notes: "OpenAPI-style security scheme map generated from auth-related inbound A2A interface policies.",
   },
   {
     field: "securityRequirements",
     type: "Security Requirement[]?",
-    composerUi: "—",
-    composerSource: "not-in-composer",
-    notes: "Which schemes/scopes callers need. Preserved in card.extra.",
+    composerUi: "A2A card tab · Security (read-only, generated)",
+    composerSource: "derived-from-interface-policies",
+    notes: "Which generated schemes callers need — derived from inbound interface policies.",
   },
   {
     field: "signatures",

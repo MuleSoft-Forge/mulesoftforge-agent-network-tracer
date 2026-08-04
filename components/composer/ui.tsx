@@ -187,6 +187,8 @@ export function TextArea({
   required,
   error,
   alwaysShowHint,
+  readOnly,
+  protected: protectedField,
 }: {
   label: string;
   value: string;
@@ -201,7 +203,15 @@ export function TextArea({
   required?: boolean;
   error?: string;
   alwaysShowHint?: boolean;
+  readOnly?: boolean;
+  protected?: boolean;
 }) {
+  const isProtected = readOnly && protectedField;
+  const borderCls = error
+    ? "border-red-400 text-red-900 focus:border-red-500 focus:ring-red-500"
+    : isProtected
+      ? "border-gray-300 bg-gray-100 text-gray-500 shadow-inner"
+      : "";
   const errorCls = error
     ? "border-red-400 text-red-900 focus:border-red-500 focus:ring-red-500"
     : "";
@@ -209,9 +219,11 @@ export function TextArea({
     <Field label={label} help={help} hint={hint} error={error} uppercaseLabel={uppercaseLabel} required={required} alwaysShowHint={alwaysShowHint}>
       <textarea
         required={required}
+        readOnly={readOnly}
         aria-required={required || undefined}
+        aria-readonly={readOnly || undefined}
         aria-invalid={error ? true : undefined}
-        className={`${inputCls} ${mono ? "font-mono text-xs" : ""} ${errorCls}`}
+        className={`${inputCls} ${mono ? "font-mono text-xs" : ""} ${isProtected ? borderCls : errorCls} ${readOnly ? "cursor-not-allowed" : ""}`}
         rows={rows}
         value={value}
         placeholder={placeholder}

@@ -1338,11 +1338,40 @@ brokers:
   const reparsed = parseAgentNetworkYaml(reserialized);
   const roundCard = reparsed.broker?.card;
   check("round-trip provider", roundCard?.provider?.organization === "Example Corp");
-  check("round-trip securitySchemes", Boolean(roundCard?.securitySchemes?.bearer));
+  check(
+    "round-trip securitySchemes omitted without interface policies",
+    roundCard?.securitySchemes === undefined
+  );
   check("round-trip supportedInterfaces", roundCard?.supportedInterfaces?.[0]?.protocolBinding === "HTTP+JSON");
   check("round-trip capability extensions", roundCard?.capabilities?.extensions?.[0]?.uri === "https://example.com/ext");
   check("round-trip skill inputModes", roundCard?.skills?.[0]?.inputModes?.[0] === "text/plain");
-  check("round-trip skill securityRequirements", Boolean(roundCard?.skills?.[0]?.securityRequirements?.length));
+  check(
+    "round-trip skill securityRequirements omitted without interface policies",
+    !roundCard?.skills?.[0]?.securityRequirements?.length
+  );
+
+  const { deriveA2aCardSecurityFromInterfacePolicies } = await import(
+    "@/lib/composer/a2a-card-security-from-policies"
+  );
+  const withPolicies = {
+    ...project,
+    brokers: [
+      {
+        ...project.brokers[0],
+        interfacePolicies: {
+          inbound: [{ mode: "ref" as const, name: "jwt-validation" }],
+        },
+      },
+    ],
+    policyBindings: {
+      "jwt-validation": { ref: { name: "jwt-validation" }, configuration: {} },
+    },
+  };
+  const derived = deriveA2aCardSecurityFromInterfacePolicies(withPolicies.brokers[0], withPolicies);
+  check("derive jwt scheme key", Boolean(derived?.securitySchemes?.jwt_validation));
+  const derivedYaml = serializeAgentNetworkYaml(withPolicies);
+  check("export emits derived securitySchemes", derivedYaml.includes("securitySchemes:"));
+  check("export emits derived securityRequirements", derivedYaml.includes("securityRequirements:"));
   check("round-trip schema valid", validateAgentNetworkDoc(buildAgentNetworkDoc(project)).length === 0);
 }
 

@@ -10,7 +10,7 @@ import {
   RUNTIME_SYSTEM_LIMIT_VARIABLES,
 } from "@/lib/composer/runtime-system-limits";
 import { variableDisplayLabel, variableStorageKey } from "@/lib/composer/variable-keys";
-import { HelpPanelIntro } from "@/components/composer/HelpLabel";
+import { HelpPanelLine } from "@/components/composer/HelpLabel";
 import { helpForSection } from "@/lib/composer/help/section-help-catalog";
 import { Button, Checkbox, TextField } from "@/components/composer/ui";
 
@@ -83,7 +83,7 @@ export function VariablesPanel() {
 
   return (
     <div className="space-y-4">
-      <HelpPanelIntro help={helpForSection("panel.variables")} />
+      <HelpPanelLine help={helpForSection("panel.variables")} />
 
       <div className="rounded-md border border-gray-200">
         <button

@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { Check, Copy, Download, FileJson, RotateCcw } from "lucide-react";
 import type { BrokerCard } from "@/lib/composer/model";
+import type { DerivedA2aCardSecurity } from "@/lib/composer/a2a-card-security-from-policies";
 import type { A2aCardFieldAnchor } from "@/lib/composer/a2a-card-field-anchors";
 import { serializeBrokerCard } from "@/lib/composer/a2a-card";
 import { buildA2aCardCompleteness } from "@/lib/composer/a2a-card-completeness";
@@ -24,15 +25,20 @@ export default function A2aCardLivePreview({
   card,
   onReset,
   onFocusField,
+  derivedSecurity,
 }: {
   card: BrokerCard;
   onReset?: () => void;
   onFocusField?: (anchor: A2aCardFieldAnchor) => void;
+  derivedSecurity?: DerivedA2aCardSecurity;
 }) {
   const [copied, setCopied] = useState(false);
   const [jsonOpen, setJsonOpen] = useState(false);
 
-  const json = useMemo(() => JSON.stringify(serializeBrokerCard(card), null, 2), [card]);
+  const json = useMemo(
+    () => JSON.stringify(serializeBrokerCard(card, derivedSecurity ?? null), null, 2),
+    [card, derivedSecurity]
+  );
   const completeness = useMemo(
     () => adaptA2aCardCompleteness(buildA2aCardCompleteness(card)),
     [card]

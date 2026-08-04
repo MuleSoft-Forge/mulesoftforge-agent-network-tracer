@@ -71,6 +71,19 @@ export function HelpSectionHeader({
   );
 }
 
+/** Panel intro as a single line of copy with a help popover — not collapsible. */
+export function HelpPanelLine({ help, children }: { help: HelpEntry; children?: ReactNode }) {
+  return (
+    <div className="flex items-start gap-1">
+      <p className="min-w-0 flex-1 text-xs leading-relaxed text-gray-500">
+        {help.whatItDoes}
+        {children}
+      </p>
+      <HelpTip entry={help} align="left" />
+    </div>
+  );
+}
+
 /** Panel intro block with title, help popover, and collapsible body copy. */
 export function HelpPanelIntro({ help, children }: { help: HelpEntry; children?: ReactNode }) {
   const { helpMode } = useHelpMode();
