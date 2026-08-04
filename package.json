@@ -15,7 +15,7 @@
     "check": "tsc --noEmit && npm run lint && npm test",
     "sync:anf-schemas": "tsx scripts/sync-anf-schemas.mts",
     "sync:composer-examples": "tsx scripts/sync-composer-examples.mts",
-    "deploy": "vercel --prod --yes",
+    "deploy": "npx vercel --prod --yes",
     "reset": "bash reset.sh",
     "start:clean": "bash start-clean.sh",
     "electron:dev": "cross-env ELECTRON_DEV=1 ELECTRON_DESKTOP=1 ELECTRON_RUN_AS_NODE= concurrently -k -n next,electron -c blue,green \"next dev\" \"wait-on http://localhost:3000 && cross-env ELECTRON_RUN_AS_NODE= electron .\"",

@@ -9,6 +9,9 @@ spec/
 # Exclude reference/look-and-feel files
 lookand feel/
 
+# Local-only research and recovered docs (not part of the web app)
+private/
+
 # Exclude local development scripts
 scripts/
 Makefile
