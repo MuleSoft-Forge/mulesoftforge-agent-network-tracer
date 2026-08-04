@@ -50,8 +50,8 @@ export function buildAgentNetworkDoc(project: ComposerProject): Record<string, u
     },
   };
 
-  const registryDoc = serializeNetworkRegistry(project.registry, project);
-  if (registryDoc) doc.registry = registryDoc;
+  // Always emit registry (even `{}`) — server-side tooling expects the key to be declared.
+  doc.registry = serializeNetworkRegistry(project.registry, project);
 
   const connections = deriveConnections(project);
   const contextPolicies = serializeContextPolicies(project);

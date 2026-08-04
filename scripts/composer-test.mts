@@ -156,6 +156,8 @@ console.log("\n[1] Blank project factory defaults");
   check("exchange dependencies empty", Array.isArray(ex.dependencies) && ex.dependencies.length === 0);
   const y = parseYaml(serializeAgentNetworkYaml(p));
   check("yaml agentNetwork 2.0.0", y.agentNetwork === "2.0.0");
+  check("yaml always declares registry", y.registry !== undefined && typeof y.registry === "object" && Object.keys(y.registry).length === 0);
+  check("yaml serialized registry is empty object", serializeAgentNetworkYaml(p).includes("registry: {}"));
   check("yaml has brokers", !!y.brokers && Object.keys(y.brokers).length === 1);
   const brokerKey = Object.keys(y.brokers)[0];
   check("yaml broker key falls back when blank", brokerKey === "broker");

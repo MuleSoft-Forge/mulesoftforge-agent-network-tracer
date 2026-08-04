@@ -247,11 +247,11 @@ function mergeRegistryLocalAssets(
   return { ...registry, agents, mcps, llms };
 }
 
-/** Serialize typed registry to yaml `registry:` object, merging registry-local asset stubs. */
+/** Serialize typed registry to yaml `registry:` object, merging registry-local asset stubs. Always returns at least `{}`. */
 export function serializeNetworkRegistry(
   registry: NetworkRegistry | undefined,
   project: ComposerProject
-): Record<string, unknown> | undefined {
+): Record<string, unknown> {
   const base: NetworkRegistry = registry ?? { agents: [], mcps: [], llms: [] };
   const merged = mergeRegistryLocalAssets(base, project);
 
@@ -263,7 +263,7 @@ export function serializeNetworkRegistry(
   if (mcps) out.mcps = mcps;
   if (llms) out.llms = llms;
 
-  return Object.keys(out).length > 0 ? out : undefined;
+  return out;
 }
 
 export function emptyNetworkRegistry(): NetworkRegistry {
