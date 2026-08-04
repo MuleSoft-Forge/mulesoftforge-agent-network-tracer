@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
 import type {
   BrokerCard,
   BrokerCardExtension,
@@ -10,6 +10,7 @@ import type {
   BrokerCardSkill,
   BrokerCardSupportedInterface,
 } from "@/lib/composer/model";
+import type { DerivedA2aCardSecurity } from "@/lib/composer/a2a-card-security-from-policies";
 import { A2A_CARD_ANCHOR, type A2aCardFieldAnchor } from "@/lib/composer/a2a-card-field-anchors";
 import { Button, Checkbox, SelectField, TextArea, TextField } from "@/components/composer/ui";
 
@@ -354,6 +355,73 @@ function SecurityRequirementsListEditor({
   );
 }
 
+function DerivedCardSecurityPanel({
+  derivedSecurity,
+  onNavigateToA2aInterface,
+}: {
+  derivedSecurity: DerivedA2aCardSecurity | undefined;
+  onNavigateToA2aInterface?: () => void;
+}) {
+  const schemesJson = formatJsonObject(derivedSecurity?.securitySchemes);
+  const requirementsJson = derivedSecurity?.securityRequirements?.length
+    ? JSON.stringify(derivedSecurity.securityRequirements, null, 2)
+    : "";
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-anypoint border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-relaxed text-amber-900">
+        <div className="flex items-start gap-2">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+          <p>
+            Card <span className="font-mono">securitySchemes</span> and{" "}
+            <span className="font-mono">securityRequirements</span> are generated from inbound policies on the{" "}
+            {onNavigateToA2aInterface ? (
+              <button
+                type="button"
+                onClick={onNavigateToA2aInterface}
+                className="font-medium text-primary hover:underline"
+              >
+                A2A Interface
+              </button>
+            ) : (
+              "A2A Interface"
+            )}{" "}
+            tab and written to <span className="font-mono">agent-network.yaml</span> on export.
+          </p>
+        </div>
+      </div>
+      <TextArea
+        label="Security schemes (generated)"
+        uppercaseLabel
+        value={schemesJson}
+        onChange={() => {}}
+        readOnly
+        protected
+        rows={schemesJson ? 8 : 3}
+        mono
+        hint={
+          derivedSecurity
+            ? "OpenAPI-style scheme map derived from auth-related inbound interface policies."
+            : "Add an authentication policy on the A2A Interface tab to generate card security metadata."
+        }
+        alwaysShowHint
+      />
+      <TextArea
+        label="Card security requirements (generated)"
+        uppercaseLabel
+        value={requirementsJson}
+        onChange={() => {}}
+        readOnly
+        protected
+        rows={requirementsJson ? 5 : 3}
+        mono
+        hint="Requirement groups referencing the generated scheme names."
+        alwaysShowHint
+      />
+    </div>
+  );
+}
+
 function SecuritySchemesEditor({
   value,
   onChange,
@@ -542,10 +610,12 @@ function SkillEditor({
   skill,
   onChange,
   onRemove,
+  securityFromInterface,
 }: {
   skill: BrokerCardSkill;
   onChange: (patch: Partial<BrokerCardSkill>) => void;
   onRemove: () => void;
+  securityFromInterface?: boolean;
 }) {
   return (
     <div className="space-y-2 rounded border border-gray-200 bg-gray-50/80 p-2">
@@ -595,11 +665,13 @@ function SkillEditor({
           {preservedExtraCount(skill.extra) === 1 ? "" : "s"} preserved from import.
         </p>
       ) : null}
-      <SecurityRequirementsListEditor
-        label="Skill security requirements"
-        value={skill.securityRequirements}
-        onChange={(securityRequirements) => onChange({ securityRequirements })}
-      />
+      {!securityFromInterface ? (
+        <SecurityRequirementsListEditor
+          label="Skill security requirements"
+          value={skill.securityRequirements}
+          onChange={(securityRequirements) => onChange({ securityRequirements })}
+        />
+      ) : null}
     </div>
   );
 }
@@ -609,11 +681,17 @@ export function BrokerCardEditor({
   onChange,
   focusAnchor,
   onFocusAnchorHandled,
+  derivedSecurity,
+  securityFromInterface = false,
+  onNavigateToA2aInterface,
 }: {
   card: BrokerCard;
   onChange: (patch: Partial<BrokerCard>) => void;
   focusAnchor?: A2aCardFieldAnchor | null;
   onFocusAnchorHandled?: () => void;
+  derivedSecurity?: DerivedA2aCardSecurity;
+  securityFromInterface?: boolean;
+  onNavigateToA2aInterface?: () => void;
 }) {
   const [moreSettingsOpen, setMoreSettingsOpen] = useState(false);
   const [securityOpen, setSecurityOpen] = useState(false);
@@ -921,17 +999,30 @@ export function BrokerCardEditor({
         open={securityOpen}
         onOpenChange={setSecurityOpen}
         title="Security & signatures"
-        subtitle="Security schemes, requirements, and JWS card signatures."
+        subtitle={
+          securityFromInterface
+            ? "Card security is generated from A2A Interface policies."
+            : "Security schemes, requirements, and JWS card signatures."
+        }
       >
-        <SecuritySchemesEditor
-          value={card.securitySchemes}
-          onChange={(securitySchemes) => onChange({ securitySchemes })}
-        />
-        <SecurityRequirementsListEditor
-          label="Card security requirements"
-          value={card.securityRequirements}
-          onChange={(securityRequirements) => onChange({ securityRequirements })}
-        />
+        {securityFromInterface ? (
+          <DerivedCardSecurityPanel
+            derivedSecurity={derivedSecurity}
+            onNavigateToA2aInterface={onNavigateToA2aInterface}
+          />
+        ) : (
+          <>
+            <SecuritySchemesEditor
+              value={card.securitySchemes}
+              onChange={(securitySchemes) => onChange({ securitySchemes })}
+            />
+            <SecurityRequirementsListEditor
+              label="Card security requirements"
+              value={card.securityRequirements}
+              onChange={(securityRequirements) => onChange({ securityRequirements })}
+            />
+          </>
+        )}
         <SignaturesListEditor
           value={card.signatures}
           onChange={(signatures) => onChange({ signatures })}
@@ -1023,11 +1114,13 @@ export function BrokerCardEditor({
               mono
             />
           </div>
-          <SecurityRequirementsListEditor
-            label="Skill security requirements"
-            value={primarySkill?.securityRequirements}
-            onChange={(securityRequirements) => setPrimarySkill({ securityRequirements })}
-          />
+          {!securityFromInterface ? (
+            <SecurityRequirementsListEditor
+              label="Skill security requirements"
+              value={primarySkill?.securityRequirements}
+              onChange={(securityRequirements) => setPrimarySkill({ securityRequirements })}
+            />
+          ) : null}
         </Collapsible>
       </Section>
 
@@ -1044,6 +1137,7 @@ export function BrokerCardEditor({
             skill={skill}
             onChange={(patch) => updateExtraSkill(i + 1, patch)}
             onRemove={() => removeExtraSkill(i + 1)}
+            securityFromInterface={securityFromInterface}
           />
         ))}
         <Button variant="secondary" className="h-7 px-2 text-xs" onClick={addExtraSkill}>

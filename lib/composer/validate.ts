@@ -22,6 +22,7 @@ import {
 import { authKindRequiresAuthentication } from "@/lib/composer/connectivity/auth-catalog";
 import { buildAgentNetworkDoc } from "@/lib/composer/serialize/agent-network-yaml";
 import { serializeBrokerCard } from "@/lib/composer/a2a-card";
+import { deriveA2aCardSecurityFromInterfacePolicies } from "@/lib/composer/a2a-card-security-from-policies";
 import { validateAgentNetworkDoc } from "@/lib/composer/schema/network-schema";
 import { validateBrokerCardDoc } from "@/lib/composer/schema/a2a-card-schema";
 import { validateBrokerCardDeployRequirements } from "@/lib/composer/a2a-card-deploy-requirements";
@@ -312,7 +313,8 @@ export function validateProject(project: ComposerProject): ValidationResult {
       issues.push(err(brokerKeyValidationMessage(broker.name), { kind: "broker", id: broker.id }));
     }
     validateBrokerGraph(project, broker, issues);
-    for (const s of validateBrokerCardDoc(serializeBrokerCard(broker.card))) {
+    const derivedSecurity = deriveA2aCardSecurityFromInterfacePolicies(broker, project) ?? null;
+    for (const s of validateBrokerCardDoc(serializeBrokerCard(broker.card, derivedSecurity))) {
       issues.push(err(`Schema (A2A card) at ${s.path}: ${s.message}`, { kind: "broker", id: broker.id }));
     }
     for (const s of validateBrokerCardDeployRequirements(broker.card)) {

@@ -19,6 +19,7 @@ import type {
   ProjectIdentity,
   VariableOverride,
 } from "@/lib/composer/model";
+import { stripStoredCardSecurity } from "@/lib/composer/a2a-card-security-from-policies";
 import type { DeclaredPolicyBinding } from "@/lib/composer/connectivity/policy-bindings-zod";
 import type { NetworkRegistry } from "@/lib/composer/registry/types";
 import { sanitizeConnectionPolicies } from "@/lib/composer/connectivity/connection-extras";
@@ -444,9 +445,15 @@ export function composerReducer(project: ComposerProject, action: ComposerAction
       };
 
     case "updateBroker": {
-      const next = updateBroker(project, (b) => ({ ...b, ...action.patch }));
+      let next = updateBroker(project, (b) => {
+        const updated = { ...b, ...action.patch };
+        if (action.patch.interfacePolicies !== undefined) {
+          updated.card = stripStoredCardSecurity(updated.card);
+        }
+        return updated;
+      });
       if (action.patch.interfacePolicies !== undefined) {
-        return {
+        next = {
           ...next,
           policyBindings: pruneUnreferencedPolicyBindings(next.policyBindings, next),
         };
@@ -455,7 +462,19 @@ export function composerReducer(project: ComposerProject, action: ComposerAction
     }
 
     case "updateCard":
-      return updateBroker(project, (b) => ({ ...b, card: { ...b.card, ...action.patch } }));
+      return updateBroker(project, (b) => {
+        const patch = { ...action.patch };
+        delete patch.securitySchemes;
+        delete patch.securityRequirements;
+        if (patch.skills) {
+          patch.skills = patch.skills.map((skill) => {
+            const nextSkill = { ...skill };
+            delete nextSkill.securityRequirements;
+            return nextSkill;
+          });
+        }
+        return { ...b, card: stripStoredCardSecurity({ ...b.card, ...patch }) };
+      });
 
     case "setDefaultLlm":
       return updateBroker(project, (b) => ({ ...b, defaultLlmBindingName: action.bindingName }));
