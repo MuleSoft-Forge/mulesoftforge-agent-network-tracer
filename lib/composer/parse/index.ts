@@ -384,7 +384,7 @@ export function parseProjectFiles(input: ParseFilesInput): ParseFilesResult {
       assetId: exchange.assetId ?? "my-agent-network",
       version: exchange.version ?? "1.0.0",
       descriptorVersion: exchange.descriptorVersion ?? "1.0.0",
-      apiVersion: exchange.apiVersion ?? "v1",
+      apiVersion: exchange.apiVersion ?? "v1.0",
       ...(exchange.description ? { description: exchange.description } : {}),
       tags: exchange.tags ?? [],
       ...(yamlDoc.yamlInfo ? { yamlInfo: yamlDoc.yamlInfo } : {}),

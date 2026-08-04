@@ -15,7 +15,7 @@ import {
   connectionNameForAsset,
   toIdentifier,
 } from "@/lib/composer/model";
-import { connectionIdForBaseName, normalizeAnfId } from "@/lib/composer/anf-id";
+import { normalizeAnfId } from "@/lib/composer/anf-id";
 import { defaultAuthForAssetKind } from "@/lib/composer/connectivity/defaults";
 import { defaultLlmBaseUrlForAsset } from "@/lib/composer/connectivity/llm-default-urls";
 import { mcpMetaForAsset, tagCachedMcpMeta } from "@/lib/composer/mcp-metadata";
@@ -130,7 +130,7 @@ export function createEmptyProject(organizationId = ""): ComposerProject {
       assetId: "",
       version: "0.0.0",
       descriptorVersion: "1.0.0",
-      apiVersion: "v1",
+      apiVersion: "v1.0",
       tags: [],
     },
     assets: [],
@@ -151,7 +151,7 @@ export function createScaffoldProject(organizationId = ""): ComposerProject {
       assetId: "my-agent-network",
       version: "0.0.0",
       descriptorVersion: "1.0.0",
-      apiVersion: "v1",
+      apiVersion: "v1.0",
       tags: ["broker"],
     },
     assets: [],
@@ -187,7 +187,6 @@ export function importAsset(input: AssetImportInput): ImportedAsset {
     name: input.name || input.assetId,
     description: input.description,
     baseName,
-    connectionName: connectionIdForBaseName(baseName),
     url:
       input.url?.trim() ||
       (input.kind === "llm"

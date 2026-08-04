@@ -28,7 +28,7 @@ import {
 } from "@/lib/composer/connectivity/connection";
 import { derivePolicyVariableBindings } from "@/lib/composer/connectivity/policy-variable-bindings";
 import { variableStorageKey } from "@/lib/composer/variable-keys";
-import { connectionIdForBaseName } from "@/lib/composer/anf-id";
+import { connectionIdForBaseName, normalizeAnfId } from "@/lib/composer/anf-id";
 import type {
   ConnectionAccess,
   ConnectionAuth,
@@ -466,7 +466,7 @@ export const ProjectIdentitySchema = z.object({
   version: z.string().min(1),
   descriptorVersion: z.string().min(1).default("1.0.0"),
   /** Exchange version group for publish/deploy (not yaml info.version). */
-  apiVersion: z.string().min(1).default("v1"),
+  apiVersion: z.string().min(1).default("v1.0"),
   /** Optional Exchange project description. */
   description: z.string().optional(),
   tags: z.array(z.string()).default([]),
@@ -603,6 +603,40 @@ export function toIdentifier(input: string, fallback = "asset"): string {
     .map((w, i) => (i === 0 ? w.charAt(0).toLowerCase() + w.slice(1) : w.charAt(0).toUpperCase() + w.slice(1)))
     .join("");
   return cleaned || fallback;
+}
+
+/** Snake_case slug for project-scoped default connection IDs (Exchange assetId, then broker key). */
+export function projectConnectionSlug(project: ComposerProject): string {
+  const fromAssetId = project.identity.assetId?.trim();
+  if (fromAssetId) return normalizeAnfId(fromAssetId, "network");
+  const broker = primaryBroker(project);
+  const fromBroker = broker?.name?.trim();
+  if (fromBroker) return normalizeAnfId(fromBroker, "network");
+  return "network";
+}
+
+/** Default yaml connection key when composing a new asset (unique per project in deploy environments). */
+export function defaultConnectionIdForProject(project: ComposerProject, baseName: string): string {
+  const projectSlug = projectConnectionSlug(project);
+  const assetSlug = normalizeAnfId(baseName, "asset");
+  return `${projectSlug}_${assetSlug}_connection`;
+}
+
+/** Assign a project-scoped connection id when composing from Exchange (import/yaml paths keep explicit names). */
+export function assignDefaultConnectionName(
+  project: ComposerProject,
+  asset: ImportedAsset
+): ImportedAsset {
+  if (asset.connectionName?.trim()) return asset;
+  const baseName = asset.baseName || asset.name || asset.assetId;
+  let connectionName = defaultConnectionIdForProject(project, baseName);
+  const used = new Set(project.assets.map((a) => connectionNameForAsset(a)));
+  if (used.has(connectionName)) {
+    let i = 2;
+    while (used.has(`${connectionName}_${i}`)) i += 1;
+    connectionName = `${connectionName}_${i}`;
+  }
+  return { ...asset, connectionName };
 }
 
 export function connectionNameForAsset(asset: ImportedAsset): string {

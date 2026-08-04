@@ -98,7 +98,7 @@ export const EXCHANGE_JSON_TOP_LEVEL: ExchangeJsonFieldDoc[] = [
     composerUi: "Version group",
     composerSource: "editable",
     notes:
-      'Exchange version group for publish/deploy (ACB/CLI default "v1"). Not yaml info.version or agentNetwork: 2.0.0. CLI falls back to "v1" if missing.',
+      'Exchange version group for publish/deploy (ACB/CLI default "v1.0"). Not yaml info.version or agentNetwork: 2.0.0. CLI falls back to "v1.0" if missing.',
   },
   {
     field: "tags",
@@ -157,7 +157,7 @@ export const EXCHANGE_DESCRIPTOR_VERSION_UI_DETAIL = {
 
 /** Always-visible Project tab hint for exchange.json apiVersion (Exchange version group). */
 export const EXCHANGE_API_VERSION_FIELD_HINT =
-  'Exchange version group for publish and deploy. ACB and CLI default to "v1" for new agentic-network projects — normal even when yaml uses agentNetwork: 2.0.0.';
+  'Exchange version group for publish and deploy. ACB and CLI default to "v1.0" for new agentic-network projects — normal even when yaml uses agentNetwork: 2.0.0.';
 
 /** Expanded Project tab copy for the version group field. */
 export const EXCHANGE_API_VERSION_UI_DETAIL = {
@@ -242,7 +242,7 @@ export const EXCHANGE_JSON_VARIABLE: ExchangeJsonNestedDoc = {
 
 export const EXCHANGE_JSON_COMPOSER_NOTES = [
   "No formal exchange.json JSON Schema ships with agent_network_v2.json — validate agent-network.yaml against that schema; exchange.json follows the Exchange project descriptor convention.",
-  "apiVersion is the Exchange version group used when resolving published dependency versions at deploy time — ACB/CLI default is v1; do not confuse it with yaml info.version or agentNetwork: 2.0.0.",
+  "apiVersion is the Exchange version group used when resolving published dependency versions at deploy time — ACB/CLI default is v1.0; do not confuse it with yaml info.version or agentNetwork: 2.0.0.",
   "groupId and organizationId are the same value in Builder output.",
   "Dependencies are never typed manually — compose assets on the Exchange Assets tab and they appear here automatically.",
   "Deploy variables are derived from connection URLs and auth; edit descriptions/defaults on the Variables tab.",

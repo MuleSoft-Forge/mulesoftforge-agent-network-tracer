@@ -539,7 +539,7 @@ function AssetCard({
                 ? undefined
                 : anfIdValidationMessage(connectionNameForAsset(asset), "Connection ID")
             }
-            hint={`Yaml context.connections key. ${ANF_ID_HINT}`}
+            hint={`Yaml context.connections key — must be unique across agent networks in the same deploy environment. ${ANF_ID_HINT}`}
           />
           <TextField
             label="Default URL"

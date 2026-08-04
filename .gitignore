@@ -49,3 +49,4 @@ scripts/credentials.json
 # local AI/agent tooling config
 .claude/
 .cache/
+private/

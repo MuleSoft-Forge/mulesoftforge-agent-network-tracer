@@ -124,7 +124,7 @@ export function buildProjectCompleteness(project: ComposerProject): ProjectCompl
           id: "api-version",
           label: "Version group",
           mapsTo: "exchange.json apiVersion",
-          why: 'Exchange publish/deploy lane (versionGroup). ACB/CLI default "v1" — keep stable across releases; Exchange increments semver inside the group.',
+          why: 'Exchange publish/deploy lane (versionGroup). ACB/CLI default "v1.0" — keep stable across releases; Exchange increments semver inside the group.',
           tier: "required",
           status: itemStatus(Boolean(project.identity.apiVersion?.trim())),
           valuePreview: preview(project.identity.apiVersion),

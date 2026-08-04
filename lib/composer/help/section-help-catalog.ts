@@ -298,7 +298,7 @@ const SECTION_HELP: Record<SectionHelpId, HelpEntry> = {
     title: "Version group",
     tagline: EXCHANGE_API_VERSION_UI_DETAIL.summary,
     whatItDoes:
-      "Exchange version group (versionGroup) for publish and deploy. The CLI resolves the latest published semver for each asset within this group. ACB and CLI scaffold new agentic-network projects with apiVersion v1 and asset version 0.0.0.",
+      "Exchange version group (versionGroup) for publish and deploy. The CLI resolves the latest published semver for each asset within this group. ACB and CLI scaffold new agentic-network projects with apiVersion v1.0 and asset version 0.0.0.",
     whenToUse: [
       "Keep the same group for an existing published project line",
       "Match the version group you enter in ACB Publish Agent Network Assets",

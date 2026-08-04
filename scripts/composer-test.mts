@@ -43,7 +43,7 @@ import {
   policyVariableFieldName,
 } from "@/lib/composer/connectivity/policy-config-defaults";
 import { derivePolicyVariableBindings } from "@/lib/composer/connectivity/policy-variable-bindings";
-import { deriveVariables } from "@/lib/composer/model";
+import { deriveVariables, assignDefaultConnectionName, defaultConnectionIdForProject } from "@/lib/composer/model";
 import {
   parseConnectionAccess,
   parseConnectionPolicies,
@@ -210,6 +210,25 @@ console.log("\n[2] Compose agent + mcp + llm; derivations + cross-refs");
   const mcpAction = broker.actions.find((a) => a.actionKind === "mcp:tool")!;
   p = apply(p, { type: "updateAction", id: mcpAction.id, patch: { toolName: "updateIssue" } });
   check("valid after setting tool_name", validateProject(p).ok, JSON.stringify(validateProject(p).errors));
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n[2b] Project-scoped connection IDs avoid cross-project collisions");
+{
+  const empAssist = apply(createScaffoldProject("ORG"), {
+    type: "setIdentity",
+    patch: { assetId: "emp-assist" },
+  });
+  const triage = apply(createScaffoldProject("ORG"), {
+    type: "setIdentity",
+    patch: { assetId: "submission-triage" },
+  });
+  const llmInput = { kind: "llm" as const, groupId: "g", assetId: "llm-openai", version: "1.0.0", name: "OpenAI" };
+  const empConn = apply(empAssist, { type: "addAsset", asset: importAsset(llmInput) }).assets[0].connectionName;
+  const triageConn = apply(triage, { type: "addAsset", asset: importAsset(llmInput) }).assets[0].connectionName;
+  check("emp-assist llm connection id", empConn === "emp_assist_open_ai_connection", empConn);
+  check("triage llm connection id", triageConn === "submission_triage_open_ai_connection", triageConn);
+  check("same Exchange llm asset, different connection ids", empConn !== triageConn);
 }
 
 // ---------------------------------------------------------------------------
@@ -414,7 +433,24 @@ console.log("\n[6c] Broker map keys (snake_case)");
   check("validation message mentions camelCase", brokerKeyValidationMessage("customerServiceAgent").includes("llmOpenaiConnection"));
   check("connection id rejects camelCase", !isValidAnfId("llmOpenaiConnection"));
   check("connection id accepts snake_case", isValidAnfId("llm_openai_connection"));
-  check("importAsset derives snake_case connection", importAsset({ kind: "llm", groupId: "g", assetId: "openai", version: "1", name: "OpenAI GPT" }).connectionName === "open_ai_gpt_connection");
+  check(
+    "addAsset assigns project-scoped connection id",
+    apply(createScaffoldProject("ORG"), {
+      type: "addAsset",
+      asset: importAsset({ kind: "llm", groupId: "g", assetId: "openai", version: "1", name: "OpenAI GPT" }),
+    }).assets[0].connectionName === "my_agent_network_open_ai_gpt_connection"
+  );
+  check(
+    "defaultConnectionIdForProject uses network assetId",
+    defaultConnectionIdForProject(createScaffoldProject("ORG"), "llm-openai") === "my_agent_network_llm_openai_connection"
+  );
+  check(
+    "assignDefaultConnectionName leaves explicit connectionName",
+    assignDefaultConnectionName(createScaffoldProject("ORG"), {
+      ...importAsset({ kind: "llm", groupId: "g", assetId: "openai", version: "1", name: "OpenAI" }),
+      connectionName: "custom_openai_connection",
+    }).connectionName === "custom_openai_connection"
+  );
 
   check(
     "importAsset llm OpenAI default url",
@@ -461,7 +497,7 @@ console.log("\n[6c] Broker map keys (snake_case)");
 
   let p = createScaffoldProject("ORG");
   check("empty project default broker key", p.brokers[0].name === "my_broker");
-  check("empty project default apiVersion v1", p.identity.apiVersion === "v1");
+  check("empty project default apiVersion v1.0", p.identity.apiVersion === "v1.0");
   check("empty project default asset version 0.0.0", p.identity.version === "0.0.0");
   check("empty project valid broker key", isValidBrokerKey(p.brokers[0].name));
   check(

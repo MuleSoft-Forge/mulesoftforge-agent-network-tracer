@@ -24,7 +24,7 @@ import type { DeclaredPolicyBinding } from "@/lib/composer/connectivity/policy-b
 import type { NetworkRegistry } from "@/lib/composer/registry/types";
 import { sanitizeConnectionPolicies } from "@/lib/composer/connectivity/connection-extras";
 import { pruneUnreferencedPolicyBindings } from "@/lib/composer/connectivity/policy-bindings";
-import { connectionNameForAsset } from "@/lib/composer/model";
+import { assignDefaultConnectionName, connectionNameForAsset } from "@/lib/composer/model";
 import {
   createActionForAsset,
   createActionsForMcpAsset,
@@ -297,7 +297,7 @@ export function composerReducer(project: ComposerProject, action: ComposerAction
       return { ...project, registry: action.registry };
 
     case "addAsset": {
-      const asset = action.asset;
+      const asset = assignDefaultConnectionName(project, action.asset);
       let next: ComposerProject = { ...project, assets: [...project.assets, asset] };
       // Auto-derive a broker action or llm binding from the composed asset.
       if (asset.kind === "llm") {
