@@ -99,7 +99,50 @@ export function createBroker(key: string, displayName?: string): Broker {
   };
 }
 
+/** Minimal broker shell for a new blank project — no graph nodes or prefilled card text. */
+export function createBlankBroker(): Broker {
+  return {
+    id: newId(),
+    name: "",
+    interfaceName: "a2a",
+    card: {
+      name: "",
+      version: "1.0.0",
+      capabilities: { streaming: false, pushNotifications: true },
+      defaultInputModes: ["text/plain"],
+      defaultOutputModes: ["text/plain"],
+      skills: [],
+    },
+    systemInstructions: "",
+    defaultLlmBindingName: undefined,
+    llmBindings: [],
+    actions: [],
+    nodes: [],
+  };
+}
+
 export function createEmptyProject(organizationId = ""): ComposerProject {
+  return {
+    version: 1,
+    identity: {
+      name: "",
+      organizationId,
+      assetId: "",
+      version: "0.0.0",
+      descriptorVersion: "1.0.0",
+      apiVersion: "v1",
+      tags: [],
+    },
+    assets: [],
+    brokers: [createBlankBroker()],
+    policyBindings: {},
+    variableOverrides: {},
+    customVariables: [],
+  };
+}
+
+/** Workable starter defaults for tests — not used for user "Start blank". */
+export function createScaffoldProject(organizationId = ""): ComposerProject {
   return {
     version: 1,
     identity: {

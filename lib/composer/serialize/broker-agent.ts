@@ -355,8 +355,7 @@ function emitNode(node: GraphNode, broker: Broker, byId: Map<string, GraphNode>)
 /** Serialize one broker's brokers/<name>.agent file. */
 export function serializeBrokerAgent(broker: Broker): string {
   const byId = new Map<string, GraphNode>(broker.nodes.map((n) => [n.id, n]));
-  const dialectVersion = broker.agentDialectVersion ?? DEFAULT_DIALECT_VERSION;
-  const lines: string[] = [`# @dialect: AGENTFABRIC=${dialectVersion}`, ""];
+  const lines: string[] = [`# @dialect: AGENTFABRIC=${DEFAULT_DIALECT_VERSION}`, ""];
 
   lines.push("system:");
   if (broker.systemInstructionsProcedure) {

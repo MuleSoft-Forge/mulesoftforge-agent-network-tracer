@@ -7,6 +7,7 @@ import {
 } from "@/lib/desktop/deploy-options";
 import {
   createEmptyProject,
+  createScaffoldProject,
   importAsset,
   createMcpToolAction,
   createActionsForMcpAsset,
@@ -138,9 +139,16 @@ function apply(p: ComposerProject, ...actions: ComposerAction[]): ComposerProjec
 }
 
 // ---------------------------------------------------------------------------
-console.log("\n[1] Empty project serializes to valid files");
+console.log("\n[1] Blank project factory defaults");
 {
   let p = createEmptyProject("ORG");
+  check("blank identity name", p.identity.name === "");
+  check("blank identity assetId", p.identity.assetId === "");
+  check("blank identity tags", p.identity.tags.length === 0);
+  check("blank broker key", p.brokers[0].name === "");
+  check("blank broker graph", p.brokers[0].nodes.length === 0);
+  check("blank card name", p.brokers[0].card.name === "");
+  check("blank project not yet valid", !validateProject(p).ok);
   const files = serializeProject(p);
   check("3 files (exchange, yaml, one broker agent)", files.length === 3, `${files.length}`);
   const ex = JSON.parse(serializeExchangeJson(p));
@@ -150,16 +158,22 @@ console.log("\n[1] Empty project serializes to valid files");
   check("yaml agentNetwork 2.0.0", y.agentNetwork === "2.0.0");
   check("yaml has brokers", !!y.brokers && Object.keys(y.brokers).length === 1);
   const brokerKey = Object.keys(y.brokers)[0];
+  check("yaml broker key falls back when blank", brokerKey === "broker");
   check("broker kind AgentScript", y.brokers[brokerKey].kind === "AgentScript");
   const agentText = serializeBrokerAgent(p.brokers[0]);
   check("agent has dialect header", agentText.startsWith("# @dialect: AGENTFABRIC=1.0"));
-  check("empty project valid", validateProject(p).ok, JSON.stringify(validateProject(p).errors));
+}
+
+console.log("\n[1b] Scaffold project serializes to valid files");
+{
+  let p = createScaffoldProject("ORG");
+  check("scaffold project valid", validateProject(p).ok, JSON.stringify(validateProject(p).errors));
 }
 
 // ---------------------------------------------------------------------------
 console.log("\n[2] Compose agent + mcp + llm; derivations + cross-refs");
 {
-  let p = createEmptyProject("ORG");
+  let p = createScaffoldProject("ORG");
   p = apply(
     p,
     { type: "addAsset", asset: importAsset({ kind: "agent", groupId: "ga", assetId: "help-agent", version: "1.0.0", name: "Help Agent", url: "https://a2a/help" }) },
@@ -199,7 +213,7 @@ console.log("\n[2] Compose agent + mcp + llm; derivations + cross-refs");
 // ---------------------------------------------------------------------------
 console.log("\n[3] removeAsset cascades to actions/bindings");
 {
-  let p = createEmptyProject("ORG");
+  let p = createScaffoldProject("ORG");
   const agent = importAsset({ kind: "agent", groupId: "ga", assetId: "a", version: "1.0.0", name: "Agent A" });
   p = apply(p, { type: "addAsset", asset: agent });
   check("action created", p.brokers[0].actions.length === 1);
@@ -211,7 +225,7 @@ console.log("\n[3] removeAsset cascades to actions/bindings");
 // ---------------------------------------------------------------------------
 console.log("\n[4] Router graph: routes + otherwise, generator + echo");
 {
-  let p = createEmptyProject("ORG");
+  let p = createScaffoldProject("ORG");
   const broker = p.brokers[0];
   const trigger = broker.nodes.find((n) => n.kind === "trigger")!;
   const echo = broker.nodes.find((n) => n.kind === "echo")!;
@@ -245,7 +259,7 @@ console.log("\n[4] Router graph: routes + otherwise, generator + echo");
 // ---------------------------------------------------------------------------
 console.log("\n[4b] Router otherwise via sourceHandle");
 {
-  let p = createEmptyProject("ORG");
+  let p = createScaffoldProject("ORG");
   p = apply(
     p,
     { type: "addNode", kind: "router", position: { x: 0, y: 0 } },
@@ -269,13 +283,13 @@ console.log("\n[4b] Router otherwise via sourceHandle");
 console.log("\n[5] Validation catches bad graphs");
 {
   // Router without otherwise -> error
-  let p = createEmptyProject("ORG");
+  let p = createScaffoldProject("ORG");
   p = apply(p, { type: "addNode", kind: "router", position: { x: 0, y: 0 } });
   let res = validateProject(p);
   check("router without route/otherwise -> error", !res.ok && res.errors.some((e) => /router/i.test(e.message)));
 
   // MCP action without tool_name -> error
-  let p2 = createEmptyProject("ORG");
+  let p2 = createScaffoldProject("ORG");
   const mcp = importAsset({ kind: "mcp", groupId: "g", assetId: "m", version: "1.0.0", name: "M" });
   p2 = apply(p2, { type: "addAsset", asset: mcp });
   const action = p2.brokers[0].actions[0];
@@ -284,7 +298,7 @@ console.log("\n[5] Validation catches bad graphs");
   check("mcp action without tool_name -> error", res.errors.some((e) => /tool_name/i.test(e.message)));
 
   // A project with no trigger (only reachable via import) -> error
-  const base = createEmptyProject("ORG");
+  const base = createScaffoldProject("ORG");
   let p3 = {
     ...base,
     brokers: [{ ...base.brokers[0], nodes: base.brokers[0].nodes.filter((n) => n.kind !== "trigger") }],
@@ -312,7 +326,7 @@ console.log("\n[5] Validation catches bad graphs");
 // ---------------------------------------------------------------------------
 console.log("\n[6] YAML/JSON always parse for a rich project");
 {
-  let p = createEmptyProject("ORG-9");
+  let p = createScaffoldProject("ORG-9");
   p = apply(
     p,
     { type: "setIdentity", patch: { name: "IT Help Desk", assetId: "it-help-desk" } },
@@ -440,10 +454,10 @@ console.log("\n[6c] Broker map keys (snake_case)");
   check("validation message mentions lowercase", exchangeAssetIdValidationMessage("MyAgent").includes("lowercase"));
   check(
     "invalid asset id fails validation",
-    !validateProject(apply(createEmptyProject("ORG"), { type: "setIdentity", patch: { assetId: "BadAssetId" } })).ok
+    !validateProject(apply(createScaffoldProject("ORG"), { type: "setIdentity", patch: { assetId: "BadAssetId" } })).ok
   );
 
-  let p = createEmptyProject("ORG");
+  let p = createScaffoldProject("ORG");
   check("empty project default broker key", p.brokers[0].name === "my_broker");
   check("empty project default apiVersion v1", p.identity.apiVersion === "v1");
   check("empty project default asset version 0.0.0", p.identity.version === "0.0.0");
@@ -452,7 +466,7 @@ console.log("\n[6c] Broker map keys (snake_case)");
     "invalid broker key fails validation",
     !validateProject(apply(p, { type: "updateBroker", patch: { name: "my_broker_" } })).ok
   );
-  const yaml = serializeAgentNetworkYaml(createEmptyProject("ORG"));
+  const yaml = serializeAgentNetworkYaml(createScaffoldProject("ORG"));
   check("serialized yaml uses snake_case broker key", yaml.includes("  my_broker:"));
   check("serialized implementation path", yaml.includes("./brokers/my_broker.agent"));
 }
@@ -460,7 +474,7 @@ console.log("\n[6c] Broker map keys (snake_case)");
 // ---------------------------------------------------------------------------
 console.log("\n[6d] AgentFabric expression catalog");
 {
-  let p = createEmptyProject("ORG");
+  let p = createScaffoldProject("ORG");
   const broker = p.brokers[0];
   const catalog = buildExpressionCatalog(broker);
   const flat = flattenExpressionCatalog(catalog);
@@ -497,7 +511,7 @@ console.log("\n[6d] AgentFabric expression catalog");
     return "identical";
   }
 
-  let p = createEmptyProject("ORG-RT");
+  let p = createScaffoldProject("ORG-RT");
   const agent = importAsset({ kind: "agent", groupId: "ga", assetId: "order-status", version: "1.2.0", name: "Order Status Agent", url: "https://a2a/order" });
   const mcp = importAsset({ kind: "mcp", groupId: "gm", assetId: "jira-mcp", version: "2.1.0", name: "Jira MCP" });
   const llm = importAsset({ kind: "llm", groupId: "gl", assetId: "gemini", version: "1.0.0", name: "Gemini" });
@@ -664,11 +678,11 @@ console.log("\n[9] Official JSON Schema conformance (agent_network_v2.json)");
   check("schema validator builds", schemaValidatorBuildError() === null, schemaValidatorBuildError() ?? "");
 
   // Empty project.
-  let p = createEmptyProject("ORG");
+  let p = createScaffoldProject("ORG");
   check("empty project doc conforms", validateAgentNetworkDoc(buildAgentNetworkDoc(p)).length === 0, JSON.stringify(validateAgentNetworkDoc(buildAgentNetworkDoc(p))));
 
   // Rich project with all three asset kinds + a full card.
-  let r = createEmptyProject("ORG");
+  let r = createScaffoldProject("ORG");
   r = apply(
     r,
     { type: "setIdentity", patch: { name: "Support Net", version: "2.0.0" } },
@@ -799,7 +813,7 @@ console.log("\n[12] Connection access + policies serialize/parse round-trip");
     })?.outbound?.[0]?.mode === "ref"
   );
 
-  let p = createEmptyProject("ORG");
+  let p = createScaffoldProject("ORG");
   const agent = importAsset({
     kind: "agent",
     groupId: "ORG",
@@ -985,7 +999,7 @@ console.log("\n[14] context.policies declarations + configuration schema fields"
   });
   check("parse context.policies", parsedPolicies["client-id-enforcement"]?.configuration.clientId === "the-id");
 
-  let p = createEmptyProject("ORG");
+  let p = createScaffoldProject("ORG");
   const llm = importAsset({
     kind: "llm",
     groupId: "ORG",
@@ -1093,7 +1107,7 @@ console.log("\n[15] Policy configuration variable refs + exchange.json derivatio
       withDefaults.limit === undefined
   );
 
-  let p = createEmptyProject("ORG");
+  let p = createScaffoldProject("ORG");
   const llm = importAsset({
     kind: "llm",
     groupId: "ORG",
@@ -1148,7 +1162,7 @@ console.log("\n[15] Policy configuration variable refs + exchange.json derivatio
 
 console.log("\n[16] Schema gap closure (yaml info, broker card/policies, headerName, policy access, inline)");
 {
-  let p = createEmptyProject("ORG");
+  let p = createScaffoldProject("ORG");
   p = apply(p, {
     type: "setIdentity",
     patch: {
@@ -1442,7 +1456,7 @@ console.log("\n[19] MCP metadata — pick file, parse tools, auto-select single 
   check("actionInputsFromMcpToolInputSchema required first", derived?.[0]?.name === "submissionId");
   check("actionInputsFromMcpToolInputSchema maps object", derived?.some((i) => i.name === "result" && i.type === "object"));
 
-  let p = createEmptyProject("ORG");
+  let p = createScaffoldProject("ORG");
   const mcpAsset = importAsset({
     kind: "mcp",
     groupId: "gm",
@@ -1499,7 +1513,7 @@ console.log("\n[19] MCP metadata — pick file, parse tools, auto-select single 
   });
   check("serialized agent emits action inputs", agentText.includes("inputs:") && agentText.includes("name: string"));
 
-  let pMulti = createEmptyProject("ORG");
+  let pMulti = createScaffoldProject("ORG");
   const multiToolAsset = importAsset({
     kind: "mcp",
     groupId: "gm",
@@ -1760,7 +1774,7 @@ echo r:
   const reasoningBroker = parseBrokerAgent(reasoningOnlyAgent);
   const reasoningProject = {
     ...named,
-    brokers: [{ ...createEmptyProject().brokers[0], ...reasoningBroker, actions: [] }],
+    brokers: [{ ...createScaffoldProject().brokers[0], ...reasoningBroker, actions: [] }],
   };
   const reasoningCompleteness = buildProjectCompleteness(reasoningProject);
   const actionsItem = reasoningCompleteness.groups
@@ -2007,7 +2021,7 @@ console.log("\n[custom variables & marker scanning]");
   check("scanVariableMarkers ignores dot-less markers", !markers.some((m) => m.key === "nodot"));
 
   // addCustomVariable → appears in deriveVariables + exchange.json.
-  let p = createEmptyProject("ORG");
+  let p = createScaffoldProject("ORG");
   p = apply(p, { type: "addCustomVariable", variable: { group: "svc", field: "token", secret: true } });
   const vars = deriveVariables(p);
   check("addCustomVariable surfaces in deriveVariables", vars.some((v) => v.group === "svc" && v.field === "token" && v.secret));
@@ -2020,7 +2034,7 @@ console.log("\n[custom variables & marker scanning]");
   check("addCustomVariable ignores duplicates", (p.customVariables ?? []).length === before);
 
   // findUndeclaredMarkers: marker in instructions is undeclared until added.
-  let p2 = createEmptyProject("ORG");
+  let p2 = createScaffoldProject("ORG");
   p2 = apply(p2, { type: "updateBroker", patch: { systemInstructions: "Call with ${my.token}" } });
   const undeclared = findUndeclaredMarkers(p2);
   check("findUndeclaredMarkers flags typed marker", undeclared.some((m) => m.key === "my.token"));
@@ -2034,7 +2048,7 @@ console.log("\n[custom variables & marker scanning]");
   check("removeCustomVariable removes it", !deriveVariables(p2).some((v) => v.group === "my" && v.field === "token"));
 
   // Round-trip: custom variable (not connection-derived) survives serialize→parse.
-  let p3 = createEmptyProject("org-rt");
+  let p3 = createScaffoldProject("org-rt");
   p3 = apply(p3, {
     type: "setIdentity",
     patch: { organizationId: "org-rt", assetId: "rt-net", version: "2.0.0" },
@@ -2055,7 +2069,7 @@ console.log("\n[custom variables & marker scanning]");
   }
 
   // Runtime system limits: flat exchange.json variables round-trip.
-  let p4 = createEmptyProject("ORG");
+  let p4 = createScaffoldProject("ORG");
   p4 = apply(p4, {
     type: "addCustomVariable",
     variable: {
@@ -2549,7 +2563,7 @@ console.log("\n[it-help round-trip fidelity]");
     triageParsed?.outputs?.[1]?.type === "array" && triageParsed?.outputs?.[1]?.itemsType === "string"
   );
 
-  const broker = createEmptyProject("org").brokers[0];
+  const broker = createScaffoldProject("org").brokers[0];
   broker.nodes.push({
     id: "n1",
     kind: "generator",
@@ -3030,7 +3044,7 @@ console.log("\n[action http_headers round-trip]");
   );
   check("inputs still parse alongside http_headers", action?.inputs?.[0]?.name === "city");
 
-  const broker = createEmptyProject("ORG").brokers[0];
+  const broker = createScaffoldProject("ORG").brokers[0];
   const withHeaders = {
     ...broker,
     actions: [
@@ -3071,7 +3085,7 @@ console.log("\n[block scalar node description]");
 
 console.log("\n[reference integrity on rename and delete]");
 {
-  let p = createEmptyProject("ORG");
+  let p = createScaffoldProject("ORG");
   const broker = p.brokers[0];
   p = {
     ...p,
@@ -3139,7 +3153,7 @@ console.log("\n[reference integrity on rename and delete]");
 
 console.log("\n[validation catches duplicate names]");
 {
-  const p = createEmptyProject("ORG");
+  const p = createScaffoldProject("ORG");
   const broker = p.brokers[0];
   const dupNodes: ComposerProject = {
     ...p,
@@ -3704,10 +3718,10 @@ console.log("\n[builder graph layout metadata]");
   const { serializeExchangeJson } = await import("@/lib/composer/serialize/exchange-json");
   const { parseProjectFiles } = await import("@/lib/composer/parse");
   const { composerReducer } = await import("@/lib/composer/store");
-  const { createEmptyProject } = await import("@/lib/composer/factory");
+  const { createScaffoldProject } = await import("@/lib/composer/factory");
   const { serializeAgentNetworkYaml, serializeBrokerAgent } = await import("@/lib/composer/serialize");
 
-  let project = createEmptyProject("ORG");
+  let project = createScaffoldProject("ORG");
   const broker = project.brokers[0];
   project = composerReducer(project, {
     type: "moveNode",
@@ -3760,9 +3774,9 @@ console.log("\n[broker graph layout persistence]");
 {
   const { brokerTopologyKey } = await import("@/lib/composer/broker-graph-layout");
   const { composerReducer } = await import("@/lib/composer/store");
-  const { createEmptyProject } = await import("@/lib/composer/factory");
+  const { createScaffoldProject } = await import("@/lib/composer/factory");
 
-  let project = createEmptyProject("ORG");
+  let project = createScaffoldProject("ORG");
   const broker = project.brokers[0];
   const key1 = brokerTopologyKey(broker);
   project = composerReducer(project, {
@@ -3778,10 +3792,10 @@ console.log("\n[broker graph layout persistence]");
 console.log("\n[graph node guards]");
 {
   const { composerReducer } = await import("@/lib/composer/store");
-  const { createEmptyProject } = await import("@/lib/composer/factory");
+  const { createScaffoldProject } = await import("@/lib/composer/factory");
   const { nodeNameValidationMessage } = await import("@/lib/composer/node-name");
 
-  let project = createEmptyProject("ORG");
+  let project = createScaffoldProject("ORG");
   const broker = project.brokers[0];
   const trigger = broker.nodes.find((n) => n.kind === "trigger");
   const echo = broker.nodes.find((n) => n.kind === "echo");
@@ -3798,7 +3812,7 @@ console.log("\n[graph node guards]");
     !project.brokers[0].nodes.some((n) => n.id === echo!.id)
   );
 
-  const withTwo = createEmptyProject("ORG").brokers[0];
+  const withTwo = createScaffoldProject("ORG").brokers[0];
   const [first, second] = withTwo.nodes;
   check(
     "node name validation flags duplicates",
@@ -3824,12 +3838,12 @@ console.log("\n[composer undo/redo history]");
     "@/lib/composer/history"
   );
   const { composerReducer } = await import("@/lib/composer/store");
-  const { createEmptyProject } = await import("@/lib/composer/factory");
+  const { createScaffoldProject } = await import("@/lib/composer/factory");
 
   const reduce = (s: ReturnType<typeof initHistory>, a: Parameters<typeof historyReducer>[1]) =>
     historyReducer(s, a, composerReducer);
 
-  let state = initHistory(createEmptyProject("ORG"));
+  let state = initHistory(createScaffoldProject("ORG"));
   check("history starts with no past", state.past.length === 0);
 
   state = reduce(state, { type: "setIdentity", patch: { name: "One" } });
@@ -3860,25 +3874,25 @@ console.log("\n[composer undo/redo history]");
   check("new edit clears redo branch", state.future.length === 0);
 
   // Checkpoint breaks a coalescing run so the next keystroke is its own entry.
-  let checkpointed = initHistory(createEmptyProject("ORG"));
+  let checkpointed = initHistory(createScaffoldProject("ORG"));
   checkpointed = reduce(checkpointed, { type: "setIdentity", patch: { name: "A" } });
   checkpointed = reduce(checkpointed, { type: "history/checkpoint" });
   checkpointed = reduce(checkpointed, { type: "setIdentity", patch: { name: "B" } });
   check("checkpoint breaks coalescing run", checkpointed.past.length === 2);
 
   // Loading a project is a hard reset, not an undoable step.
-  let loaded = initHistory(createEmptyProject("ORG"));
+  let loaded = initHistory(createScaffoldProject("ORG"));
   loaded = reduce(loaded, { type: "setIdentity", patch: { name: "Before" } });
-  loaded = reduce(loaded, { type: "loadProject", project: createEmptyProject("ORG2") });
+  loaded = reduce(loaded, { type: "loadProject", project: createScaffoldProject("ORG2") });
   check("loadProject clears history", loaded.past.length === 0 && loaded.future.length === 0);
 
   // No-op actions must not create undo steps.
-  let noop = initHistory(createEmptyProject("ORG"));
+  let noop = initHistory(createScaffoldProject("ORG"));
   const trig = noop.present.brokers[0].nodes.find((n) => n.kind === "trigger")!;
   noop = reduce(noop, { type: "removeNode", id: trig.id });
   check("no-op action adds no history entry", noop.past.length === 0);
 
-  check("undo at start of history is a no-op", reduce(initHistory(createEmptyProject("ORG")), { type: "history/undo" }).past.length === 0);
+  check("undo at start of history is a no-op", reduce(initHistory(createScaffoldProject("ORG")), { type: "history/undo" }).past.length === 0);
 
   check(
     "moveNode does not coalesce",
@@ -3890,7 +3904,7 @@ console.log("\n[composer undo/redo history]");
   );
 
   // History is bounded so long sessions cannot grow without limit.
-  let capped = initHistory(createEmptyProject("ORG"));
+  let capped = initHistory(createScaffoldProject("ORG"));
   for (let i = 0; i < HISTORY_LIMIT + 25; i++) {
     capped = reduce(capped, { type: "addNode", kind: "generator", position: { x: i, y: i } });
   }
@@ -3901,9 +3915,9 @@ console.log("\n[new node placement]");
 {
   const { placeNewNode, NODE_HEIGHT } = await import("@/lib/composer/node-placement");
   const { composerReducer } = await import("@/lib/composer/store");
-  const { createEmptyProject } = await import("@/lib/composer/factory");
+  const { createScaffoldProject } = await import("@/lib/composer/factory");
 
-  let project = createEmptyProject("ORG");
+  let project = createScaffoldProject("ORG");
   const broker = project.brokers[0];
   const trigger = broker.nodes.find((n) => n.kind === "trigger")!;
 
@@ -3936,7 +3950,7 @@ console.log("\n[new node placement]");
   );
 
   // Palette add without drag-connect: trigger alone, then echo wires initial transition.
-  let solo = createEmptyProject("ORG");
+  let solo = createScaffoldProject("ORG");
   solo = composerReducer(solo, {
     type: "removeNode",
     id: solo.brokers[0].nodes.find((n) => n.kind === "echo")!.id,
@@ -3960,11 +3974,11 @@ console.log("\n[new node placement]");
 console.log("\n[trigger is not a transition target]");
 {
   const { composerReducer } = await import("@/lib/composer/store");
-  const { createEmptyProject } = await import("@/lib/composer/factory");
+  const { createScaffoldProject } = await import("@/lib/composer/factory");
   const { validateProject } = await import("@/lib/composer/validate");
   const { isAllowedTransitionTarget } = await import("@/lib/composer/graph-transitions");
 
-  let project = createEmptyProject("ORG");
+  let project = createScaffoldProject("ORG");
   const trigger = project.brokers[0].nodes.find((n) => n.kind === "trigger")!;
   const echo = project.brokers[0].nodes.find((n) => n.kind === "echo")!;
   check("trigger is not an allowed transition target", !isAllowedTransitionTarget(trigger));
@@ -4005,10 +4019,10 @@ console.log("\n[trigger is not a transition target]");
 console.log("\n[insert node on edge]");
 {
   const { composerReducer } = await import("@/lib/composer/store");
-  const { createEmptyProject } = await import("@/lib/composer/factory");
+  const { createScaffoldProject } = await import("@/lib/composer/factory");
 
   // trigger -> echo, then splice a generator into the middle.
-  let project = createEmptyProject("ORG");
+  let project = createScaffoldProject("ORG");
   const trigger = project.brokers[0].nodes.find((n) => n.kind === "trigger")!;
   const echo = project.brokers[0].nodes.find((n) => n.kind === "echo")!;
   check("fixture starts with trigger -> echo", trigger.onExitTarget === echo.id);
@@ -4046,7 +4060,7 @@ console.log("\n[insert node on edge]");
   check("insert refuses terminal echo nodes", rejected.brokers[0].nodes.length === before);
 
   // Splicing into a router edge should retarget that route, not add a new one.
-  let routed = createEmptyProject("ORG");
+  let routed = createScaffoldProject("ORG");
   routed = composerReducer(routed, {
     type: "addNode",
     kind: "router",
@@ -4082,9 +4096,9 @@ console.log("\n[insert node on edge]");
 console.log("\n[node summary chips]");
 {
   const { nodeSummaryChips, nodePreviewText } = await import("@/lib/composer/node-summary");
-  const { createEmptyProject } = await import("@/lib/composer/factory");
+  const { createScaffoldProject } = await import("@/lib/composer/factory");
 
-  const broker = createEmptyProject("ORG").brokers[0];
+  const broker = createScaffoldProject("ORG").brokers[0];
   const labels = (node: Parameters<typeof nodeSummaryChips>[0]) =>
     nodeSummaryChips(node, broker).map((c) => c.label);
 
@@ -4150,9 +4164,9 @@ console.log("\n[node summary chips]");
 console.log("\n[canvas search]");
 {
   const { matchNodeIds } = await import("@/lib/composer/node-search");
-  const { createEmptyProject } = await import("@/lib/composer/factory");
+  const { createScaffoldProject } = await import("@/lib/composer/factory");
 
-  const broker = createEmptyProject("ORG").brokers[0];
+  const broker = createScaffoldProject("ORG").brokers[0];
   const trigger = broker.nodes.find((n) => n.kind === "trigger")!;
 
   check("empty query matches nothing", matchNodeIds(broker, "   ").length === 0);
@@ -4168,9 +4182,9 @@ console.log("\n[command palette]");
   const { buildCommands, filterCommands, scoreCommand } = await import(
     "@/lib/composer/command-palette"
   );
-  const { createEmptyProject } = await import("@/lib/composer/factory");
+  const { createScaffoldProject } = await import("@/lib/composer/factory");
 
-  const project = createEmptyProject("ORG");
+  const project = createScaffoldProject("ORG");
   const commands = buildCommands(project);
 
   check("palette lists tab navigation", commands.some((c) => c.action.kind === "openTab"));
@@ -4204,11 +4218,11 @@ console.log("\n[tab issue counts]");
 {
   const { countIssuesByTab } = await import("@/lib/composer/issue-navigation");
   const { validateProject } = await import("@/lib/composer/validate");
-  const { createEmptyProject } = await import("@/lib/composer/factory");
+  const { createScaffoldProject } = await import("@/lib/composer/factory");
   const { composerReducer } = await import("@/lib/composer/store");
 
   // A router with no routes is a graph-tab error.
-  let project = createEmptyProject("ORG");
+  let project = createScaffoldProject("ORG");
   project = composerReducer(project, {
     type: "addNode",
     kind: "router",
@@ -4234,7 +4248,7 @@ console.log("\n[expression autocomplete]");
   const { buildExpressionCatalog, flattenExpressionCatalog } = await import(
     "@/lib/composer/agentfabric-expression-catalog"
   );
-  const { createEmptyProject } = await import("@/lib/composer/factory");
+  const { createScaffoldProject } = await import("@/lib/composer/factory");
 
   const text = "Summarise @gen";
   const token = activeExpressionToken(text, text.length);
@@ -4249,7 +4263,7 @@ console.log("\n[expression autocomplete]");
   );
 
   const entries = flattenExpressionCatalog(
-    buildExpressionCatalog(createEmptyProject("ORG").brokers[0])
+    buildExpressionCatalog(createScaffoldProject("ORG").brokers[0])
   );
   check("suggestions match on the request scope", suggestExpressions(entries, "@request").length > 0);
   check("bare @ returns the whole catalog head", suggestExpressions(entries, "@", 3).length === 3);
@@ -4273,9 +4287,9 @@ console.log("\n[node field issues]");
   const { nodeFieldIssues } = await import("@/lib/composer/node-field-issues");
   const { validateProject } = await import("@/lib/composer/validate");
   const { composerReducer } = await import("@/lib/composer/store");
-  const { createEmptyProject } = await import("@/lib/composer/factory");
+  const { createScaffoldProject } = await import("@/lib/composer/factory");
 
-  let project = createEmptyProject("ORG");
+  let project = createScaffoldProject("ORG");
   project = composerReducer(project, {
     type: "addNode",
     kind: "router",
@@ -4341,9 +4355,9 @@ console.log("\n[composer session persistence]");
     saveComposerPhaseToSession,
     saveComposerProjectToSession,
   } = await import("@/lib/composer/session-persistence");
-  const { createEmptyProject } = await import("@/lib/composer/factory");
+  const { createScaffoldProject } = await import("@/lib/composer/factory");
 
-  const project = createEmptyProject("ORG");
+  const project = createScaffoldProject("ORG");
   saveComposerProjectToSession({ ...project, identity: { ...project.identity, name: "Session Net" } });
   saveComposerPhaseToSession("editing");
 
