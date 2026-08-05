@@ -177,10 +177,13 @@ function buildNodes(
 function buildEdges(
   broker: Broker,
   connectedHandles: Map<string, Set<string>>,
-  onInsert: InsertableEdgeData["onInsert"]
+  onInsert: InsertableEdgeData["onInsert"],
+  layoutDirection: "vertical" | "horizontal"
 ): Edge[] {
   const edges: Edge[] = [];
   const data: InsertableEdgeData = { onInsert };
+  const linearSourceHandle = layoutDirection === "horizontal" ? "right" : "bottom";
+  const linearTargetHandle = layoutDirection === "horizontal" ? "left" : "top";
   const mark = (nodeId: string, handle: string) => {
     let set = connectedHandles.get(nodeId);
     if (!set) {
@@ -204,7 +207,7 @@ function buildEdges(
           source: n.id,
           sourceHandle,
           target: r.targetNodeId,
-          targetHandle: "top",
+          targetHandle: linearTargetHandle,
           label: r.label || r.when,
           data,
         });
@@ -219,21 +222,21 @@ function buildEdges(
           source: n.id,
           sourceHandle,
           target: n.otherwiseTargetNodeId,
-          targetHandle: "top",
+          targetHandle: linearTargetHandle,
           label: "otherwise",
           data,
         });
       }
     } else if (n.onExitTarget) {
-      mark(n.id, "bottom");
-      mark(n.onExitTarget, "top");
+      mark(n.id, linearSourceHandle);
+      mark(n.onExitTarget, linearTargetHandle);
       edges.push({
         id: `exit-${n.id}`,
         type: "insertable",
         source: n.id,
-        sourceHandle: "bottom",
+        sourceHandle: linearSourceHandle,
         target: n.onExitTarget,
-        targetHandle: "top",
+        targetHandle: linearTargetHandle,
         data,
       });
     }
@@ -286,13 +289,13 @@ function InnerEditor({
   useEffect(() => {
     if (!broker) return;
     const connectedHandles = new Map<string, Set<string>>();
-    const edges = buildEdges(broker, connectedHandles, handleInsertOnEdge);
+    const edges = buildEdges(broker, connectedHandles, handleInsertOnEdge, layoutDirection);
     const nodes = buildNodes(broker, selectedId, connectedHandles, nodeIssues);
     // While searching, fade everything that does not match so hits stand out.
     const dim = search?.query.trim() ? new Set(matchIds) : null;
     setRfNodes(dim ? nodes.map((n) => (dim.has(n.id) ? n : { ...n, style: { opacity: 0.2 } })) : nodes);
     setRfEdges(edges);
-  }, [broker, selectedId, setRfNodes, setRfEdges, handleInsertOnEdge, nodeIssues, search, matchIds]);
+  }, [broker, selectedId, setRfNodes, setRfEdges, handleInsertOnEdge, nodeIssues, search, matchIds, layoutDirection]);
 
   const isValidConnection = useCallback(
     (connection: Connection | Edge) => {
