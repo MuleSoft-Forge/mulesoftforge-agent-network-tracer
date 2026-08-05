@@ -24,6 +24,8 @@ export interface AgentFabricGraphNodeData extends Record<string, unknown> {
   issueSeverity?: NodeIssueSeverity;
   /** Tooltip listing the node's validation issues. */
   issueSummary?: string;
+  /** Executor icon variant inferred from statements/actions. */
+  executorIconKind?: "executor" | "mcp" | "a2a" | "setVariable";
 }
 
 export type NodeIssueSeverity = "error" | "warning";

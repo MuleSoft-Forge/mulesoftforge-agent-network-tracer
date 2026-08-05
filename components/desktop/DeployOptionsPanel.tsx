@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
 import { GatewaySelect, pickGatewayDefault } from "@/components/desktop/GatewaySelect";
 import { TargetSpaceSelect } from "@/components/desktop/TargetSpaceSelect";
@@ -38,6 +38,12 @@ interface DeployOptionsPanelProps {
   disabled?: boolean;
 }
 
+interface VariableGroup {
+  key: string;
+  title: string;
+  variables: ProjectDeployVariable[];
+}
+
 export default function DeployOptionsPanel({
   options,
   variables,
@@ -54,6 +60,7 @@ export default function DeployOptionsPanel({
   const [targetsLoading, setTargetsLoading] = useState(false);
   const [targetsError, setTargetsError] = useState<string | null>(null);
   const [revealedSecrets, setRevealedSecrets] = useState<Set<string>>(() => new Set());
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
 
   const selectedEnvironment = environments.find((env) => env.name === options.environment) ?? null;
   const selectedEnvId = selectedEnvironment?.id ?? null;
@@ -229,6 +236,35 @@ export default function DeployOptionsPanel({
   );
 
   const readiness = deployOptionsReady(options, variables);
+  const groupedVariables = useMemo<VariableGroup[]>(() => {
+    const byGroup = new Map<string, ProjectDeployVariable[]>();
+    for (const variable of variables) {
+      const firstDot = variable.key.indexOf(".");
+      const groupKey = firstDot > 0 ? variable.key.slice(0, firstDot) : "misc";
+      const list = byGroup.get(groupKey) ?? [];
+      list.push(variable);
+      byGroup.set(groupKey, list);
+    }
+    return [...byGroup.entries()]
+      .map(([key, list]) => ({
+        key,
+        title: key === "misc" ? "Other variables" : key,
+        variables: [...list].sort((a, b) => a.key.localeCompare(b.key)),
+      }))
+      .sort((a, b) => a.title.localeCompare(b.title));
+  }, [variables]);
+
+  useEffect(() => {
+    setCollapsedGroups((prev) => {
+      if (prev.size === 0) return prev;
+      const valid = new Set(groupedVariables.map((g) => g.key));
+      const next = new Set<string>();
+      for (const key of prev) {
+        if (valid.has(key)) next.add(key);
+      }
+      return next.size === prev.size ? prev : next;
+    });
+  }, [groupedVariables]);
 
   return (
     <div className="space-y-5">
@@ -419,49 +455,96 @@ export default function DeployOptionsPanel({
           <p className="text-xs text-gray-400">No deploy variables in this project.</p>
         ) : (
           <ul className="space-y-3">
-            {variables.map((variable) => {
-              const value = getPropertyValue(options.properties, variable.key);
-              const showSecret = revealedSecrets.has(variable.key);
+            {groupedVariables.map((group) => {
+              const collapsed = collapsedGroups.has(group.key);
+              const missingCount = group.variables.reduce((count, variable) => {
+                const value = getPropertyValue(options.properties, variable.key).trim();
+                return value ? count : count + 1;
+              }, 0);
+
               return (
-                <li key={variable.key} className="rounded-lg border border-gray-200 bg-gray-50 p-3">
-                  <label
-                    htmlFor={`deploy-var-${variable.key}`}
-                    className="block text-xs font-medium text-gray-800"
+                <li key={group.key} className="overflow-hidden rounded-lg border border-gray-200 bg-gray-50">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setCollapsedGroups((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(group.key)) next.delete(group.key);
+                        else next.add(group.key);
+                        return next;
+                      })
+                    }
+                    className="flex w-full items-center justify-between bg-gray-100 px-3 py-2 text-left hover:bg-gray-200"
+                    aria-expanded={!collapsed}
                   >
-                    <span className="font-mono">{variable.key}</span>
-                    {variable.description ? (
-                      <span className="ml-1 font-normal text-gray-500">({variable.description})</span>
-                    ) : null}
-                    {variable.secret ? <span className="ml-1 text-red-500">*</span> : null}
-                  </label>
-                  <div className="relative mt-1.5">
-                    <input
-                      id={`deploy-var-${variable.key}`}
-                      type={variable.secret && !showSecret ? "password" : "text"}
-                      value={value}
-                      onChange={(e) => setProperty(variable.key, e.target.value)}
-                      disabled={disabled}
-                      placeholder={variable.secret ? "Enter secret value" : variable.default || ""}
-                      className="w-full rounded-anypoint border border-gray-300 bg-white px-3 py-2 pr-9 font-mono text-sm text-gray-900 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:opacity-60"
-                    />
-                    {variable.secret ? (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setRevealedSecrets((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(variable.key)) next.delete(variable.key);
-                            else next.add(variable.key);
-                            return next;
-                          })
-                        }
-                        className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                        aria-label={showSecret ? "Hide value" : "Show value"}
-                      >
-                        {showSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                      </button>
-                    ) : null}
-                  </div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-sm font-bold text-gray-900">{group.title}</span>
+                      <span className="rounded-full bg-gray-800 px-2 py-0.5 text-[11px] font-semibold text-white">
+                        {group.variables.length}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs">
+                      {missingCount > 0 ? (
+                        <span className="rounded bg-amber-100 px-2 py-0.5 font-semibold text-amber-700">
+                          {missingCount} missing
+                        </span>
+                      ) : (
+                        <span className="rounded bg-emerald-100 px-2 py-0.5 font-semibold text-emerald-700">
+                          complete
+                        </span>
+                      )}
+                      <span className="font-mono text-gray-500">{collapsed ? "[+]" : "[-]"}</span>
+                    </div>
+                  </button>
+
+                  {!collapsed ? (
+                    <ul className="space-y-3 p-3">
+                      {group.variables.map((variable) => {
+                        const value = getPropertyValue(options.properties, variable.key);
+                        const showSecret = revealedSecrets.has(variable.key);
+                        const inputId = `deploy-var-${variable.key.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+                        return (
+                          <li key={variable.key}>
+                            <label htmlFor={inputId} className="block text-xs font-medium text-gray-800">
+                              <span className="font-mono">{variable.key}</span>
+                              {variable.description ? (
+                                <span className="ml-1 font-normal text-gray-500">({variable.description})</span>
+                              ) : null}
+                              {variable.secret ? <span className="ml-1 text-red-500">*</span> : null}
+                            </label>
+                            <div className="relative mt-1.5">
+                              <input
+                                id={inputId}
+                                type={variable.secret && !showSecret ? "password" : "text"}
+                                value={value}
+                                onChange={(e) => setProperty(variable.key, e.target.value)}
+                                disabled={disabled}
+                                placeholder={variable.secret ? "Enter secret value" : variable.default || ""}
+                                className="w-full rounded-anypoint border border-gray-300 bg-white px-3 py-2 pr-9 font-mono text-sm text-gray-900 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:opacity-60"
+                              />
+                              {variable.secret ? (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setRevealedSecrets((prev) => {
+                                      const next = new Set(prev);
+                                      if (next.has(variable.key)) next.delete(variable.key);
+                                      else next.add(variable.key);
+                                      return next;
+                                    })
+                                  }
+                                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                                  aria-label={showSecret ? "Hide value" : "Show value"}
+                                >
+                                  {showSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                                </button>
+                              ) : null}
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  ) : null}
                 </li>
               );
             })}

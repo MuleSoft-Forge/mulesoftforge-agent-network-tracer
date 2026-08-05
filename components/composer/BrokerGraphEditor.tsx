@@ -124,6 +124,24 @@ function buildNodes(
   connectedHandles: Map<string, Set<string>>,
   nodeIssues: Map<string, NodeIssue>
 ): AfFlowNode[] {
+  const actionKindByName = new Map(
+    broker.actions.map((action) => [action.name, action.actionKind] as const)
+  );
+
+  function inferExecutorIconKind(node: GraphNode): AgentFabricGraphNodeData["executorIconKind"] {
+    const statements = node.executorStatements ?? [];
+    if (statements.length === 0) return "executor";
+    const runStatements = statements.filter((s) => s.kind === "run");
+    if (runStatements.length === 0) return "setVariable";
+    const runKinds = runStatements
+      .map((s) => (s.actionName ? actionKindByName.get(s.actionName) : undefined))
+      .filter((k): k is "a2a:send_message" | "mcp:tool" => k === "a2a:send_message" || k === "mcp:tool");
+    if (runKinds.length !== runStatements.length) return "executor";
+    if (runKinds.every((k) => k === "mcp:tool")) return "mcp";
+    if (runKinds.every((k) => k === "a2a:send_message")) return "a2a";
+    return "executor";
+  }
+
   return broker.nodes.map((n) => {
     const nodeType = nodeTypeForKind(n.kind);
     const issue = nodeIssues.get(n.id);
@@ -140,6 +158,9 @@ function buildNodes(
       issueSeverity: issue?.severity,
       issueSummary: issue?.messages.join("\n"),
     };
+    if (n.kind === "executor") {
+      data.executorIconKind = inferExecutorIconKind(n);
+    }
     if (n.kind === "router") data.outputs = encodeProtocolOutputs(routerCanvasOutputs(n));
     return {
       id: n.id,

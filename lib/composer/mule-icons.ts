@@ -23,7 +23,7 @@ export const MULE_ICONS = {
   echo: "send-response-icon.svg",
   orchestrator: "agent-icon.svg",
   subagent: "agent-icon.svg",
-  executor: "mcp-icon.svg",
+  executor: "implement-icon-light.svg",
   router: "switch-icon.svg",
   agent: "agent-icon.svg",
   mcp: "mcp-icon.svg",

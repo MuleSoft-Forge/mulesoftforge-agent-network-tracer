@@ -35,7 +35,11 @@ export function AfNode({ data, selected }: NodeProps<Node<AgentFabricGraphNodeDa
             className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md"
             style={{ backgroundColor: `${accent}1f` }}
           >
-            <KindIcon kind={kind} size={18} />
+            <KindIcon
+              kind={kind}
+              iconName={kind === "executor" ? data.executorIconKind : undefined}
+              size={18}
+            />
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
