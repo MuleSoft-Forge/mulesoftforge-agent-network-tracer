@@ -23,6 +23,7 @@ export default function ProjectCompletenessPanel({
       subtitle="What each field means, where it lands in export files, and what's still missing"
       completeness={completeness}
       onFocus={onFocus}
+      resolveAnchor={(focus) => focus.anchor ?? (focus.assetId ? `asset-${focus.assetId}` : undefined)}
       maxHeightClass="max-h-[calc(100vh-280px)]"
     />
   );

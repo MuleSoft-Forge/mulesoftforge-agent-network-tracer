@@ -70,6 +70,7 @@ export default function A2aCardLivePreview({
         subtitle="Required fields block a usable contract · recommended improves discoverability"
         completeness={completeness}
         onFocus={onFocusField}
+        resolveAnchor={(anchor) => anchor}
       />
 
       <details

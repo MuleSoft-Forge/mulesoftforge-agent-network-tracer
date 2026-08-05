@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { CheckCircle2, FolderDown, Loader2, Download } from "lucide-react";
 import { useComposer } from "@/lib/composer/store";
-import { validateProject } from "@/lib/composer/validate";
+import { useValidationResult } from "@/lib/composer/validation/validation-context";
 import { useLocalProjectExport } from "@/components/composer/useLocalProjectExport";
 import { Button } from "@/components/composer/ui";
 
@@ -12,7 +12,7 @@ export default function ProjectSaveBar() {
   const { saving, error, lastSave, saveToFolder, saveAsZip } = useLocalProjectExport();
   const [savedFlash, setSavedFlash] = useState(false);
 
-  const validation = useMemo(() => validateProject(project), [project]);
+  const validation = useValidationResult();
   const canSave = !saving;
   const errorCount = validation.errors.length;
 

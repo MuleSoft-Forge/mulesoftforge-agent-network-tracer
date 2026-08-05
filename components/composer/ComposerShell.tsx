@@ -16,8 +16,12 @@ import { MuleIcon } from "@/components/composer/MuleIcon";
 import SegmentedControl from "@/components/composer/SegmentedControl";
 import BetaBadge from "@/components/ui/BetaBadge";
 import { ComposerProvider, useComposer } from "@/lib/composer/store";
-import { validateProject, type ValidationIssue } from "@/lib/composer/validate";
+import { type ValidationIssue } from "@/lib/composer/validate";
 import { resolveIssueNavigation } from "@/lib/composer/issue-navigation";
+import {
+  ValidationProvider,
+  useValidationResult,
+} from "@/lib/composer/validation/validation-context";
 import { Button } from "@/components/composer/ui";
 import BrokerGraphEditor from "@/components/composer/BrokerGraphEditor";
 import AgentScriptPanel from "@/components/composer/AgentScriptPanel";
@@ -132,10 +136,9 @@ function ValidationIssueList({
 }
 
 function ValidationStrip({ onIssueClick }: { onIssueClick: (issue: ValidationIssue) => void }) {
-  const { project } = useComposer();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-  const result = useMemo(() => validateProject(project), [project]);
+  const result = useValidationResult();
 
   useEffect(() => {
     if (!open) return;
@@ -156,16 +159,10 @@ function ValidationStrip({ onIssueClick }: { onIssueClick: (issue: ValidationIss
   if (result.errors.length === 0 && result.warnings.length === 0) {
     return (
       <div
-        className="flex items-center gap-1.5 text-xs"
-        title="No structural errors or warnings. Export readiness is shown on the Project tab."
+        className="flex items-center gap-1.5 text-xs text-emerald-600"
+        title="No errors or warnings. Export readiness is shown on the Project tab."
       >
-        <span className="text-composer-label-muted">Consistency</span>
-        <span className="text-composer-label-muted" aria-hidden>
-          ·
-        </span>
-        <span className="flex items-center gap-1 text-emerald-600">
-          <CheckCircle2 className="h-3.5 w-3.5" /> Valid
-        </span>
+        <CheckCircle2 className="h-3.5 w-3.5" /> Valid
       </div>
     );
   }
@@ -178,17 +175,20 @@ function ValidationStrip({ onIssueClick }: { onIssueClick: (issue: ValidationIss
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        title="Structural errors and warnings in the project model"
+        title="Errors and warnings in the project model"
         className="flex max-w-full items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs hover:bg-gray-100"
       >
-        <span className="shrink-0 text-composer-label-muted">Consistency</span>
-        <span className="text-composer-label-muted" aria-hidden>
-          ·
-        </span>
         <AlertTriangle className={`h-3.5 w-3.5 shrink-0 ${hasErrors ? "text-red-500" : "text-amber-500"}`} />
         <span className="text-gray-600">
-          {result.errors.length} error{result.errors.length === 1 ? "" : "s"},{" "}
-          {result.warnings.length} warning{result.warnings.length === 1 ? "" : "s"}
+          {result.errors.length > 0 && (
+            <span className="font-medium text-red-600">{result.errors.length} blocking</span>
+          )}
+          {result.errors.length > 0 && result.warnings.length > 0 ? <span aria-hidden> · </span> : null}
+          {result.warnings.length > 0 && (
+            <span className="text-amber-700">
+              {result.warnings.length} warning{result.warnings.length === 1 ? "" : "s"}
+            </span>
+          )}
         </span>
         <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-gray-400 transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
@@ -321,7 +321,8 @@ function Inner({
 
   const handleValidationIssueClick = useCallback(
     (issue: ValidationIssue) => {
-      const { tab, focusId, registry } = resolveIssueNavigation(issue);
+      const { tab, registry } = resolveIssueNavigation(issue);
+      const loc = issue.location;
       setPanelTab(tab);
       if (registry) {
         setPendingFocus({
@@ -330,20 +331,15 @@ function Inner({
           registryKey: registry.key,
           anchor: registry.anchor,
         });
-      } else if (focusId) {
+      } else {
         setPendingFocus({
           tab,
-          ...(tab === "graph" ? { nodeId: focusId } : {}),
-          ...(tab === "assets" ? { assetId: focusId } : {}),
+          ...(loc.fieldAnchor ? { anchor: loc.fieldAnchor } : {}),
+          ...(loc.nodeId ? { nodeId: loc.nodeId } : {}),
+          ...(loc.assetId ? { assetId: loc.assetId } : {}),
         });
-      } else {
-        setPendingFocus(null);
       }
-      if (tab === "graph") {
-        setSelectedNodeId(focusId ?? null);
-      } else {
-        setSelectedNodeId(null);
-      }
+      setSelectedNodeId(tab === "graph" ? loc.nodeId ?? null : null);
     },
     []
   );
@@ -648,9 +644,11 @@ function Root() {
 export default function ComposerShell() {
   return (
     <ComposerProvider>
-      <HelpModeProvider>
-        <Root />
-      </HelpModeProvider>
+      <ValidationProvider>
+        <HelpModeProvider>
+          <Root />
+        </HelpModeProvider>
+      </ValidationProvider>
     </ComposerProvider>
   );
 }

@@ -2,8 +2,8 @@
 
 import { useMemo } from "react";
 import { Plus, Trash2 } from "lucide-react";
-import { validateProject } from "@/lib/composer/validate";
 import { nodeFieldIssues } from "@/lib/composer/node-field-issues";
+import { useValidationResult } from "@/lib/composer/validation/validation-context";
 import { KindIcon } from "@/components/composer/graph/KindIcon";
 import InstructionTextArea from "@/components/composer/InstructionTextArea";
 import HelpTip from "@/components/composer/HelpTip";
@@ -32,10 +32,8 @@ import { Button, Checkbox, NumberField, SelectField, TextArea, TextField } from 
 export default function NodeInspector({ nodeId, onDeleted }: { nodeId: string; onDeleted: () => void }) {
   const { project, dispatch } = useComposer();
   const { helpMode } = useHelpMode();
-  const fieldIssues = useMemo(
-    () => nodeFieldIssues(validateProject(project), nodeId),
-    [project, nodeId]
-  );
+  const result = useValidationResult();
+  const fieldIssues = useMemo(() => nodeFieldIssues(result, nodeId), [result, nodeId]);
   const broker = project.brokers[0];
   const node = broker?.nodes.find((n) => n.id === nodeId);
   if (!broker || !node) return <div className="p-3 text-sm text-gray-400">Node not found.</div>;

@@ -43,7 +43,12 @@ import {
   policyVariableFieldName,
 } from "@/lib/composer/connectivity/policy-config-defaults";
 import { derivePolicyVariableBindings } from "@/lib/composer/connectivity/policy-variable-bindings";
-import { deriveVariables, assignDefaultConnectionName, defaultConnectionIdForProject } from "@/lib/composer/model";
+import {
+  deriveVariables,
+  deriveVariablesForAsset,
+  assignDefaultConnectionName,
+  defaultConnectionIdForProject,
+} from "@/lib/composer/model";
 import {
   parseConnectionAccess,
   parseConnectionPolicies,
@@ -193,7 +198,8 @@ console.log("\n[2] Compose agent + mcp + llm; derivations + cross-refs");
   check("llm connection has apiKey auth token", Object.values(conns).some((c: any) => c.authentication?.apiKey?.includes("${")));
   const llmAsset = p.assets.find((a) => a.kind === "llm");
   check("llm asset default url", llmAsset?.url === "https://api.openai.com/v1");
-  const openAiUrlVar = ex.metadata.variables?.openAiGpt?.url?.default;
+  const llmVariableGroup = llmAsset?.variableGroup ?? "openAiGpt";
+  const openAiUrlVar = ex.metadata.variables?.[llmVariableGroup]?.url?.default;
   check("exchange.json llm url default", openAiUrlVar === "https://api.openai.com/v1", String(openAiUrlVar));
   // action auto-created for agent + mcp, llm binding for llm
   const broker = p.brokers[0];
@@ -477,6 +483,27 @@ console.log("\n[6c] Broker map keys (snake_case)");
     importAsset({ kind: "llm", groupId: "g", assetId: "openai", version: "1", name: "OpenAI GPT", url: "https://custom" })
       .url === "https://custom"
   );
+  {
+    const importedLlm = importAsset({
+      kind: "llm",
+      groupId: "g",
+      assetId: "llm-openai",
+      version: "1",
+      name: "llm-openai",
+    });
+    check("importAsset llm sets consistent variableGroup", importedLlm.variableGroup === "llm_openai");
+    check(
+      "importAsset llm auth uses variableGroup",
+      importedLlm.authentication?.kind === "apiKey" &&
+        importedLlm.authentication.apiKey === "${llm_openai.apiKey}"
+    );
+    const derived = deriveVariablesForAsset(importedLlm);
+    check("importAsset llm derives url in variableGroup", derived.some((v) => v.group === "llm_openai" && v.field === "url"));
+    check(
+      "importAsset llm derives apiKey in variableGroup",
+      derived.some((v) => v.group === "llm_openai" && v.field === "apiKey")
+    );
+  }
 
   check("exchange asset id accepts kebab-case", isValidExchangeAssetId("it-help-desk"));
   check("exchange asset id accepts snake_case", isValidExchangeAssetId("agent_network_reasoningonly_assetid"));
@@ -4340,11 +4367,43 @@ console.log("\n[tab issue counts]");
   const counts = countIssuesByTab(validateProject(project));
   check("router errors are attributed to the graph tab", (counts.get("graph")?.errors ?? 0) > 0);
 
-  const total = [...counts.values()].reduce((sum, c) => sum + c.errors + c.warnings, 0);
+  // Missing required A2A card fields should surface on the A2A card tab.
+  let cardProject = createScaffoldProject("ORG");
+  cardProject = composerReducer(cardProject, { type: "updateCard", patch: { description: undefined } });
+  const cardCounts = countIssuesByTab(validateProject(cardProject));
+  check("A2A card deploy errors are attributed to the a2a-card tab", (cardCounts.get("a2a-card")?.errors ?? 0) > 0);
+
+  let brokerKeyProject = createScaffoldProject("ORG");
+  brokerKeyProject = composerReducer(brokerKeyProject, { type: "updateBroker", patch: { name: "" } });
+  const brokerKeyCounts = countIssuesByTab(validateProject(brokerKeyProject));
+  check("broker key/id errors are attributed to the a2a-card tab", (brokerKeyCounts.get("a2a-card")?.errors ?? 0) > 0);
+
+  const total = [...counts.values()].reduce((sum, c) => sum + c.errors + c.warnings + c.info, 0);
   const result = validateProject(project);
   check(
     "every issue is attributed to exactly one tab",
-    total === result.errors.length + result.warnings.length
+    total === result.issues.length
+  );
+
+  // Reconciliation invariant: the strip rollup equals the sum of tab badges.
+  const tabErrors = [...counts.values()].reduce((sum, c) => sum + c.errors, 0);
+  const tabWarnings = [...counts.values()].reduce((sum, c) => sum + c.warnings, 0);
+  check(
+    "strip rollup reconciles with tab badge totals",
+    tabErrors === result.errors.length && tabWarnings === result.warnings.length
+  );
+
+  check(
+    "every issue carries a stable code and a tab location",
+    result.issues.every(
+      (i) => typeof i.code === "string" && i.code.length > 0 && typeof i.location?.tab === "string"
+    )
+  );
+  check(
+    "router no-route issue is coded and node-anchored",
+    result.errors.some(
+      (i) => i.code === "graph.router.no-route" && i.location.nodeId === "r1" && i.location.fieldAnchor === "routes"
+    )
   );
 }
 
@@ -4540,16 +4599,21 @@ console.log("\n[registry primary interface]");
 console.log("\n[registry issue navigation]");
 {
   const { resolveIssueNavigation, panelTabFromYamlPath } = await import("@/lib/composer/issue-navigation");
+  const { yamlPathToLocation } = await import("@/lib/composer/validation/schema-location");
 
   check(
     "registry yaml path tab",
     panelTabFromYamlPath("registry.agents.agent-1.metadata.interfaces.a2a_v03.card") === "registry"
   );
 
+  const urlPath = "registry.agents.agent-1.metadata.interfaces.a2a_v03.card";
+  const urlMessage = `Schema (agent-network.yaml) at ${urlPath}: missing required property "url"`;
   const urlIssue = resolveIssueNavigation({
+    code: "schema.yaml",
     severity: "error",
-    message:
-      'Schema (agent-network.yaml) at registry.agents.agent-1.metadata.interfaces.a2a_v03.card: missing required property "url"',
+    origin: "schema",
+    message: urlMessage,
+    location: yamlPathToLocation(urlPath, urlMessage),
   });
   check("registry error opens registry tab", urlIssue.tab === "registry");
   check("registry error tab label", urlIssue.tabLabel === "Registry");

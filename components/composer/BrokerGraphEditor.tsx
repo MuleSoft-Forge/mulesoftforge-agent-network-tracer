@@ -24,7 +24,8 @@ import type {
   NodeIssueSeverity,
 } from "@/lib/composer/agentfabric-graph-types";
 import { nodePreviewText, nodeSummaryChips } from "@/lib/composer/node-summary";
-import { validateProject, type ValidationIssue } from "@/lib/composer/validate";
+import { type ValidationIssue } from "@/lib/composer/validate";
+import { useValidationResult } from "@/lib/composer/validation/validation-context";
 import { routeOutputLabel, routerOutputHandleId, routerCanvasOutputs } from "@/lib/composer/agentfabric-graph";
 import { agentFabricNodeTypes } from "@/components/composer/graph/nodes";
 import { composerEdgeTypes, type InsertableEdgeData } from "@/components/composer/graph/InsertableEdge";
@@ -105,11 +106,12 @@ function encodeProtocolOutputs(outputs: string[]): string {
 function indexNodeIssues(issues: ValidationIssue[]): Map<string, NodeIssue> {
   const byNode = new Map<string, NodeIssue>();
   for (const issue of issues) {
-    if (issue.target?.kind !== "node" || !issue.target.id) continue;
+    const nodeId = issue.location.nodeId;
+    if (!nodeId) continue;
     if (issue.severity !== "error" && issue.severity !== "warning") continue;
-    const existing = byNode.get(issue.target.id);
+    const existing = byNode.get(nodeId);
     if (!existing) {
-      byNode.set(issue.target.id, { severity: issue.severity, messages: [issue.message] });
+      byNode.set(nodeId, { severity: issue.severity, messages: [issue.message] });
       continue;
     }
     existing.messages.push(issue.message);
@@ -302,10 +304,11 @@ function InnerEditor({
     []
   );
 
-  const nodeIssues = useMemo(() => {
-    const result = validateProject(project);
-    return indexNodeIssues([...result.errors, ...result.warnings]);
-  }, [project]);
+  const validation = useValidationResult();
+  const nodeIssues = useMemo(
+    () => indexNodeIssues([...validation.errors, ...validation.warnings]),
+    [validation]
+  );
 
   // The model owns positions. New nodes are placed deliberately when added, so
   // the canvas only mirrors the model — adding or connecting never reflows a

@@ -1,5 +1,6 @@
 /** DOM ids for A2A card editor fields — used for completeness panel click-to-focus. */
 export const A2A_CARD_ANCHOR = {
+  brokerKey: "a2a-card-broker-key",
   name: "a2a-card-name",
   version: "a2a-card-version",
   description: "a2a-card-description",

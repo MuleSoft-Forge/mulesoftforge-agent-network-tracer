@@ -187,6 +187,8 @@ export function importAsset(input: AssetImportInput): ImportedAsset {
     name: input.name || input.assetId,
     description: input.description,
     baseName,
+    // Keep URL/auth deploy variables in one consistent group for newly imported assets.
+    variableGroup: baseName,
     url:
       input.url?.trim() ||
       (input.kind === "llm"

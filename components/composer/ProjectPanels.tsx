@@ -3,27 +3,24 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { BookOpen, ChevronDown, ChevronRight, ExternalLink, Trash2 } from "lucide-react";
 import { useComposer } from "@/lib/composer/store";
-import { validateProject } from "@/lib/composer/validate";
 import { countIssuesByTab, type TabIssueCounts } from "@/lib/composer/issue-navigation";
-import type { A2aCardFieldAnchor } from "@/lib/composer/a2a-card-field-anchors";
+import { useValidationResult, useFieldIssue } from "@/lib/composer/validation/validation-context";
+import { SEVERITY_UI } from "@/lib/composer/validation/severity";
+import { A2A_CARD_ANCHOR, type A2aCardFieldAnchor } from "@/lib/composer/a2a-card-field-anchors";
 import type { ProjectFocusTarget } from "@/lib/composer/project-field-anchors";
 import { PROJECT_ANCHOR } from "@/lib/composer/project-field-anchors";
 import ProjectCompletenessPanel from "@/components/composer/ProjectCompletenessPanel";
 import { MuleIcon } from "@/components/composer/MuleIcon";
 import { connectionNameForAsset, exchangeDependencyAssets, toIdentifier, variableGroupForAsset, type Broker, type ImportedAsset, type YamlNetworkInfo } from "@/lib/composer/model";
-import { BROKER_KEY_HINT, brokerKeyValidationMessage, isValidBrokerKey, normalizeBrokerKey } from "@/lib/composer/broker-key";
+import { BROKER_KEY_HINT, normalizeBrokerKey } from "@/lib/composer/broker-key";
 import {
   ANF_ID_HINT,
-  anfIdValidationMessage,
   connectionIdForBaseName,
-  isValidAnfId,
   normalizeAnfId,
 } from "@/lib/composer/anf-id";
 import { EXCHANGE_API_VERSION_FIELD_HINT, EXCHANGE_ASSET_VERSION_UI_DETAIL, EXCHANGE_API_VERSION_UI_DETAIL, EXCHANGE_DESCRIPTOR_VERSION_UI_DETAIL } from "@/lib/composer/docs/exchange-json-schema";
 import {
   EXCHANGE_ASSET_ID_FIELD_HINT,
-  exchangeAssetIdValidationMessage,
-  isValidExchangeAssetId,
   normalizeExchangeAssetId,
   restrictExchangeAssetIdInput,
 } from "@/lib/composer/exchange-asset-id";
@@ -113,26 +110,30 @@ const tabBtn =
 const tabActive = "bg-primary/10 text-primary";
 const tabIdle = "text-composer-label-muted hover:bg-composer-surface-muted";
 
-/** Error/warning count for a tab, so problems are visible before opening it. */
+/** One badge per tab: color = worst severity, number = count of that severity. */
 function TabIssueBadge({ counts }: { counts: TabIssueCounts | undefined }) {
   if (!counts) return null;
-  const isError = counts.errors > 0;
-  const total = isError ? counts.errors : counts.warnings;
-  if (total === 0) return null;
-  return (
-    <span
-      title={
-        isError
-          ? `${counts.errors} error${counts.errors === 1 ? "" : "s"} on this tab`
-          : `${counts.warnings} warning${counts.warnings === 1 ? "" : "s"} on this tab`
-      }
-      className={`ml-auto min-w-[1.125rem] rounded-full px-1 text-center text-[10px] font-semibold leading-[1.125rem] ${
-        isError ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"
-      }`}
-    >
-      {total}
-    </span>
-  );
+  if (counts.errors > 0) {
+    return (
+      <span
+        title={`${counts.errors} error${counts.errors === 1 ? "" : "s"} on this tab`}
+        className={`ml-auto min-w-[1.125rem] rounded-full px-1 text-center text-[10px] font-semibold leading-[1.125rem] ${SEVERITY_UI.error.badge}`}
+      >
+        {counts.errors}
+      </span>
+    );
+  }
+  if (counts.warnings > 0) {
+    return (
+      <span
+        title={`${counts.warnings} warning${counts.warnings === 1 ? "" : "s"} on this tab`}
+        className={`ml-auto min-w-[1.125rem] rounded-full px-1 text-center text-[10px] font-semibold leading-[1.125rem] ${SEVERITY_UI.warning.badge}`}
+      >
+        {counts.warnings}
+      </span>
+    );
+  }
+  return null;
 }
 
 export function ComposerNav({
@@ -142,8 +143,8 @@ export function ComposerNav({
   tab: PanelTab;
   onTabChange: (tab: PanelTab) => void;
 }) {
-  const { project } = useComposer();
-  const issueCounts = useMemo(() => countIssuesByTab(validateProject(project)), [project]);
+  const result = useValidationResult();
+  const issueCounts = useMemo(() => countIssuesByTab(result), [result]);
 
   return (
     <nav className="flex h-full w-[176px] shrink-0 flex-col overflow-hidden border-r border-composer-border bg-composer-surface">
@@ -212,9 +213,12 @@ function hasYamlInfoContent(yamlInfo: YamlNetworkInfo | undefined): boolean {
 }
 
 function FieldAnchor({ id, children }: { id: string; children: ReactNode }) {
+  const issue = useFieldIssue(id);
+  const tone = issue ? SEVERITY_UI[issue.severity] : null;
   return (
-    <div id={id} className="scroll-mt-4">
+    <div id={id} className={`scroll-mt-4 ${tone ? `rounded-md ${tone.ring}` : ""}`}>
       {children}
+      {issue ? <p className={`mt-1 text-[11px] ${tone!.text}`}>{issue.message}</p> : null}
     </div>
   );
 }
@@ -511,7 +515,12 @@ function AssetCard({
             value={asset.baseName}
             onChange={(v) => onUpdate({ baseName: v })}
             onBlur={() => {
-              const baseName = normalizeAnfId(asset.baseName, "asset");
+              const trimmed = asset.baseName.trim();
+              if (!trimmed) {
+                if (asset.baseName !== "") onUpdate({ baseName: "" });
+                return;
+              }
+              const baseName = normalizeAnfId(trimmed, "asset");
               const patch: Partial<ImportedAsset> = { baseName };
               if (!asset.connectionName?.trim()) {
                 patch.connectionName = connectionIdForBaseName(baseName);
@@ -527,18 +536,19 @@ function AssetCard({
             value={connectionNameForAsset(asset)}
             onChange={(v) => onUpdate({ connectionName: v })}
             onBlur={() => {
-              const normalized = normalizeAnfId(connectionNameForAsset(asset), "connection");
+              const current = connectionNameForAsset(asset);
+              const trimmed = current.trim();
+              if (!trimmed) {
+                if (asset.connectionName !== "") onUpdate({ connectionName: "" });
+                return;
+              }
+              const normalized = normalizeAnfId(trimmed, "connection");
               if (normalized !== asset.connectionName) {
                 onUpdate({ connectionName: normalized });
               }
             }}
             restrictAnfId
             mono
-            error={
-              isValidAnfId(connectionNameForAsset(asset))
-                ? undefined
-                : anfIdValidationMessage(connectionNameForAsset(asset), "Connection ID")
-            }
             hint={`Yaml context.connections key — must be unique across agent networks in the same deploy environment. ${ANF_ID_HINT}`}
           />
           <TextField
@@ -818,18 +828,20 @@ export function ComposerPanelContent({
                           dispatch({ type: "setIdentity", patch: { assetId: restrictExchangeAssetIdInput(v) } })
                         }
                         onBlur={() => {
-                          const normalized = normalizeExchangeAssetId(project.identity.assetId, "agent-network");
+                          const trimmed = project.identity.assetId.trim();
+                          if (!trimmed) {
+                            if (project.identity.assetId !== "") {
+                              dispatch({ type: "setIdentity", patch: { assetId: "" } });
+                            }
+                            return;
+                          }
+                          const normalized = normalizeExchangeAssetId(trimmed, "");
                           if (normalized !== project.identity.assetId) {
                             dispatch({ type: "setIdentity", patch: { assetId: normalized } });
                           }
                         }}
                         mono
                         required
-                        error={
-                          isValidExchangeAssetId(project.identity.assetId)
-                            ? undefined
-                            : exchangeAssetIdValidationMessage(project.identity.assetId)
-                        }
                         hint={EXCHANGE_ASSET_ID_FIELD_HINT}
                         alwaysShowHint
                       />
@@ -941,23 +953,29 @@ export function ComposerPanelContent({
                       <span className="font-mono">brokers.*.interfaces.a2a.card</span>. Define what clients discover
                       before wiring LLMs, actions, or the graph.
                     </p>
-                    <TextField
-                      label="Broker key"
-                      value={broker.name}
-                      onChange={(v) => dispatch({ type: "updateBroker", patch: { name: v } })}
-                      onBlur={() => {
-                        const normalized = normalizeBrokerKey(broker.name, "broker");
-                        if (normalized !== broker.name) {
-                          dispatch({ type: "updateBroker", patch: { name: normalized } });
-                        }
-                      }}
-                      restrictAnfId
-                      error={
-                        isValidBrokerKey(broker.name) ? undefined : brokerKeyValidationMessage(broker.name)
-                      }
-                      hint={`Yaml brokers map key, config.agent_name, and .agent filename. ${BROKER_KEY_HINT}`}
-                      mono
-                    />
+                    <FieldAnchor id={A2A_CARD_ANCHOR.brokerKey}>
+                      <TextField
+                        label="Broker key"
+                        value={broker.name}
+                        onChange={(v) => dispatch({ type: "updateBroker", patch: { name: v } })}
+                        onBlur={() => {
+                          const trimmed = broker.name.trim();
+                          if (!trimmed) {
+                            if (broker.name !== "") {
+                              dispatch({ type: "updateBroker", patch: { name: "" } });
+                            }
+                            return;
+                          }
+                          const normalized = normalizeBrokerKey(trimmed, "");
+                          if (normalized !== broker.name) {
+                            dispatch({ type: "updateBroker", patch: { name: normalized } });
+                          }
+                        }}
+                        restrictAnfId
+                        hint={`Yaml brokers map key, config.agent_name, and .agent filename. ${BROKER_KEY_HINT}`}
+                        mono
+                      />
+                    </FieldAnchor>
                     <div className="flex items-center justify-end">
                       <SchemaDocLink label="A2A card schema" onClick={() => setSchemaDialog("a2a-card")} />
                     </div>
