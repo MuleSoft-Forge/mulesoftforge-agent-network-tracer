@@ -1,5 +1,5 @@
 import type { Broker, GraphNodeKind } from "@/lib/composer/model";
-import { applyDagreOverviewLayout } from "@/lib/composer/agentfabric-graph-layout";
+import { applyDagreOverviewLayout, type GraphLayoutDirection } from "@/lib/composer/agentfabric-graph-layout";
 import type {
   AgentFabricGraphEdge,
   AgentFabricGraphNode,
@@ -100,17 +100,21 @@ function buildLayoutEdges(broker: Broker): AgentFabricGraphEdge[] {
 }
 
 export function computeBrokerHierarchicalPositions(
-  broker: Broker
+  broker: Broker,
+  direction: GraphLayoutDirection = "vertical"
 ): Record<string, { x: number; y: number }> {
-  const layout = applyDagreOverviewLayout(buildLayoutNodes(broker), buildLayoutEdges(broker));
+  const layout = applyDagreOverviewLayout(buildLayoutNodes(broker), buildLayoutEdges(broker), direction);
   const positions: Record<string, { x: number; y: number }> = {};
   for (const node of layout.nodes) positions[node.id] = node.position;
   return positions;
 }
 
 /** Apply Dagre top-to-bottom layout onto broker graph node positions. */
-export function applyHierarchicalGraphLayout(broker: Broker): Broker {
-  const positions = computeBrokerHierarchicalPositions(broker);
+export function applyHierarchicalGraphLayout(
+  broker: Broker,
+  direction: GraphLayoutDirection = "vertical"
+): Broker {
+  const positions = computeBrokerHierarchicalPositions(broker, direction);
   return {
     ...broker,
     nodes: broker.nodes.map((node) => {

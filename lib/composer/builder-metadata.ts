@@ -12,6 +12,7 @@ export interface AgentNetworkBuilderMetadata {
   graphLayouts?: Record<string, BrokerGraphLayout>;
   /** When false, export omits saved canvas positions (hierarchical layout is derived on import). */
   graphLayoutPinned?: boolean;
+  graphLayoutDirection?: "vertical" | "horizontal";
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -58,14 +59,24 @@ export function parseBuilderMetadata(
   const graphLayoutPinnedRaw = root.graphLayoutPinned;
   const graphLayoutPinned =
     graphLayoutPinnedRaw === false ? false : graphLayoutPinnedRaw === true ? true : undefined;
+  const graphLayoutDirectionRaw = root.graphLayoutDirection;
+  const graphLayoutDirection =
+    graphLayoutDirectionRaw === "vertical" || graphLayoutDirectionRaw === "horizontal"
+      ? graphLayoutDirectionRaw
+      : undefined;
 
-  if (Object.keys(graphLayouts).length === 0 && graphLayoutPinned === undefined) {
+  if (
+    Object.keys(graphLayouts).length === 0 &&
+    graphLayoutPinned === undefined &&
+    graphLayoutDirection === undefined
+  ) {
     return undefined;
   }
 
   return {
     ...(Object.keys(graphLayouts).length > 0 ? { graphLayouts } : {}),
     ...(graphLayoutPinned !== undefined ? { graphLayoutPinned } : {}),
+    ...(graphLayoutDirection !== undefined ? { graphLayoutDirection } : {}),
   };
 }
 
@@ -83,6 +94,7 @@ export function serializeBuilderMetadata(
     return {
       [BUILDER_METADATA_KEY]: {
         graphLayoutPinned: false,
+        ...(metadata.graphLayoutDirection ? { graphLayoutDirection: metadata.graphLayoutDirection } : {}),
       },
     };
   }
@@ -93,6 +105,7 @@ export function serializeBuilderMetadata(
     [BUILDER_METADATA_KEY]: {
       graphLayouts: layouts,
       ...(pinned === true ? { graphLayoutPinned: true } : {}),
+      ...(metadata.graphLayoutDirection ? { graphLayoutDirection: metadata.graphLayoutDirection } : {}),
     },
   };
 }
@@ -100,7 +113,10 @@ export function serializeBuilderMetadata(
 /** Snapshot current canvas positions from the composer model. */
 export function extractGraphLayouts(project: ComposerProject): AgentNetworkBuilderMetadata | undefined {
   if (project.graphLayoutPinned === false) {
-    return { graphLayoutPinned: false };
+    return {
+      graphLayoutPinned: false,
+      graphLayoutDirection: project.graphLayoutDirection ?? "vertical",
+    };
   }
 
   const graphLayouts: Record<string, BrokerGraphLayout> = {};
@@ -113,7 +129,11 @@ export function extractGraphLayouts(project: ComposerProject): AgentNetworkBuild
     graphLayouts[broker.name] = nodes;
   }
   if (Object.keys(graphLayouts).length === 0) return undefined;
-  return { graphLayouts, graphLayoutPinned: project.graphLayoutPinned ?? true };
+  return {
+    graphLayouts,
+    graphLayoutPinned: project.graphLayoutPinned ?? true,
+    graphLayoutDirection: project.graphLayoutDirection ?? "vertical",
+  };
 }
 
 /** Apply saved node-name positions onto a parsed broker graph. */

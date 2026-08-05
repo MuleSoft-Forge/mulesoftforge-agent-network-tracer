@@ -11,6 +11,7 @@ import type {
 } from "@/lib/composer/agentfabric-graph-types";
 
 type HandleSide = "top" | "bottom" | "left" | "right";
+export type GraphLayoutDirection = "vertical" | "horizontal";
 
 interface SideConfig {
   type: "source" | "target";
@@ -82,7 +83,8 @@ export interface AgentFabricLayoutResult {
 /** Dagre-based hierarchical layout for AgentFabric overview graphs. */
 export function applyDagreOverviewLayout(
   nodes: AgentFabricGraphNode[],
-  edges: AgentFabricGraphEdge[]
+  edges: AgentFabricGraphEdge[],
+  direction: GraphLayoutDirection = "vertical"
 ): AgentFabricLayoutResult {
   if (nodes.length === 0) {
     return { nodes: [], edges: [], connectedHandles: new Map() };
@@ -90,7 +92,7 @@ export function applyDagreOverviewLayout(
 
   const g = new dagre.graphlib.Graph({ directed: true });
   g.setGraph({
-    rankdir: "TB",
+    rankdir: direction === "horizontal" ? "LR" : "TB",
     nodesep: 80,
     ranksep: 120,
     marginx: 40,
@@ -123,7 +125,7 @@ export function applyDagreOverviewLayout(
     };
   });
 
-  return wireHandles(positionedNodes, edges);
+  return wireHandles(positionedNodes, edges, direction);
 }
 
 /**
@@ -131,7 +133,8 @@ export function applyDagreOverviewLayout(
  */
 function wireHandles(
   positionedNodes: AgentFabricGraphNode[],
-  edges: AgentFabricGraphEdge[]
+  edges: AgentFabricGraphEdge[],
+  direction: GraphLayoutDirection
 ): AgentFabricLayoutResult {
   const sourcePool = new Map<string, string[]>();
   const targetPool = new Map<string, string[]>();
@@ -140,11 +143,21 @@ function wireHandles(
   for (const node of positionedNodes) {
     const sides = getOverviewSides(node.data.nodeType);
     const sources: string[] = [];
-    if (sides.bottom?.type === "source") sources.push("bottom");
-    if (sides.right?.type === "source") sources.push("right");
+    if (direction === "horizontal") {
+      if (sides.right?.type === "source") sources.push("right");
+      if (sides.bottom?.type === "source") sources.push("bottom");
+    } else {
+      if (sides.bottom?.type === "source") sources.push("bottom");
+      if (sides.right?.type === "source") sources.push("right");
+    }
     const targets: string[] = [];
-    if (sides.top?.type === "target") targets.push("top");
-    if (sides.left?.type === "target") targets.push("left");
+    if (direction === "horizontal") {
+      if (sides.left?.type === "target") targets.push("left");
+      if (sides.top?.type === "target") targets.push("top");
+    } else {
+      if (sides.top?.type === "target") targets.push("top");
+      if (sides.left?.type === "target") targets.push("left");
+    }
     sourcePool.set(node.id, sources);
     targetPool.set(node.id, targets);
     consumedSet.set(node.id, new Set());
@@ -163,7 +176,7 @@ function wireHandles(
         return h;
       }
     }
-    return "bottom";
+    return direction === "horizontal" ? "right" : "bottom";
   }
 
   function takeTarget(nodeId: string): string {
@@ -175,7 +188,7 @@ function wireHandles(
         return h;
       }
     }
-    return "top";
+    return direction === "horizontal" ? "left" : "top";
   }
 
   for (const edge of edges) {

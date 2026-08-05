@@ -530,6 +530,8 @@ export const ComposerProjectSchema = z.object({
    * hierarchical layout is re-derived on import. Set false by reset-to-hierarchical.
    */
   graphLayoutPinned: z.boolean().optional(),
+  /** Preferred hierarchical layout direction for derived graph positions. */
+  graphLayoutDirection: z.enum(["vertical", "horizontal"]).optional(),
 });
 
 // ---------------------------------------------------------------------------

@@ -36,6 +36,7 @@ import { customVariablesMatch } from "@/lib/composer/variable-keys";
 import { routeOutputLabel, routerOutputFromHandleId } from "@/lib/composer/agentfabric-graph";
 import { isAllowedTransitionTarget } from "@/lib/composer/graph-transitions";
 import { applyHierarchicalGraphLayout } from "@/lib/composer/broker-graph-layout";
+import type { GraphLayoutDirection } from "@/lib/composer/agentfabric-graph-layout";
 import {
   loadComposerProjectFromSession,
   saveComposerProjectToSession,
@@ -107,7 +108,7 @@ export type ComposerAction =
   | { type: "updateNode"; id: string; patch: Partial<GraphNode> }
   | { type: "moveNode"; id: string; position: { x: number; y: number } }
   | { type: "layoutNodes"; positions: Record<string, { x: number; y: number }> }
-  | { type: "resetGraphLayoutToHierarchical" }
+  | { type: "resetGraphLayoutToHierarchical"; direction?: GraphLayoutDirection }
   | { type: "removeNode"; id: string }
   | { type: "connect"; sourceId: string; targetId: string; sourceHandle?: string | null }
   | { type: "disconnect"; sourceId: string; targetId: string; sourceHandle?: string | null };
@@ -591,13 +592,14 @@ export function composerReducer(project: ComposerProject, action: ComposerAction
       }));
 
     case "resetGraphLayoutToHierarchical": {
+      const direction = action.direction ?? project.graphLayoutDirection ?? "vertical";
       if (project.brokers.length === 0) {
-        return { ...project, graphLayoutPinned: false };
+        return { ...project, graphLayoutPinned: false, graphLayoutDirection: direction };
       }
-      const broker = applyHierarchicalGraphLayout(project.brokers[0]);
+      const broker = applyHierarchicalGraphLayout(project.brokers[0], direction);
       const brokers = project.brokers.slice();
       brokers[0] = broker;
-      return { ...project, brokers, graphLayoutPinned: false };
+      return { ...project, brokers, graphLayoutPinned: false, graphLayoutDirection: direction };
     }
 
     case "removeNode":

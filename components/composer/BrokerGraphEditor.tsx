@@ -255,6 +255,7 @@ function InnerEditor({
   const { project, dispatch } = useComposer();
   const { helpMode } = useHelpMode();
   const broker = project.brokers[0];
+  const layoutDirection = project.graphLayoutDirection ?? "vertical";
   const { fitView, screenToFlowPosition } = useReactFlow();
 
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState<AfFlowNode>([]);
@@ -435,12 +436,12 @@ function InnerEditor({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  const resetToHierarchicalLayout = useCallback(() => {
-    dispatch({ type: "resetGraphLayoutToHierarchical" });
+  const resetToHierarchicalLayout = useCallback((direction?: "vertical" | "horizontal") => {
+    dispatch({ type: "resetGraphLayoutToHierarchical", direction: direction ?? layoutDirection });
     window.setTimeout(() => {
       void fitView({ padding: 0.2, duration: 200 });
     }, 0);
-  }, [dispatch, fitView]);
+  }, [dispatch, fitView, layoutDirection]);
 
   useEffect(() => {
     if (!pendingCommand) return;
@@ -473,15 +474,33 @@ function InnerEditor({
           </p>
         ) : null}
       </div>
-      <button
-        type="button"
-        onClick={resetToHierarchicalLayout}
-        title="Reset to hierarchical layout — clears saved canvas positions from project metadata and session"
-        className="absolute right-3 top-3 z-10 inline-flex items-center gap-1.5 rounded-anypoint border border-composer-border bg-composer-surface/95 px-2.5 py-1.5 text-xs font-medium text-composer-label shadow-md backdrop-blur transition-anypoint hover:bg-composer-surface-muted"
-      >
-        <LayoutTemplate className="h-3.5 w-3.5" />
-        Hierarchical layout
-      </button>
+      <div className="absolute right-3 top-3 z-10 flex items-center gap-1.5 rounded-anypoint border border-composer-border bg-composer-surface/95 p-1.5 text-xs shadow-md backdrop-blur">
+        <button
+          type="button"
+          onClick={() => resetToHierarchicalLayout("vertical")}
+          title="Reflow top-to-bottom hierarchy and persist direction"
+          className={`inline-flex items-center gap-1 rounded-anypoint px-2 py-1 font-medium transition-anypoint ${
+            layoutDirection === "vertical"
+              ? "bg-composer-surface-muted text-composer-label"
+              : "text-composer-label-muted hover:bg-composer-surface-muted"
+          }`}
+        >
+          <LayoutTemplate className="h-3.5 w-3.5" />
+          Vertical
+        </button>
+        <button
+          type="button"
+          onClick={() => resetToHierarchicalLayout("horizontal")}
+          title="Reflow left-to-right hierarchy and persist direction"
+          className={`rounded-anypoint px-2 py-1 font-medium transition-anypoint ${
+            layoutDirection === "horizontal"
+              ? "bg-composer-surface-muted text-composer-label"
+              : "text-composer-label-muted hover:bg-composer-surface-muted"
+          }`}
+        >
+          Horizontal
+        </button>
+      </div>
       {search ? (
         <CanvasSearch
           query={search.query}

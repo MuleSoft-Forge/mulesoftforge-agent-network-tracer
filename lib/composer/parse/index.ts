@@ -371,9 +371,10 @@ export function parseProjectFiles(input: ParseFilesInput): ParseFilesResult {
   };
   const savedLayout = exchange.builderMetadata?.graphLayouts?.[brokerName];
   const graphLayoutPinned = exchange.builderMetadata?.graphLayoutPinned !== false;
+  const graphLayoutDirection = exchange.builderMetadata?.graphLayoutDirection ?? "vertical";
   let brokerWithLayout = applyGraphLayout(broker, savedLayout);
   if (!savedLayout || !graphLayoutPinned) {
-    brokerWithLayout = applyHierarchicalGraphLayout(brokerWithLayout);
+    brokerWithLayout = applyHierarchicalGraphLayout(brokerWithLayout, graphLayoutDirection);
   }
 
   const candidate: ComposerProject = {
@@ -395,6 +396,7 @@ export function parseProjectFiles(input: ParseFilesInput): ParseFilesResult {
     variableOverrides: buildVariableOverrides(exchange),
     customVariables: [],
     graphLayoutPinned: graphLayoutPinned && Boolean(savedLayout),
+    graphLayoutDirection,
     ...(yamlDoc.registry ? { registry: yamlDoc.registry } : {}),
     // Dependencies that map to a connection are re-derived from the live assets on
     // export, so edits stay in sync. Only the leftovers need preserving verbatim.
