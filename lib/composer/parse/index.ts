@@ -41,7 +41,7 @@ import {
 } from "@/lib/composer/parse/broker-agent";
 import { parseAgentNetworkYaml, type ParsedConnection } from "@/lib/composer/parse/agent-network-yaml";
 import { parseExchangeJson, type ParsedExchangeJson } from "@/lib/composer/parse/exchange-json";
-import { isVariableRef, parseVariableRef } from "@/lib/composer/connectivity/variable-ref";
+import { formatVariableRef, isVariableRef, parseVariableRef } from "@/lib/composer/connectivity/variable-ref";
 
 export interface ParseFilesInput {
   exchangeJson?: string;
@@ -68,6 +68,49 @@ const KIND_BY_CONNECTION: Record<ParsedConnection["kind"], AssetKind> = {
 function findVarDefault(exchange: ParsedExchangeJson, group: string, field: string): string | undefined {
   const v = exchange.variables.find((x) => x.group === group && x.field === field);
   return v?.default;
+}
+
+function canonicalVariableGroup(group: string): string {
+  return normalizeAnfId(group, toIdentifier(group));
+}
+
+function collectVariableRefGroups(value: unknown, out: Set<string>): void {
+  if (typeof value === "string") {
+    const parsed = parseVariableRef(value);
+    if (parsed?.group) out.add(parsed.group);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectVariableRefGroups(item, out);
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const item of Object.values(value as Record<string, unknown>)) {
+      collectVariableRefGroups(item, out);
+    }
+  }
+}
+
+function rewriteVariableRefGroups(value: unknown, targetGroup: string): unknown {
+  const canonicalTarget = canonicalVariableGroup(targetGroup);
+
+  if (typeof value === "string") {
+    const parsed = parseVariableRef(value);
+    if (!parsed) return value;
+    if (canonicalVariableGroup(parsed.group) !== canonicalTarget) return value;
+    return formatVariableRef(targetGroup, parsed.field);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => rewriteVariableRefGroups(item, targetGroup));
+  }
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+      key,
+      rewriteVariableRefGroups(item, targetGroup),
+    ]);
+    return Object.fromEntries(entries);
+  }
+  return value;
 }
 
 function findDependencyIndex(
@@ -125,14 +168,30 @@ function buildAssets(
     const resolvedGroupId =
       dep?.groupId || namespace || exchange.organizationId || fallbackGroupId || "";
 
-    const group = toIdentifier(rawBaseName);
     const urlRef = conn.url && isVariableRef(conn.url) ? conn.url : undefined;
     const parsedUrlRef = urlRef ? parseVariableRef(urlRef) : null;
+    const refGroups = new Set<string>();
+    if (parsedUrlRef?.group) refGroups.add(parsedUrlRef.group);
+    collectVariableRefGroups(conn.authentication, refGroups);
+    const canonicalGroups = new Set(Array.from(refGroups).map(canonicalVariableGroup));
+    const mergedVariableGroup =
+      canonicalGroups.size === 1 ? (parsedUrlRef?.group ?? Array.from(refGroups)[0]) : undefined;
+
+    const normalizedUrlRef =
+      parsedUrlRef && mergedVariableGroup
+        ? formatVariableRef(mergedVariableGroup, parsedUrlRef.field)
+        : urlRef;
+    const normalizedParsedUrlRef = normalizedUrlRef ? parseVariableRef(normalizedUrlRef) : null;
+    const normalizedAuthentication =
+      conn.authentication && mergedVariableGroup
+        ? (rewriteVariableRefGroups(conn.authentication, mergedVariableGroup) as ImportedAsset["authentication"])
+        : conn.authentication;
     const literalUrl = conn.url && !isVariableRef(conn.url) ? conn.url : undefined;
+    const fallbackVariableGroup = mergedVariableGroup ?? toIdentifier(rawBaseName);
     let url =
-      parsedUrlRef != null
-        ? findVarDefault(exchange, parsedUrlRef.group, parsedUrlRef.field) ?? ""
-        : literalUrl ?? findVarDefault(exchange, group, "url") ?? "";
+      normalizedParsedUrlRef != null
+        ? findVarDefault(exchange, normalizedParsedUrlRef.group, normalizedParsedUrlRef.field) ?? ""
+        : literalUrl ?? findVarDefault(exchange, fallbackVariableGroup, "url") ?? "";
     if (kind === "llm" && !url.trim()) {
       url = defaultLlmBaseUrlForAsset({
         name: rawBaseName,
@@ -157,11 +216,15 @@ function buildAssets(
       baseName,
       ...(dep ? {} : { registryLocal: true }),
       connectionName,
-      ...(urlRef ? { urlRef } : {}),
+      ...(normalizedUrlRef ? { urlRef: normalizedUrlRef } : {}),
       ...(literalUrl ? { literalConnectionUrl: literalUrl } : {}),
-      ...(parsedUrlRef ? { variableGroup: parsedUrlRef.group } : {}),
+      ...(normalizedParsedUrlRef
+        ? { variableGroup: normalizedParsedUrlRef.group }
+        : mergedVariableGroup
+          ? { variableGroup: mergedVariableGroup }
+          : {}),
       url,
-      authentication: conn.authentication,
+      authentication: normalizedAuthentication,
       access: conn.access,
       policies: conn.policies,
     };
