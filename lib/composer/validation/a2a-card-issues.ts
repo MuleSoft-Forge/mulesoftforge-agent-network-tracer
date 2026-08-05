@@ -72,9 +72,6 @@ export function a2aCardIssues(broker: Broker, project: ComposerProject): Validat
   for (const item of items) {
     if (item.tier !== "required") continue;
     if (item.status === "set") continue;
-    // Preserve existing scaffold validity semantics: endpoint URL can be left
-    // unset during early composition and is enforced later by deploy checks.
-    if (item.id === "endpoint-url") continue;
     if (anchorsWithHardErrors.has(item.anchor)) continue;
     issues.push({
       code: `a2a-card.required.${item.id}`,

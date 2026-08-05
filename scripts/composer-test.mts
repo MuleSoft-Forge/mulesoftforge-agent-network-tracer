@@ -174,7 +174,10 @@ console.log("\n[1] Blank project factory defaults");
 console.log("\n[1b] Scaffold project serializes to valid files");
 {
   let p = createScaffoldProject("ORG");
-  check("scaffold project valid", validateProject(p).ok, JSON.stringify(validateProject(p).errors));
+  {
+    const errors = validateProject(p).errors.filter((e) => e.code !== "a2a-card.required.endpoint-url");
+    check("scaffold project valid (aside from required endpoint URL)", errors.length === 0, JSON.stringify(errors));
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -215,7 +218,10 @@ console.log("\n[2] Compose agent + mcp + llm; derivations + cross-refs");
   check("mcp action needs tool_name before valid", !validateProject(p).ok);
   const mcpAction = broker.actions.find((a) => a.actionKind === "mcp:tool")!;
   p = apply(p, { type: "updateAction", id: mcpAction.id, patch: { toolName: "updateIssue" } });
-  check("valid after setting tool_name", validateProject(p).ok, JSON.stringify(validateProject(p).errors));
+  {
+    const errors = validateProject(p).errors.filter((e) => e.code !== "a2a-card.required.endpoint-url");
+    check("valid after setting tool_name (aside from required endpoint URL)", errors.length === 0, JSON.stringify(errors));
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -280,7 +286,10 @@ console.log("\n[4] Router graph: routes + otherwise, generator + echo");
   const agentText = serializeBrokerAgent(b);
   check("router block emitted", agentText.includes("router "));
   check("router has otherwise", /otherwise:\s*\n\s*target:/.test(agentText));
-  check("valid graph", validateProject(p).ok, JSON.stringify(validateProject(p).errors));
+  {
+    const errors = validateProject(p).errors.filter((e) => e.code !== "a2a-card.required.endpoint-url");
+    check("valid graph (aside from required endpoint URL)", errors.length === 0, JSON.stringify(errors));
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -626,14 +635,22 @@ console.log("\n[6d] AgentFabric expression catalog");
     patch: { routes: (r.routes ?? []).map((rt, i) => ({ ...rt, when: `category == "c${i}"`, label: `case ${i}` })) },
   });
 
-  check("original project valid", validateProject(p).ok, JSON.stringify(validateProject(p).errors));
+  {
+    const errors = validateProject(p).errors.filter((e) => e.code !== "a2a-card.required.endpoint-url");
+    check("original project valid (aside from required endpoint URL)", errors.length === 0, JSON.stringify(errors));
+  }
 
   const files1 = serializeProject(p);
   const result = parseProjectFiles(toInput(files1));
   check("round-trip parses ok", result.ok, result.ok ? "" : JSON.stringify(result.errors));
   if (result.ok) {
     const files2 = serializeProject(result.project);
-    check("round-trip valid", validateProject(result.project).ok, JSON.stringify(validateProject(result.project).errors));
+    {
+      const errors = validateProject(result.project).errors.filter(
+        (e) => e.code !== "a2a-card.required.endpoint-url"
+      );
+      check("round-trip valid (aside from required endpoint URL)", errors.length === 0, JSON.stringify(errors));
+    }
     check("same file count", files1.length === files2.length, `${files1.length} vs ${files2.length}`);
     for (const f1 of files1) {
       const f2 = files2.find((f) => f.path === f1.path);
@@ -727,7 +744,14 @@ console.log("\n[8] Import files whose connection name != derived convention");
   check("imports ok", res.ok, res.ok ? "" : JSON.stringify(res.errors));
   if (res.ok) {
     const v = validateProject(res.project);
-    check("llm binding resolves to real connection (no unknown-connection error)", v.ok, JSON.stringify(v.errors));
+    {
+      const errors = v.errors.filter((e) => e.code !== "a2a-card.required.endpoint-url");
+      check(
+        "llm binding resolves to real connection (no unknown-connection error)",
+        errors.length === 0,
+        JSON.stringify(errors)
+      );
+    }
     check("import normalizes broker key to snake_case", res.project.brokers[0].name === "my_broker");
     const asset = res.project.assets[0];
     check("import normalizes invalid connection id from yaml", asset.connectionName === "openai_connection", asset.connectionName);
@@ -1603,7 +1627,10 @@ console.log("\n[19] MCP metadata — pick file, parse tools, auto-select single 
   p = apply(p, { type: "addAsset", asset: mcpAsset });
   const action = p.brokers[0].actions.find((a) => a.actionKind === "mcp:tool")!;
   check("addAsset auto-selects single MCP tool", action.toolName === "updateIssue");
-  check("single-tool mcp action validates", validateProject(p).ok);
+  {
+    const errors = validateProject(p).errors.filter((e) => e.code !== "a2a-card.required.endpoint-url");
+    check("single-tool mcp action validates (aside from required endpoint URL)", errors.length === 0);
+  }
 
   const schemaMeta = tagMcpMetaForAsset(
     {
@@ -4148,7 +4175,10 @@ console.log("\n[trigger is not a transition target]");
     "trigger may still transition outward to echo",
     project.brokers[0].nodes.find((n) => n.id === trigger.id)?.onExitTarget === echo.id
   );
-  check("valid graph after outward trigger transition", validateProject(project).errors.length === 0);
+  {
+    const errors = validateProject(project).errors.filter((e) => e.code !== "a2a-card.required.endpoint-url");
+    check("valid graph after outward trigger transition (aside from required endpoint URL)", errors.length === 0);
+  }
 }
 
 console.log("\n[insert node on edge]");
