@@ -37,37 +37,55 @@ function schemeKeyFromAssetId(assetId: string): string {
   return `auth_${sanitized}`;
 }
 
-function buildSchemeDefinition(assetId: string): Record<string, unknown> | undefined {
+interface NamedSchemeDefinition {
+  keySuffix?: string;
+  definition: Record<string, unknown>;
+}
+
+function buildSchemeDefinitions(assetId: string): NamedSchemeDefinition[] {
   const id = assetId.toLowerCase();
   if (/jwt|json.web.token|access.?token|bearer/.test(id)) {
-    return { httpAuthSecurityScheme: { scheme: "Bearer", bearerFormat: "JWT" } };
+    return [{ definition: { httpAuthSecurityScheme: { scheme: "Bearer", bearerFormat: "JWT" } } }];
   }
   if (/openid/.test(id)) {
-    return {
-      openIdConnectSecurityScheme: {
-        openIdConnectUrl: "https://example.com/.well-known/openid-configuration",
+    return [
+      {
+        definition: {
+          openIdConnectSecurityScheme: {
+            openIdConnectUrl: "https://example.com/.well-known/openid-configuration",
+          },
+        },
       },
-    };
+    ];
   }
   if (/oauth/.test(id)) {
-    return { oauth2SecurityScheme: { flows: {} } };
+    return [{ definition: { oauth2SecurityScheme: { flows: {} } } }];
   }
   if (/client.?id/.test(id)) {
-    return { apiKeySecurityScheme: { name: "client_id", in: "header" } };
+    return [
+      {
+        keySuffix: "client_id",
+        definition: { apiKeySecurityScheme: { name: "client_id", location: "header" } },
+      },
+      {
+        keySuffix: "client_secret",
+        definition: { apiKeySecurityScheme: { name: "client_secret", location: "header" } },
+      },
+    ];
   }
   if (/mtls|mutual.?tls/.test(id)) {
-    return { mtlsSecurityScheme: {} };
+    return [{ definition: { mtlsSecurityScheme: {} } }];
   }
   if (/basic.?auth|basic.authentication/.test(id)) {
-    return { httpAuthSecurityScheme: { scheme: "Basic" } };
+    return [{ definition: { httpAuthSecurityScheme: { scheme: "Basic" } } }];
   }
   if (/api.?key/.test(id)) {
-    return { apiKeySecurityScheme: { name: "X-Api-Key", in: "header" } };
+    return [{ definition: { apiKeySecurityScheme: { name: "X-Api-Key", location: "header" } } }];
   }
   if (/authentication/.test(id)) {
-    return { httpAuthSecurityScheme: { scheme: "Bearer" } };
+    return [{ definition: { httpAuthSecurityScheme: { scheme: "Bearer" } } }];
   }
-  return undefined;
+  return [];
 }
 
 function resolvePolicyAssetId(item: ConnectionPolicyItem, project: ComposerProject): string | undefined {
@@ -96,17 +114,22 @@ export function deriveA2aCardSecurityFromInterfacePolicies(
   for (const item of inbound) {
     const assetId = resolvePolicyAssetId(item, project);
     if (!assetId || !isAuthPolicyAssetId(assetId)) continue;
-    const definition = buildSchemeDefinition(assetId);
-    if (!definition) continue;
+    const definitions = buildSchemeDefinitions(assetId);
+    if (definitions.length === 0) continue;
 
-    let key = schemeKeyFromAssetId(assetId);
-    let suffix = 2;
-    while (schemes[key]) {
-      key = `${schemeKeyFromAssetId(assetId)}_${suffix}`;
-      suffix += 1;
+    for (const built of definitions) {
+      const base = built.keySuffix
+        ? `${schemeKeyFromAssetId(assetId)}_${built.keySuffix}`
+        : schemeKeyFromAssetId(assetId);
+      let key = base;
+      let suffix = 2;
+      while (schemes[key]) {
+        key = `${base}_${suffix}`;
+        suffix += 1;
+      }
+      schemes[key] = built.definition;
+      schemeKeys.push(key);
     }
-    schemes[key] = definition;
-    schemeKeys.push(key);
   }
 
   if (schemeKeys.length === 0) return undefined;

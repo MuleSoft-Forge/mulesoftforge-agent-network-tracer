@@ -1407,6 +1407,47 @@ brokers:
   };
   const derived = deriveA2aCardSecurityFromInterfacePolicies(withPolicies.brokers[0], withPolicies);
   check("derive jwt scheme key", Boolean(derived?.securitySchemes?.jwt_validation));
+  const withClientIdPolicy = {
+    ...project,
+    brokers: [
+      {
+        ...project.brokers[0],
+        interfacePolicies: {
+          inbound: [{ mode: "ref" as const, name: "client-id-enforcement" }],
+        },
+      },
+    ],
+    policyBindings: {
+      "client-id-enforcement": { ref: { name: "client-id-enforcement" }, configuration: {} },
+    },
+  };
+  const derivedClientId = deriveA2aCardSecurityFromInterfacePolicies(
+    withClientIdPolicy.brokers[0],
+    withClientIdPolicy
+  );
+  const clientIdScheme = (derivedClientId?.securitySchemes?.client_id_enforcement_client_id ?? {}) as Record<
+    string,
+    unknown
+  >;
+  const clientSecretScheme = (derivedClientId?.securitySchemes?.client_id_enforcement_client_secret ??
+    {}) as Record<string, unknown>;
+  const apiKeyScheme = (clientIdScheme.apiKeySecurityScheme ?? {}) as Record<string, unknown>;
+  const apiSecretScheme = (clientSecretScheme.apiKeySecurityScheme ?? {}) as Record<string, unknown>;
+  const derivedReq = (derivedClientId?.securityRequirements?.[0] ?? {}) as Record<string, unknown>;
+  check(
+    "client-id emits client_id and client_secret schemes",
+    Boolean(derivedClientId?.securitySchemes?.client_id_enforcement_client_id) &&
+      Boolean(derivedClientId?.securitySchemes?.client_id_enforcement_client_secret)
+  );
+  check("client-id uses a2a_v1 apiKey location field", apiKeyScheme.location === "header");
+  check("client-secret uses a2a_v1 apiKey location field", apiSecretScheme.location === "header");
+  check("client-secret api key name", apiSecretScheme.name === "client_secret");
+  check(
+    "client-id requirement includes both header schemes",
+    Array.isArray(derivedReq.client_id_enforcement_client_id) &&
+      Array.isArray(derivedReq.client_id_enforcement_client_secret)
+  );
+  check("client-id does not emit OpenAPI in field", !("in" in apiKeyScheme));
   const derivedYaml = serializeAgentNetworkYaml(withPolicies);
   check("export emits derived securitySchemes", derivedYaml.includes("securitySchemes:"));
   check("export emits derived securityRequirements", derivedYaml.includes("securityRequirements:"));
