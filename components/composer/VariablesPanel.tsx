@@ -26,6 +26,7 @@ export function VariablesPanel() {
 
   const [addOpen, setAddOpen] = useState(false);
   const [limitsOpen, setLimitsOpen] = useState(false);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
   const [group, setGroup] = useState("");
   const [field, setField] = useState("");
   const [def, setDef] = useState("");
@@ -80,6 +81,22 @@ export function VariablesPanel() {
   }
 
   const availableRuntimeLimits = RUNTIME_SYSTEM_LIMIT_VARIABLES.filter((v) => !declaredKeys.has(v.key));
+  const groupedVariables = useMemo(() => {
+    const byGroup = new Map<string, typeof variables>();
+    for (const variable of variables) {
+      const groupKey = variable.flat ? "runtime limits" : variable.group || "other";
+      const list = byGroup.get(groupKey) ?? [];
+      list.push(variable);
+      byGroup.set(groupKey, list);
+    }
+    return [...byGroup.entries()]
+      .map(([key, vars]) => ({
+        key,
+        title: key,
+        variables: [...vars].sort((a, b) => variableStorageKey(a).localeCompare(variableStorageKey(b))),
+      }))
+      .sort((a, b) => a.title.localeCompare(b.title));
+  }, [variables]);
 
   return (
     <div className="space-y-4">
@@ -211,55 +228,109 @@ export function VariablesPanel() {
       {variables.length === 0 ? (
         <p className="text-xs text-gray-400">No variables yet.</p>
       ) : (
-        variables.map((v) => {
-          const key = variableStorageKey(v);
-          const label = variableDisplayLabel(v);
-          const isCustom = customKeys.has(key);
-          return (
-            <div key={key} className="space-y-2 rounded-md border border-gray-200 p-2">
-              <div className="flex items-center justify-between gap-2">
-                <p className="font-mono text-xs text-gray-700">
-                  {v.flat ? label : <>${"{"}{label}{"}"}</>}{" "}
-                  {v.secret ? <span className="text-red-500">(secret)</span> : null}
-                  {isCustom ? (
-                    <span className="ml-1 rounded bg-gray-100 px-1 text-[10px] uppercase text-gray-500">
-                      {v.flat ? "runtime limit" : "custom"}
+        <ul className="space-y-3">
+          {groupedVariables.map((grouped) => {
+            const collapsed = collapsedGroups.has(grouped.key);
+            const missingDefaults = grouped.variables.reduce(
+              (count, v) => (!v.secret && !((v.default ?? "").trim()) ? count + 1 : count),
+              0
+            );
+            return (
+              <li key={grouped.key} className="overflow-hidden rounded-md border border-gray-200">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setCollapsedGroups((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(grouped.key)) next.delete(grouped.key);
+                      else next.add(grouped.key);
+                      return next;
+                    })
+                  }
+                  className="flex w-full items-center justify-between bg-gray-50 px-3 py-2 text-left hover:bg-gray-100"
+                  aria-expanded={!collapsed}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-xs font-semibold text-gray-800">{grouped.title}</span>
+                    <span className="rounded-full bg-gray-800 px-2 py-0.5 text-[10px] font-semibold text-white">
+                      {grouped.variables.length}
                     </span>
-                  ) : null}
-                </p>
-                {isCustom && (
-                  <Button
-                    variant="ghost"
-                    title="Remove variable"
-                    onClick={() =>
-                      dispatch({
-                        type: "removeCustomVariable",
-                        group: v.group,
-                        field: v.field,
-                        ...(v.flat ? { flat: true } : {}),
-                      })
-                    }
-                  >
-                    <Trash2 className="h-3.5 w-3.5 text-gray-400" />
-                  </Button>
+                  </div>
+                  <div className="flex items-center gap-2 text-[10px]">
+                    {missingDefaults > 0 ? (
+                      <span className="rounded bg-amber-100 px-1.5 py-0.5 font-semibold text-amber-700">
+                        {missingDefaults} missing defaults
+                      </span>
+                    ) : (
+                      <span className="rounded bg-emerald-100 px-1.5 py-0.5 font-semibold text-emerald-700">
+                        complete
+                      </span>
+                    )}
+                    {collapsed ? (
+                      <ChevronRight className="h-3.5 w-3.5 text-gray-500" />
+                    ) : (
+                      <ChevronDown className="h-3.5 w-3.5 text-gray-500" />
+                    )}
+                  </div>
+                </button>
+
+                {!collapsed && (
+                  <div className="space-y-2 p-2">
+                    {grouped.variables.map((v) => {
+                      const key = variableStorageKey(v);
+                      const label = variableDisplayLabel(v);
+                      const isCustom = customKeys.has(key);
+                      return (
+                        <div key={key} className="space-y-2 rounded-md border border-gray-200 p-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="font-mono text-xs text-gray-700">
+                              {v.flat ? label : <>${"{"}{label}{"}"}</>}{" "}
+                              {v.secret ? <span className="text-red-500">(secret)</span> : null}
+                              {isCustom ? (
+                                <span className="ml-1 rounded bg-gray-100 px-1 text-[10px] uppercase text-gray-500">
+                                  {v.flat ? "runtime limit" : "custom"}
+                                </span>
+                              ) : null}
+                            </p>
+                            {isCustom && (
+                              <Button
+                                variant="ghost"
+                                title="Remove variable"
+                                onClick={() =>
+                                  dispatch({
+                                    type: "removeCustomVariable",
+                                    group: v.group,
+                                    field: v.field,
+                                    ...(v.flat ? { flat: true } : {}),
+                                  })
+                                }
+                              >
+                                <Trash2 className="h-3.5 w-3.5 text-gray-400" />
+                              </Button>
+                            )}
+                          </div>
+                          <TextField
+                            label="Description"
+                            value={v.description ?? ""}
+                            onChange={(nv) => dispatch({ type: "setVariableOverride", key, patch: { description: nv } })}
+                          />
+                          {!v.secret && (
+                            <TextField
+                              label="Default"
+                              value={v.default ?? ""}
+                              onChange={(nv) => dispatch({ type: "setVariableOverride", key, patch: { default: nv } })}
+                              mono
+                            />
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
-              </div>
-              <TextField
-                label="Description"
-                value={v.description ?? ""}
-                onChange={(nv) => dispatch({ type: "setVariableOverride", key, patch: { description: nv } })}
-              />
-              {!v.secret && (
-                <TextField
-                  label="Default"
-                  value={v.default ?? ""}
-                  onChange={(nv) => dispatch({ type: "setVariableOverride", key, patch: { default: nv } })}
-                  mono
-                />
-              )}
-            </div>
-          );
-        })
+              </li>
+            );
+          })}
+        </ul>
       )}
     </div>
   );
