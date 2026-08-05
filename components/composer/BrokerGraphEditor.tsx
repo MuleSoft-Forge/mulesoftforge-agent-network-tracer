@@ -122,7 +122,8 @@ function buildNodes(
   broker: Broker,
   selectedId: string | null,
   connectedHandles: Map<string, Set<string>>,
-  nodeIssues: Map<string, NodeIssue>
+  nodeIssues: Map<string, NodeIssue>,
+  layoutDirection: "vertical" | "horizontal"
 ): AfFlowNode[] {
   const actionKindByName = new Map(
     broker.actions.map((action) => [action.name, action.actionKind] as const)
@@ -140,6 +141,29 @@ function buildNodes(
     if (runKinds.every((k) => k === "mcp:tool")) return "mcp";
     if (runKinds.every((k) => k === "a2a:send_message")) return "a2a";
     return "executor";
+  }
+
+  function routerOutputsInVisualOrder(node: GraphNode): string[] {
+    const outputs = routerCanvasOutputs(node);
+    if (layoutDirection !== "horizontal" || node.kind !== "router") return outputs;
+
+    const nodeById = new Map(broker.nodes.map((candidate) => [candidate.id, candidate] as const));
+    const targetYByOutput = new Map<string, number>();
+    for (const route of node.routes ?? []) {
+      if (!route.targetNodeId) continue;
+      const target = nodeById.get(route.targetNodeId);
+      if (!target) continue;
+      targetYByOutput.set(routeOutputLabel(route), target.position.y);
+    }
+    if (node.otherwiseTargetNodeId) {
+      const target = nodeById.get(node.otherwiseTargetNodeId);
+      if (target) targetYByOutput.set("otherwise", target.position.y);
+    }
+
+    const connectedOutputs = outputs.filter((output) => targetYByOutput.has(output));
+    const disconnectedOutputs = outputs.filter((output) => !targetYByOutput.has(output));
+    connectedOutputs.sort((a, b) => (targetYByOutput.get(a) ?? 0) - (targetYByOutput.get(b) ?? 0));
+    return [...connectedOutputs, ...disconnectedOutputs];
   }
 
   return broker.nodes.map((n) => {
@@ -161,7 +185,7 @@ function buildNodes(
     if (n.kind === "executor") {
       data.executorIconKind = inferExecutorIconKind(n);
     }
-    if (n.kind === "router") data.outputs = encodeProtocolOutputs(routerCanvasOutputs(n));
+    if (n.kind === "router") data.outputs = encodeProtocolOutputs(routerOutputsInVisualOrder(n));
     return {
       id: n.id,
       type: nodeType,
@@ -290,7 +314,7 @@ function InnerEditor({
     if (!broker) return;
     const connectedHandles = new Map<string, Set<string>>();
     const edges = buildEdges(broker, connectedHandles, handleInsertOnEdge, layoutDirection);
-    const nodes = buildNodes(broker, selectedId, connectedHandles, nodeIssues);
+    const nodes = buildNodes(broker, selectedId, connectedHandles, nodeIssues, layoutDirection);
     // While searching, fade everything that does not match so hits stand out.
     const dim = search?.query.trim() ? new Set(matchIds) : null;
     setRfNodes(dim ? nodes.map((n) => (dim.has(n.id) ? n : { ...n, style: { opacity: 0.2 } })) : nodes);
