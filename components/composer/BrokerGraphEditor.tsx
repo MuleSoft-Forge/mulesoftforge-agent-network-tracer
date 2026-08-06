@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -100,6 +100,12 @@ interface RepelPulse {
   y: number;
   reason: string;
   at: number;
+}
+
+interface EdgeContextMenuState {
+  edgeId: string;
+  x: number;
+  y: number;
 }
 
 /** Canvas actions the command palette can trigger from outside the editor. */
@@ -405,6 +411,7 @@ function InnerEditor({
   const [search, setSearch] = useState<SearchState | null>(null);
   const [activeConnection, setActiveConnection] = useState<ActiveConnectionDrag | null>(null);
   const [repelPulse, setRepelPulse] = useState<RepelPulse | null>(null);
+  const [edgeContextMenu, setEdgeContextMenu] = useState<EdgeContextMenuState | null>(null);
 
   const matchIds = useMemo(
     () => (search ? matchNodeIds(broker, search.query) : []),
@@ -601,6 +608,30 @@ function InnerEditor({
     [dispatch]
   );
 
+  const onEdgeContextMenu = useCallback(
+    (event: ReactMouseEvent, edge: Edge) => {
+      event.preventDefault();
+      setEdgeContextMenu({ edgeId: edge.id, x: event.clientX, y: event.clientY });
+    },
+    []
+  );
+
+  const deleteEdgeFromContextMenu = useCallback(() => {
+    if (!edgeContextMenu) return;
+    const edge = rfEdges.find((e) => e.id === edgeContextMenu.edgeId);
+    if (!edge) {
+      setEdgeContextMenu(null);
+      return;
+    }
+    dispatch({
+      type: "disconnect",
+      sourceId: edge.source,
+      targetId: edge.target,
+      sourceHandle: edge.sourceHandle,
+    });
+    setEdgeContextMenu(null);
+  }, [edgeContextMenu, rfEdges, dispatch]);
+
   const onNodesDelete = useCallback(
     (deleted: Node[]) => {
       for (const n of deleted) dispatch({ type: "removeNode", id: n.id });
@@ -753,10 +784,14 @@ function InnerEditor({
         isValidConnection={isValidConnection}
         onConnectEnd={onConnectEnd}
         onEdgesDelete={onEdgesDelete}
+        onEdgeContextMenu={onEdgeContextMenu}
         onNodesDelete={onNodesDelete}
         onNodeDragStop={(_e, node) => dispatch({ type: "moveNode", id: node.id, position: node.position })}
         onNodeClick={(_e, node) => onSelect(node.id)}
-        onPaneClick={() => onSelect(null)}
+        onPaneClick={() => {
+          onSelect(null);
+          setEdgeContextMenu(null);
+        }}
         fitView
         minZoom={0.15}
         maxZoom={1.5}
@@ -794,6 +829,21 @@ function InnerEditor({
           onPick={resolvePendingCreate}
           onDismiss={() => setPendingCreate(null)}
         />
+      ) : null}
+      {edgeContextMenu ? (
+        <div
+          className="fixed z-30 min-w-[160px] rounded-anypoint border border-composer-border bg-composer-surface p-1 shadow-lg"
+          style={{ left: edgeContextMenu.x, top: edgeContextMenu.y }}
+          onMouseLeave={() => setEdgeContextMenu(null)}
+        >
+          <button
+            type="button"
+            onClick={deleteEdgeFromContextMenu}
+            className="w-full rounded-anypoint px-2 py-1.5 text-left text-xs text-red-700 transition-anypoint hover:bg-red-50"
+          >
+            Delete connector
+          </button>
+        </div>
       ) : null}
     </div>
   );
