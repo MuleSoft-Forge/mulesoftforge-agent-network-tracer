@@ -992,6 +992,7 @@ export function ComposerPanelContent({
                   <div className="w-full shrink-0 self-start xl:sticky xl:top-0 xl:w-[380px]">
                     <A2aCardLivePreview
                       card={broker.card}
+                      brokerKey={broker.name}
                       derivedSecurity={derivedCardSecurity}
                       onFocusField={(anchor) => onProjectFocus?.({ tab: "a2a-card", anchor })}
                       onReset={() => {

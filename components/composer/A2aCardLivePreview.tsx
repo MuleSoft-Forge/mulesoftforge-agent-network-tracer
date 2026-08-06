@@ -4,10 +4,12 @@ import { useMemo, useState } from "react";
 import { Check, Copy, Download, FileJson, RotateCcw } from "lucide-react";
 import type { BrokerCard } from "@/lib/composer/model";
 import type { DerivedA2aCardSecurity } from "@/lib/composer/a2a-card-security-from-policies";
-import type { A2aCardFieldAnchor } from "@/lib/composer/a2a-card-field-anchors";
+import { A2A_CARD_ANCHOR, type A2aCardFieldAnchor } from "@/lib/composer/a2a-card-field-anchors";
 import { serializeBrokerCard } from "@/lib/composer/a2a-card";
 import { buildA2aCardCompleteness } from "@/lib/composer/a2a-card-completeness";
 import { adaptA2aCardCompleteness } from "@/lib/composer/a2a-card-completeness-view";
+import { summarizeCompleteness, type CompletenessResult } from "@/lib/composer/completeness-types";
+import { brokerKeyValidationMessage, isValidBrokerKey } from "@/lib/composer/broker-key";
 import CompletenessPanel from "@/components/composer/CompletenessPanel";
 import { Button } from "@/components/composer/ui";
 
@@ -23,11 +25,13 @@ function downloadJson(filename: string, content: string) {
 
 export default function A2aCardLivePreview({
   card,
+  brokerKey,
   onReset,
   onFocusField,
   derivedSecurity,
 }: {
   card: BrokerCard;
+  brokerKey?: string;
   onReset?: () => void;
   onFocusField?: (anchor: A2aCardFieldAnchor) => void;
   derivedSecurity?: DerivedA2aCardSecurity;
@@ -39,10 +43,33 @@ export default function A2aCardLivePreview({
     () => JSON.stringify(serializeBrokerCard(card, derivedSecurity ?? null), null, 2),
     [card, derivedSecurity]
   );
-  const completeness = useMemo(
-    () => adaptA2aCardCompleteness(buildA2aCardCompleteness(card)),
-    [card]
-  );
+  const completeness = useMemo(() => {
+    const base = adaptA2aCardCompleteness(buildA2aCardCompleteness(card));
+    const key = brokerKey ?? "";
+    const hasBrokerKey = key.trim().length > 0;
+    const brokerStatus = hasBrokerKey && isValidBrokerKey(key) ? "set" : "error";
+    const brokerGroup = {
+      title: "Broker",
+      items: [
+        {
+          id: "broker-key",
+          label: "Broker key",
+          mapsTo: "agent-network.yaml brokers.<key> · config.agent_name · .agent filename",
+          why: "Stable broker identifier used across YAML and AgentScript artifacts.",
+          tier: "required" as const,
+          status: brokerStatus,
+          valuePreview: hasBrokerKey ? key : null,
+          schemaMessage: brokerStatus === "error" ? brokerKeyValidationMessage(key) : undefined,
+          focus: A2A_CARD_ANCHOR.brokerKey,
+        },
+      ],
+    };
+    const groups = [brokerGroup, ...base.groups];
+    return {
+      groups,
+      summary: summarizeCompleteness(groups),
+    } as CompletenessResult<A2aCardFieldAnchor>;
+  }, [card, brokerKey]);
 
   async function copy() {
     try {
@@ -64,7 +91,7 @@ export default function A2aCardLivePreview({
   return (
     <div className="space-y-3">
       <CompletenessPanel
-        summaryTitle="Card completeness"
+        summaryTitle="Broker + card completeness"
         readyLabel="Production-ready"
         title="Spec vs current card"
         subtitle="Required fields block a usable contract · recommended improves discoverability"
