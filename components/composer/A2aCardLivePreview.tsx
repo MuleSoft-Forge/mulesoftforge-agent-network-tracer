@@ -8,7 +8,12 @@ import { A2A_CARD_ANCHOR, type A2aCardFieldAnchor } from "@/lib/composer/a2a-car
 import { serializeBrokerCard } from "@/lib/composer/a2a-card";
 import { buildA2aCardCompleteness } from "@/lib/composer/a2a-card-completeness";
 import { adaptA2aCardCompleteness } from "@/lib/composer/a2a-card-completeness-view";
-import { summarizeCompleteness, type CompletenessResult } from "@/lib/composer/completeness-types";
+import {
+  summarizeCompleteness,
+  type CompletenessFieldStatus,
+  type CompletenessItem,
+  type CompletenessResult,
+} from "@/lib/composer/completeness-types";
 import { brokerKeyValidationMessage, isValidBrokerKey } from "@/lib/composer/broker-key";
 import CompletenessPanel from "@/components/composer/CompletenessPanel";
 import { Button } from "@/components/composer/ui";
@@ -47,22 +52,22 @@ export default function A2aCardLivePreview({
     const base = adaptA2aCardCompleteness(buildA2aCardCompleteness(card));
     const key = brokerKey ?? "";
     const hasBrokerKey = key.trim().length > 0;
-    const brokerStatus = hasBrokerKey && isValidBrokerKey(key) ? "set" : "error";
+    const brokerStatus: CompletenessFieldStatus =
+      hasBrokerKey && isValidBrokerKey(key) ? "set" : "error";
+    const brokerItem: CompletenessItem<A2aCardFieldAnchor> = {
+      id: "broker-key",
+      label: "Broker key",
+      mapsTo: "agent-network.yaml brokers.<key> · config.agent_name · .agent filename",
+      why: "Stable broker identifier used across YAML and AgentScript artifacts.",
+      tier: "required",
+      status: brokerStatus,
+      valuePreview: hasBrokerKey ? key : null,
+      schemaMessage: brokerStatus === "error" ? brokerKeyValidationMessage(key) : undefined,
+      focus: A2A_CARD_ANCHOR.brokerKey,
+    };
     const brokerGroup = {
       title: "Broker",
-      items: [
-        {
-          id: "broker-key",
-          label: "Broker key",
-          mapsTo: "agent-network.yaml brokers.<key> · config.agent_name · .agent filename",
-          why: "Stable broker identifier used across YAML and AgentScript artifacts.",
-          tier: "required" as const,
-          status: brokerStatus,
-          valuePreview: hasBrokerKey ? key : null,
-          schemaMessage: brokerStatus === "error" ? brokerKeyValidationMessage(key) : undefined,
-          focus: A2A_CARD_ANCHOR.brokerKey,
-        },
-      ],
+      items: [brokerItem],
     };
     const groups = [brokerGroup, ...base.groups];
     return {
