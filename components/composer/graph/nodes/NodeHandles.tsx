@@ -12,13 +12,23 @@ export interface NodeHandlesProps {
   sides: Partial<Record<HandleSide, SideConfig>>;
   connectedHandles?: ReadonlySet<string>;
   accentColor?: string;
+  compatibilityByHandle?: Partial<Record<string, "compatible" | "incompatible">>;
 }
 
 const UNCONNECTED =
   "!h-[5px] !w-[5px] !border !border-gray-300/50 !bg-transparent";
 const CONNECTED_BASE = "!h-[7px] !w-[7px] !border-[1.5px] !border-white !shadow-sm";
 
-function handleClass(connected: boolean): string {
+function handleClass(
+  connected: boolean,
+  compatibility?: "compatible" | "incompatible"
+): string {
+  if (compatibility === "compatible") {
+    return `${CONNECTED_BASE} !h-[9px] !w-[9px] !border-emerald-200 !shadow-[0_0_0_6px_rgba(16,185,129,0.15)] !bg-emerald-500`;
+  }
+  if (compatibility === "incompatible") {
+    return `${CONNECTED_BASE} !h-[9px] !w-[9px] !border-red-200 !animate-pulse !shadow-[0_0_0_8px_rgba(239,68,68,0.15)] !bg-red-500`;
+  }
   return connected ? CONNECTED_BASE : UNCONNECTED;
 }
 
@@ -30,8 +40,9 @@ function handleStyle(connected: boolean, accentColor?: string, offset?: Record<s
   };
 }
 
-export function NodeHandles({ sides, connectedHandles, accentColor }: NodeHandlesProps) {
+export function NodeHandles({ sides, connectedHandles, accentColor, compatibilityByHandle }: NodeHandlesProps) {
   const isConnected = (id: string) => connectedHandles?.has(id) ?? false;
+  const compatibility = (id: string) => compatibilityByHandle?.[id];
 
   return (
     <>
@@ -40,7 +51,7 @@ export function NodeHandles({ sides, connectedHandles, accentColor }: NodeHandle
           id="top"
           type={sides.top.type}
           position={Position.Top}
-          className={handleClass(isConnected("top"))}
+          className={handleClass(isConnected("top"), compatibility("top"))}
           style={handleStyle(isConnected("top"), accentColor, { left: "50%" })}
         />
       ) : null}
@@ -49,7 +60,7 @@ export function NodeHandles({ sides, connectedHandles, accentColor }: NodeHandle
           id="bottom"
           type={sides.bottom.type}
           position={Position.Bottom}
-          className={handleClass(isConnected("bottom"))}
+          className={handleClass(isConnected("bottom"), compatibility("bottom"))}
           style={handleStyle(isConnected("bottom"), accentColor, { left: "50%" })}
         />
       ) : null}
@@ -58,7 +69,7 @@ export function NodeHandles({ sides, connectedHandles, accentColor }: NodeHandle
           id="left"
           type={sides.left.type}
           position={Position.Left}
-          className={handleClass(isConnected("left"))}
+          className={handleClass(isConnected("left"), compatibility("left"))}
           style={handleStyle(isConnected("left"), accentColor, { top: "50%" })}
         />
       ) : null}
@@ -67,7 +78,7 @@ export function NodeHandles({ sides, connectedHandles, accentColor }: NodeHandle
           id="right"
           type={sides.right.type}
           position={Position.Right}
-          className={handleClass(isConnected("right"))}
+          className={handleClass(isConnected("right"), compatibility("right"))}
           style={handleStyle(isConnected("right"), accentColor, { top: "50%" })}
         />
       ) : null}

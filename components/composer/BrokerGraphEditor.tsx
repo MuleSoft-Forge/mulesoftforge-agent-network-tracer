@@ -14,6 +14,7 @@ import {
   type Edge,
   type Connection,
   type FinalConnectionState,
+  type OnConnectStartParams,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { LayoutTemplate } from "lucide-react";
@@ -36,7 +37,10 @@ import { isEditorSurface, resolveShortcut } from "@/lib/composer/keyboard";
 import NodePaletteButton from "@/components/composer/NodePaletteButton";
 import { MuleIcon } from "@/components/composer/MuleIcon";
 import { useHelpMode } from "@/lib/composer/help/help-mode";
-import { isAllowedTransitionTarget } from "@/lib/composer/graph-transitions";
+import {
+  checkConnectionCompatibilityByIds,
+  type ConnectionSchema,
+} from "@/lib/composer/graph-connection-compatibility";
 import { placeNewNode } from "@/lib/composer/node-placement";
 import { newId } from "@/lib/composer/factory";
 import { accentForKind } from "@/components/composer/graph/kind-accent";
@@ -85,6 +89,19 @@ interface SearchState {
   cursor: number;
 }
 
+interface ActiveConnectionDrag {
+  sourceId: string;
+  sourceHandle: string | null;
+  schema: ConnectionSchema;
+}
+
+interface RepelPulse {
+  x: number;
+  y: number;
+  reason: string;
+  at: number;
+}
+
 /** Canvas actions the command palette can trigger from outside the editor. */
 export type CanvasCommand =
   | { kind: "addNode"; nodeKind: string }
@@ -95,6 +112,25 @@ function nodeTypeForKind(kind: GraphNodeKind): AgentFabricGraphNodeData["nodeTyp
   if (kind === "trigger") return "af-trigger";
   if (kind === "router") return "af-router";
   return "af-node";
+}
+
+function sourceSchemaForKind(kind: GraphNodeKind): ConnectionSchema | null {
+  switch (kind) {
+    case "trigger":
+      return "a2a.message";
+    case "generator":
+    case "orchestrator":
+    case "subagent":
+    case "executor":
+    case "router":
+      return "agent.turn";
+    case "echo":
+      return null;
+    default: {
+      const _exhaustive: never = kind;
+      return _exhaustive;
+    }
+  }
 }
 
 /** Encode route labels into the protocol's comma-separated `outputs` string. */
@@ -125,6 +161,7 @@ function buildNodes(
   selectedId: string | null,
   connectedHandles: Map<string, Set<string>>,
   nodeIssues: Map<string, NodeIssue>,
+  handleCompatibilityByNode: Map<string, Partial<Record<string, "compatible" | "incompatible">>>,
   layoutDirection: "vertical" | "horizontal"
 ): AfFlowNode[] {
   const actionKindByName = new Map(
@@ -183,6 +220,7 @@ function buildNodes(
       preview: nodePreviewText(n),
       issueSeverity: issue?.severity,
       issueSummary: issue?.messages.join("\n"),
+      handleCompatibility: handleCompatibilityByNode.get(n.id),
     };
     if (n.kind === "executor") {
       data.executorIconKind = inferExecutorIconKind(n);
@@ -203,11 +241,11 @@ function buildNodes(
 function buildEdges(
   broker: Broker,
   connectedHandles: Map<string, Set<string>>,
+  nodeIssues: Map<string, NodeIssue>,
   onInsert: InsertableEdgeData["onInsert"],
   layoutDirection: "vertical" | "horizontal"
 ): Edge[] {
   const edges: Edge[] = [];
-  const data: InsertableEdgeData = { onInsert };
   const linearSourceHandle = layoutDirection === "horizontal" ? "right" : "bottom";
   const linearTargetHandle = layoutDirection === "horizontal" ? "left" : "top";
   const mark = (nodeId: string, handle: string) => {
@@ -218,6 +256,8 @@ function buildEdges(
     }
     set.add(handle);
   };
+  const nodeHasError = (nodeId: string): boolean =>
+    (nodeIssues.get(nodeId)?.severity ?? "warning") === "error";
 
   for (const n of broker.nodes) {
     if (n.kind === "router") {
@@ -227,6 +267,13 @@ function buildEdges(
         const sourceHandle = routerOutputHandleId(output);
         mark(n.id, sourceHandle);
         mark(r.targetNodeId, "top");
+        const compatibility = checkConnectionCompatibilityByIds(
+          broker,
+          n.id,
+          r.targetNodeId,
+          sourceHandle,
+          linearTargetHandle
+        );
         edges.push({
           id: `route-${r.id}`,
           type: "insertable",
@@ -235,13 +282,26 @@ function buildEdges(
           target: r.targetNodeId,
           targetHandle: linearTargetHandle,
           label: r.label || r.when,
-          data,
+          data: {
+            onInsert,
+            flowActive:
+              compatibility.ok &&
+              !nodeHasError(n.id) &&
+              !nodeHasError(r.targetNodeId),
+          },
         });
       }
       if (n.otherwiseTargetNodeId) {
         const sourceHandle = routerOutputHandleId("otherwise");
         mark(n.id, sourceHandle);
         mark(n.otherwiseTargetNodeId, "top");
+        const compatibility = checkConnectionCompatibilityByIds(
+          broker,
+          n.id,
+          n.otherwiseTargetNodeId,
+          sourceHandle,
+          linearTargetHandle
+        );
         edges.push({
           id: `otherwise-${n.id}`,
           type: "insertable",
@@ -250,12 +310,25 @@ function buildEdges(
           target: n.otherwiseTargetNodeId,
           targetHandle: linearTargetHandle,
           label: "otherwise",
-          data,
+          data: {
+            onInsert,
+            flowActive:
+              compatibility.ok &&
+              !nodeHasError(n.id) &&
+              !nodeHasError(n.otherwiseTargetNodeId),
+          },
         });
       }
     } else if (n.onExitTarget) {
       mark(n.id, linearSourceHandle);
       mark(n.onExitTarget, linearTargetHandle);
+      const compatibility = checkConnectionCompatibilityByIds(
+        broker,
+        n.id,
+        n.onExitTarget,
+        linearSourceHandle,
+        linearTargetHandle
+      );
       edges.push({
         id: `exit-${n.id}`,
         type: "insertable",
@@ -263,11 +336,50 @@ function buildEdges(
         sourceHandle: linearSourceHandle,
         target: n.onExitTarget,
         targetHandle: linearTargetHandle,
-        data,
+        data: {
+          onInsert,
+          flowActive:
+            compatibility.ok &&
+            !nodeHasError(n.id) &&
+            !nodeHasError(n.onExitTarget),
+        },
       });
     }
   }
   return edges;
+}
+
+function buildHandleCompatibilityMap(
+  broker: Broker,
+  activeConnection: ActiveConnectionDrag | null
+): Map<string, Partial<Record<string, "compatible" | "incompatible">>> {
+  const map = new Map<string, Partial<Record<string, "compatible" | "incompatible">>>();
+  if (!activeConnection) return map;
+  const sourceNodeHints = map.get(activeConnection.sourceId) ?? {};
+  if (activeConnection.sourceHandle) {
+    sourceNodeHints[activeConnection.sourceHandle] = "compatible";
+  }
+  map.set(activeConnection.sourceId, sourceNodeHints);
+  for (const node of broker.nodes) {
+    const handles: string[] = [];
+    if (node.kind !== "trigger") {
+      handles.push("top", "left");
+    }
+    if (handles.length === 0) continue;
+    const result: Partial<Record<string, "compatible" | "incompatible">> = {};
+    for (const handleId of handles) {
+      const compatibility = checkConnectionCompatibilityByIds(
+        broker,
+        activeConnection.sourceId,
+        node.id,
+        activeConnection.sourceHandle,
+        handleId
+      );
+      result[handleId] = compatibility.ok ? "compatible" : "incompatible";
+    }
+    map.set(node.id, result);
+  }
+  return map;
 }
 
 function InnerEditor({
@@ -291,6 +403,8 @@ function InnerEditor({
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [pendingCreate, setPendingCreate] = useState<PendingCreate | null>(null);
   const [search, setSearch] = useState<SearchState | null>(null);
+  const [activeConnection, setActiveConnection] = useState<ActiveConnectionDrag | null>(null);
+  const [repelPulse, setRepelPulse] = useState<RepelPulse | null>(null);
 
   const matchIds = useMemo(
     () => (search ? matchNodeIds(broker, search.query) : []),
@@ -309,6 +423,10 @@ function InnerEditor({
     () => indexNodeIssues([...validation.errors, ...validation.warnings]),
     [validation]
   );
+  const handleCompatibilityByNode = useMemo(
+    () => buildHandleCompatibilityMap(broker, activeConnection),
+    [broker, activeConnection]
+  );
 
   // The model owns positions. New nodes are placed deliberately when added, so
   // the canvas only mirrors the model — adding or connecting never reflows a
@@ -316,20 +434,50 @@ function InnerEditor({
   useEffect(() => {
     if (!broker) return;
     const connectedHandles = new Map<string, Set<string>>();
-    const edges = buildEdges(broker, connectedHandles, handleInsertOnEdge, layoutDirection);
-    const nodes = buildNodes(broker, selectedId, connectedHandles, nodeIssues, layoutDirection);
+    const edges = buildEdges(
+      broker,
+      connectedHandles,
+      nodeIssues,
+      handleInsertOnEdge,
+      layoutDirection
+    );
+    const nodes = buildNodes(
+      broker,
+      selectedId,
+      connectedHandles,
+      nodeIssues,
+      handleCompatibilityByNode,
+      layoutDirection
+    );
     // While searching, fade everything that does not match so hits stand out.
     const dim = search?.query.trim() ? new Set(matchIds) : null;
     setRfNodes(dim ? nodes.map((n) => (dim.has(n.id) ? n : { ...n, style: { opacity: 0.2 } })) : nodes);
     setRfEdges(edges);
-  }, [broker, selectedId, setRfNodes, setRfEdges, handleInsertOnEdge, nodeIssues, search, matchIds, layoutDirection]);
+  }, [
+    broker,
+    selectedId,
+    setRfNodes,
+    setRfEdges,
+    handleInsertOnEdge,
+    nodeIssues,
+    handleCompatibilityByNode,
+    search,
+    matchIds,
+    layoutDirection,
+  ]);
 
   const isValidConnection = useCallback(
     (connection: Connection | Edge) => {
-      const targetNode = broker.nodes.find((n) => n.id === connection.target);
-      return isAllowedTransitionTarget(targetNode);
+      if (!connection.source || !connection.target) return false;
+      return checkConnectionCompatibilityByIds(
+        broker,
+        connection.source,
+        connection.target,
+        connection.sourceHandle,
+        connection.targetHandle
+      ).ok;
     },
-    [broker.nodes]
+    [broker]
   );
 
   const onConnect = useCallback(
@@ -346,13 +494,48 @@ function InnerEditor({
     [dispatch, isValidConnection]
   );
 
+  const onConnectStart = useCallback(
+    (_event: MouseEvent | TouchEvent, params: OnConnectStartParams) => {
+      if (!params.nodeId) return;
+      const sourceNode = broker.nodes.find((n) => n.id === params.nodeId);
+      if (!sourceNode) return;
+      const schema = sourceSchemaForKind(sourceNode.kind);
+      if (!schema) return;
+      setActiveConnection({
+        sourceId: params.nodeId,
+        sourceHandle: params.handleId ?? null,
+        schema,
+      });
+    },
+    [broker.nodes]
+  );
+
   /** Dropping a connection on empty canvas offers to create the target node there. */
   const onConnectEnd = useCallback(
     (event: MouseEvent | TouchEvent, connectionState: FinalConnectionState) => {
+      setActiveConnection(null);
       if (connectionState.isValid) return;
       const sourceId = connectionState.fromNode?.id;
-      if (!sourceId) return;
       const point = "changedTouches" in event ? event.changedTouches[0] : event;
+      if (sourceId && connectionState.toNode?.id) {
+        const incompatibility = checkConnectionCompatibilityByIds(
+          broker,
+          sourceId,
+          connectionState.toNode.id,
+          connectionState.fromHandle?.id ?? null,
+          connectionState.toHandle?.id ?? null
+        );
+        if (!incompatibility.ok) {
+          setRepelPulse({
+            x: point.clientX,
+            y: point.clientY,
+            reason: incompatibility.reason ?? "Incompatible schemas.",
+            at: Date.now(),
+          });
+          return;
+        }
+      }
+      if (!sourceId) return;
       setPendingCreate({
         mode: "connect",
         sourceId,
@@ -361,7 +544,7 @@ function InnerEditor({
         screenY: point.clientY,
       });
     },
-    []
+    [broker]
   );
 
   const resolvePendingCreate = useCallback(
@@ -466,6 +649,12 @@ function InnerEditor({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  useEffect(() => {
+    if (!repelPulse) return;
+    const timer = window.setTimeout(() => setRepelPulse(null), 520);
+    return () => window.clearTimeout(timer);
+  }, [repelPulse]);
+
   const resetToHierarchicalLayout = useCallback((direction?: "vertical" | "horizontal") => {
     dispatch({ type: "resetGraphLayoutToHierarchical", direction: direction ?? layoutDirection });
     window.setTimeout(() => {
@@ -559,6 +748,7 @@ function InnerEditor({
         defaultEdgeOptions={defaultEdgeOptions}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
+        onConnectStart={onConnectStart}
         onConnect={onConnect}
         isValidConnection={isValidConnection}
         onConnectEnd={onConnectEnd}
@@ -570,6 +760,7 @@ function InnerEditor({
         fitView
         minZoom={0.15}
         maxZoom={1.5}
+        connectionRadius={48}
         proOptions={{ hideAttribution: true }}
       >
         <Background gap={16} size={1} />
@@ -582,6 +773,18 @@ function InnerEditor({
           nodeStrokeWidth={0}
         />
       </ReactFlow>
+      {repelPulse ? (
+        <div
+          className="pointer-events-none absolute z-20"
+          style={{ left: repelPulse.x, top: repelPulse.y, transform: "translate(-50%, -50%)" }}
+          title={repelPulse.reason}
+        >
+          <div className="h-20 w-20 animate-ping rounded-full border-4 border-red-400/70 bg-red-200/20" />
+          <div className="-mt-14 rounded bg-red-50/95 px-2 py-1 text-[11px] font-medium text-red-700 shadow-sm ring-1 ring-red-200">
+            Schema mismatch
+          </div>
+        </div>
+      ) : null}
       {pendingCreate ? (
         <NodeKindPicker
           kinds={pendingCreate.mode === "insert" ? INSERTABLE_PALETTE : CONNECTABLE_PALETTE}

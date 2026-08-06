@@ -35,6 +35,7 @@ import {
 import { customVariablesMatch } from "@/lib/composer/variable-keys";
 import { routeOutputLabel, routerOutputFromHandleId } from "@/lib/composer/agentfabric-graph";
 import { isAllowedTransitionTarget } from "@/lib/composer/graph-transitions";
+import { checkConnectionCompatibilityByIds } from "@/lib/composer/graph-connection-compatibility";
 import { applyHierarchicalGraphLayout } from "@/lib/composer/broker-graph-layout";
 import type { GraphLayoutDirection } from "@/lib/composer/agentfabric-graph-layout";
 import {
@@ -226,8 +227,13 @@ function connectNodes(
   targetId: string,
   sourceHandle?: string | null
 ): Broker {
-  const targetNode = broker.nodes.find((n) => n.id === targetId);
-  if (!isAllowedTransitionTarget(targetNode)) return broker;
+  const compatibility = checkConnectionCompatibilityByIds(
+    broker,
+    sourceId,
+    targetId,
+    sourceHandle
+  );
+  if (!compatibility.ok) return broker;
 
   return {
     ...broker,

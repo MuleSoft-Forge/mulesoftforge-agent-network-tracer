@@ -21,6 +21,7 @@ function isRouterSlotHandle(output: string): boolean {
 export function AfRouterNode({ data, selected }: NodeProps<Node<AgentFabricGraphNodeData>>) {
   const outputs = parseProtocolOutputs(data.outputs);
   const connected = data.connectedHandles;
+  const compatibility = data.handleCompatibility ?? {};
 
   return (
     <div
@@ -34,6 +35,7 @@ export function AfRouterNode({ data, selected }: NodeProps<Node<AgentFabricGraph
         sides={{ top: { type: "target" }, left: { type: "target" } }}
         connectedHandles={connected}
         accentColor={ROUTER_ACCENT}
+        compatibilityByHandle={data.handleCompatibility}
       />
       <div className="flex items-start gap-3 px-4 py-3">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-amber-100">
@@ -51,6 +53,9 @@ export function AfRouterNode({ data, selected }: NodeProps<Node<AgentFabricGraph
                 const handleId = routerOutputHandleId(output);
                 const isConnected = connected?.has(handleId) ?? false;
                 const isSlot = isRouterSlotHandle(output);
+                const hint = compatibility[handleId];
+                const isCompatible = hint === "compatible";
+                const isIncompatible = hint === "incompatible";
                 return (
                   <li
                     key={handleId}
@@ -64,14 +69,18 @@ export function AfRouterNode({ data, selected }: NodeProps<Node<AgentFabricGraph
                       type="source"
                       position={Position.Right}
                       className={
-                        isConnected
-                          ? "!h-[9px] !w-[9px] !border-[1.5px] !border-white !shadow-sm"
-                          : "!h-[7px] !w-[7px] !border !border-amber-400/70 !bg-white"
+                        isCompatible
+                          ? "!h-[10px] !w-[10px] !border-[1.5px] !border-emerald-200 !bg-emerald-500 !shadow-[0_0_0_6px_rgba(16,185,129,0.15)]"
+                          : isIncompatible
+                            ? "!h-[10px] !w-[10px] !animate-pulse !border-[1.5px] !border-red-200 !bg-red-500 !shadow-[0_0_0_8px_rgba(239,68,68,0.15)]"
+                            : isConnected
+                              ? "!h-[9px] !w-[9px] !border-[1.5px] !border-white !shadow-sm"
+                              : "!h-[7px] !w-[7px] !border !border-amber-400/70 !bg-white"
                       }
                       style={{
                         top: "50%",
                         right: -5,
-                        ...(isConnected ? { backgroundColor: ROUTER_ACCENT } : {}),
+                        ...(isConnected && !isCompatible && !isIncompatible ? { backgroundColor: ROUTER_ACCENT } : {}),
                       }}
                     />
                   </li>

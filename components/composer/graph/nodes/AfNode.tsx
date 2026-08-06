@@ -27,7 +27,12 @@ export function AfNode({ data, selected }: NodeProps<Node<AgentFabricGraphNodeDa
           : "border-slate-200 hover:border-slate-300"
       }`}
     >
-      <NodeHandles sides={sides} connectedHandles={data.connectedHandles} accentColor={accent} />
+      <NodeHandles
+        sides={sides}
+        connectedHandles={data.connectedHandles}
+        accentColor={accent}
+        compatibilityByHandle={data.handleCompatibility}
+      />
       <div className="flex items-stretch">
         <div className="w-1 shrink-0" style={{ backgroundColor: accent }} aria-hidden />
         <div className="flex flex-1 items-start gap-3 px-4 py-3">

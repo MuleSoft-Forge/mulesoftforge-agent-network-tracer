@@ -13,6 +13,8 @@ import { Plus } from "lucide-react";
 export interface InsertableEdgeData extends Record<string, unknown> {
   /** Opens the kind picker to splice a node into this edge. */
   onInsert?: (edgeId: string, screenX: number, screenY: number) => void;
+  /** True when source/target are schema-compatible and both nodes are valid. */
+  flowActive?: boolean;
 }
 
 export type InsertableEdgeType = Edge<InsertableEdgeData>;
@@ -45,10 +47,25 @@ export function InsertableEdge({
   });
 
   const onInsert = data?.onInsert;
+  const flowActive = data?.flowActive === true;
 
   return (
     <>
       <BaseEdge id={id} path={edgePath} markerEnd={markerEnd} style={style} />
+      {flowActive ? (
+        <path
+          d={edgePath}
+          fill="none"
+          stroke="#22c55e"
+          strokeWidth={2.6}
+          strokeLinecap="round"
+          strokeDasharray="6 10"
+          opacity={0.8}
+        >
+          <animate attributeName="stroke-dashoffset" from="0" to="-64" dur="1.15s" repeatCount="indefinite" />
+          <animate attributeName="opacity" values="0.45;0.9;0.45" dur="1.8s" repeatCount="indefinite" />
+        </path>
+      ) : null}
       {/* Invisible wide path so the hover target is not a 2px line. */}
       <path
         d={edgePath}

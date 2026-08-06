@@ -15,7 +15,12 @@ export function AfTriggerNode({ data, selected }: NodeProps<Node<AgentFabricGrap
           : "border-teal-400 hover:border-teal-500 hover:shadow-lg"
       }`}
     >
-      <NodeHandles sides={AF_TRIGGER_SIDES} connectedHandles={data.connectedHandles} accentColor="#2dd4bf" />
+      <NodeHandles
+        sides={AF_TRIGGER_SIDES}
+        connectedHandles={data.connectedHandles}
+        accentColor="#2dd4bf"
+        compatibilityByHandle={data.handleCompatibility}
+      />
       <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-teal-100">
         <KindIcon kind="trigger" size={20} />
       </div>

@@ -26,9 +26,12 @@ export interface AgentFabricGraphNodeData extends Record<string, unknown> {
   issueSummary?: string;
   /** Executor icon variant inferred from statements/actions. */
   executorIconKind?: "executor" | "mcp" | "a2a" | "setVariable";
+  /** Per-handle drag-time compatibility hint when connecting wires. */
+  handleCompatibility?: Partial<Record<string, ConnectionCompatibilityState>>;
 }
 
 export type NodeIssueSeverity = "error" | "warning";
+export type ConnectionCompatibilityState = "compatible" | "incompatible";
 
 export type AgentFabricGraphNode = Node<AgentFabricGraphNodeData>;
 
