@@ -46,6 +46,42 @@ export function Field({
   );
 }
 
+/**
+ * Field wrapper for controls made of several buttons/inputs, which cannot sit
+ * inside `Field`'s `<label>` without the label hijacking their clicks.
+ */
+export function FieldGroup({
+  label,
+  help,
+  children,
+  hint,
+  error,
+  alwaysShowHint,
+  uppercaseLabel,
+  required,
+}: {
+  label: string;
+  help?: HelpEntry;
+  children: ReactNode;
+  hint?: string;
+  error?: string;
+  alwaysShowHint?: boolean;
+  uppercaseLabel?: boolean;
+  required?: boolean;
+}) {
+  const { helpMode } = useHelpMode();
+  const showHint = Boolean(hint && !error && (alwaysShowHint || helpMode));
+
+  return (
+    <div role="group" aria-label={label}>
+      <HelpLabel label={label} help={help} uppercase={uppercaseLabel} required={required} />
+      {children}
+      {error ? <span className="mt-1 block text-xs text-red-600">{error}</span> : null}
+      {showHint ? <span className="mt-1 block text-xs text-composer-label-muted">{hint}</span> : null}
+    </div>
+  );
+}
+
 /** Inline guidance block — visible only when Help mode is on. */
 export function HelpHint({
   children,

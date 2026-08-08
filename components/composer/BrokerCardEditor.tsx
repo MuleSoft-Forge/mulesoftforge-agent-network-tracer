@@ -13,6 +13,7 @@ import type {
 import type { DerivedA2aCardSecurity } from "@/lib/composer/a2a-card-security-from-policies";
 import { A2A_CARD_ANCHOR, type A2aCardFieldAnchor } from "@/lib/composer/a2a-card-field-anchors";
 import { Button, Checkbox, SelectField, TextArea, TextField } from "@/components/composer/ui";
+import { MediaTypesField } from "@/components/composer/MediaTypesField";
 
 const PROTOCOL_BINDING_OPTIONS = [
   { value: "HTTP+JSON", label: "HTTP+JSON" },
@@ -22,6 +23,10 @@ const PROTOCOL_BINDING_OPTIONS = [
 
 const DEFAULT_BINDING = "HTTP+JSON";
 const DEFAULT_VERSION = "1.0";
+/** A2A v0.3 requires the card-level mode arrays, so they never go empty. */
+const DEFAULT_CARD_MODES = ["text/plain"];
+const SKILL_TAGS_HINT =
+  "Comma-delimited keywords describing what this skill does, e.g. it-support, triage, billing.";
 
 function commaList(values: string[] | undefined): string {
   return values?.join(", ") ?? "";
@@ -632,6 +637,8 @@ function SkillEditor({
           uppercaseLabel
           value={commaList(skill.tags)}
           onChange={(raw) => onChange({ tags: parseCommaList(raw) })}
+          hint={SKILL_TAGS_HINT}
+          alwaysShowHint
         />
       </div>
       <TextArea
@@ -644,19 +651,17 @@ function SkillEditor({
       <TextField label="Skill id" uppercaseLabel value={skill.id} onChange={(id) => onChange({ id })} mono />
       <SkillExamplesEditor examples={skill.examples} onChange={(examples) => onChange({ examples })} />
       <div className="grid grid-cols-2 gap-2">
-        <TextField
+        <MediaTypesField
           label="Input modes"
           uppercaseLabel
-          value={commaList(skill.inputModes)}
-          onChange={(raw) => onChange({ inputModes: parseCommaList(raw) })}
-          mono
+          value={skill.inputModes}
+          onChange={(inputModes) => onChange({ inputModes })}
         />
-        <TextField
+        <MediaTypesField
           label="Output modes"
           uppercaseLabel
-          value={commaList(skill.outputModes)}
-          onChange={(raw) => onChange({ outputModes: parseCommaList(raw) })}
-          mono
+          value={skill.outputModes}
+          onChange={(outputModes) => onChange({ outputModes })}
         />
       </div>
       {preservedExtraCount(skill.extra) > 0 ? (
@@ -919,21 +924,23 @@ export function BrokerCardEditor({
         </div>
         <div className="grid grid-cols-2 gap-2">
           <FieldAnchor id={A2A_CARD_ANCHOR.defaultInputModes}>
-            <TextField
+            <MediaTypesField
               label="Default input modes"
               uppercaseLabel
-              value={commaList(card.defaultInputModes)}
-              onChange={(raw) => onChange({ defaultInputModes: parseCommaList(raw) ?? ["text/plain"] })}
-              mono
+              value={card.defaultInputModes}
+              onChange={(defaultInputModes) => onChange({ defaultInputModes })}
+              fallback={DEFAULT_CARD_MODES}
+              hint="Media types the agent accepts across all skills. Skills can override this."
             />
           </FieldAnchor>
           <FieldAnchor id={A2A_CARD_ANCHOR.defaultOutputModes}>
-            <TextField
+            <MediaTypesField
               label="Default output modes"
               uppercaseLabel
-              value={commaList(card.defaultOutputModes)}
-              onChange={(raw) => onChange({ defaultOutputModes: parseCommaList(raw) ?? ["text/plain"] })}
-              mono
+              value={card.defaultOutputModes}
+              onChange={(defaultOutputModes) => onChange({ defaultOutputModes })}
+              fallback={DEFAULT_CARD_MODES}
+              hint="Media types the agent produces across all skills. Skills can override this."
             />
           </FieldAnchor>
         </div>
@@ -1071,7 +1078,8 @@ export function BrokerCardEditor({
               uppercaseLabel
               value={commaList(primarySkill?.tags)}
               onChange={(raw) => setPrimarySkill({ tags: parseCommaList(raw) })}
-              hint="Comma-separated."
+              hint={SKILL_TAGS_HINT}
+              alwaysShowHint
             />
           </FieldAnchor>
         </div>
@@ -1099,19 +1107,19 @@ export function BrokerCardEditor({
             onChange={(examples) => setPrimarySkill({ examples })}
           />
           <div className="grid grid-cols-2 gap-2">
-            <TextField
+            <MediaTypesField
               label="Input modes"
               uppercaseLabel
-              value={commaList(primarySkill?.inputModes)}
-              onChange={(raw) => setPrimarySkill({ inputModes: parseCommaList(raw) })}
-              mono
+              value={primarySkill?.inputModes}
+              onChange={(inputModes) => setPrimarySkill({ inputModes })}
+              hint="Overrides the card default input modes for this skill."
             />
-            <TextField
+            <MediaTypesField
               label="Output modes"
               uppercaseLabel
-              value={commaList(primarySkill?.outputModes)}
-              onChange={(raw) => setPrimarySkill({ outputModes: parseCommaList(raw) })}
-              mono
+              value={primarySkill?.outputModes}
+              onChange={(outputModes) => setPrimarySkill({ outputModes })}
+              hint="Overrides the card default output modes for this skill."
             />
           </div>
           {!securityFromInterface ? (

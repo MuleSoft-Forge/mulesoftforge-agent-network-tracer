@@ -296,6 +296,7 @@ function YamlInfoSection({
                 tags: yamlTags.length > 0 ? yamlTags : undefined,
               })
             }
+            hint="Comma-delimited keywords, e.g. broker, a2a, mcp. Written to agent-network.yaml info.tags, separately from the Exchange tags above."
           />
           <TextField
             label="Terms of service URL"
@@ -415,10 +416,12 @@ function TagsField({
   label = "Tags",
   tags,
   onChange,
+  hint = "Comma-delimited keywords for Exchange search, e.g. broker, a2a, mcp. Written to the exchange.json tags array when you leave the field.",
 }: {
   label?: string;
   tags: string[];
   onChange: (tags: string[]) => void;
+  hint?: string;
 }) {
   const [draft, setDraft] = useState(() => tagsToDraft(tags));
 
@@ -439,7 +442,8 @@ function TagsField({
         value={draft}
         onChange={setDraft}
         onBlur={commit}
-        hint="Comma-separated tags (exchange.json tags array). Commits when you leave the field."
+        hint={hint}
+        alwaysShowHint
       />
     </FieldAnchor>
   );
