@@ -1,7 +1,16 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Plus, Trash2, AlertTriangle, ChevronDown, ChevronRight, ExternalLink } from "lucide-react";
+import {
+  Plus,
+  Trash2,
+  AlertTriangle,
+  ChevronDown,
+  ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
+  ExternalLink,
+} from "lucide-react";
 import { useComposer } from "@/lib/composer/store";
 import { deriveVariables } from "@/lib/composer/model";
 import { findUndeclaredMarkers, splitMarkerKey } from "@/lib/composer/variable-markers";
@@ -97,6 +106,13 @@ export function VariablesPanel() {
       }))
       .sort((a, b) => a.title.localeCompare(b.title));
   }, [variables]);
+
+  const allCollapsed =
+    groupedVariables.length > 0 && groupedVariables.every((g) => collapsedGroups.has(g.key));
+
+  function toggleAllGroups() {
+    setCollapsedGroups(allCollapsed ? new Set() : new Set(groupedVariables.map((g) => g.key)));
+  }
 
   return (
     <div className="space-y-4">
@@ -224,6 +240,26 @@ export function VariablesPanel() {
           </div>
         )}
       </div>
+
+      {variables.length > 0 && (
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-xs font-semibold uppercase tracking-wide text-composer-label-muted">
+            {groupedVariables.length} variable group{groupedVariables.length === 1 ? "" : "s"}
+          </p>
+          <Button
+            variant="ghost"
+            onClick={toggleAllGroups}
+            title={allCollapsed ? "Expand every variable group" : "Collapse every variable group"}
+          >
+            {allCollapsed ? (
+              <ChevronsUpDown className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronsDownUp className="h-3.5 w-3.5" />
+            )}
+            {allCollapsed ? "Expand all" : "Collapse all"}
+          </Button>
+        </div>
+      )}
 
       {variables.length === 0 ? (
         <p className="text-xs text-gray-400">No variables yet.</p>
