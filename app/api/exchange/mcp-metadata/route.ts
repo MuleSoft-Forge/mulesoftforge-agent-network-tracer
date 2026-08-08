@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { loggedFetch, debugError } from "@/lib/api-logger";
+import { loggedFetch, debugError, debugLog } from "@/lib/api-logger";
 import { ExchangeMetadataRequestSchema } from "@/lib/schemas";
 import { requireAuth } from "@/lib/api/auth-middleware";
 import { parseExchangeParams } from "@/lib/api/exchange-params";
@@ -78,6 +78,7 @@ export async function GET(request: NextRequest) {
 
   const { organizationId, assetId, version } = params;
   const groupId = searchParams.get("groupId") ?? organizationId;
+  debugLog("[mcp-metadata] request", { organizationId, groupId, assetId, version });
   const assetUrl = `${baseUrl}/exchange/api/v2/assets/${encodeURIComponent(groupId)}/${encodeURIComponent(assetId)}/${encodeURIComponent(version)}`;
 
   try {
@@ -99,9 +100,26 @@ export async function GET(request: NextRequest) {
 
     const assetData = (await assetRes.json()) as ExchangeAssetDetail;
     const files = assetData.files ?? [];
+    debugLog("[mcp-metadata] asset files", {
+      organizationId: assetData.organizationId ?? organizationId,
+      groupId: assetData.groupId ?? groupId,
+      assetId,
+      version,
+      files: files.map((f) => ({
+        classifier: f.classifier ?? null,
+        packaging: f.packaging ?? null,
+        hasDownloadURL: Boolean(f.downloadURL),
+      })),
+    });
     const metadataFile = pickMcpMetadataFile(files);
 
     if (!metadataFile?.classifier || !metadataFile.packaging) {
+      debugLog("[mcp-metadata] no metadata file", {
+        organizationId,
+        groupId,
+        assetId,
+        version,
+      });
       return NextResponse.json(
         { error: "No mcp-metadata file found on this Exchange asset version." },
         { status: 404 }
@@ -116,6 +134,14 @@ export async function GET(request: NextRequest) {
     }, metadataFile);
 
     if (downloadUrls.length === 0) {
+      debugLog("[mcp-metadata] no download URL", {
+        organizationId,
+        groupId,
+        assetId,
+        version,
+        classifier: metadataFile.classifier,
+        packaging: metadataFile.packaging,
+      });
       return NextResponse.json(
         { error: "No download URL available for mcp-metadata on this asset." },
         { status: 404 }
@@ -124,6 +150,14 @@ export async function GET(request: NextRequest) {
 
     const downloaded = await downloadExchangeFile(downloadUrls, accessToken);
     if (!downloaded.ok) {
+      debugLog("[mcp-metadata] download failed", {
+        organizationId,
+        groupId,
+        assetId,
+        version,
+        status: downloaded.status,
+        bodyPreview: downloaded.body.slice(0, 200),
+      });
       return NextResponse.json(
         {
           error: `Exchange metadata file download failed: ${downloaded.status} ${downloaded.body.slice(0, 200)}`,
@@ -135,11 +169,28 @@ export async function GET(request: NextRequest) {
     const metadata = parseMcpMetadataContent(metadataFile.classifier, downloaded.content);
 
     if (!metadata) {
+      debugLog("[mcp-metadata] parse failed", {
+        organizationId,
+        groupId,
+        assetId,
+        version,
+        classifier: metadataFile.classifier,
+      });
       return NextResponse.json(
         { error: "Could not parse MCP metadata file." },
         { status: 422 }
       );
     }
+
+    const toolsCount = Array.isArray(metadata.tools) ? metadata.tools.length : 0;
+    debugLog("[mcp-metadata] success", {
+      organizationId,
+      groupId,
+      assetId,
+      version,
+      classifier: metadataFile.classifier,
+      toolsCount,
+    });
 
     return NextResponse.json({
       classifier: metadataFile.classifier,

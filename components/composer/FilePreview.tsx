@@ -7,6 +7,7 @@ import { serializeProject, type SerializedFile } from "@/lib/composer/serialize"
 import { parseProjectFiles, type ParseFilesInput } from "@/lib/composer/parse";
 import ProjectComparePanel from "@/components/composer/ProjectComparePanel";
 import SegmentedControl from "@/components/composer/SegmentedControl";
+import YamlMonacoEditor from "@/components/composer/YamlMonacoEditor";
 import { Button } from "@/components/composer/ui";
 import {
   PreviewResizeHandle,
@@ -125,18 +126,25 @@ function EditableFileBlock({
   value: string;
   onChange: (next: string) => void;
 }) {
+  const isYaml = file.language === "yaml";
   return (
     <div className="mb-3 overflow-hidden rounded-md border border-gray-200">
       <div className="flex items-center justify-between border-b border-gray-200 bg-gray-50 px-3 py-1.5">
         <span className="font-mono text-xs font-medium text-gray-700">{file.path}</span>
         <CopyContentsButton content={value} />
       </div>
-      <textarea
-        spellCheck={false}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="block min-h-[160px] w-full resize-y overflow-auto bg-white px-3 py-2 font-mono text-[11px] leading-relaxed text-gray-800 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-primary"
-      />
+      {isYaml ? (
+        <div className="h-[360px] w-full bg-white">
+          <YamlMonacoEditor value={value} onChange={onChange} className="h-full w-full" />
+        </div>
+      ) : (
+        <textarea
+          spellCheck={false}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="block min-h-[160px] w-full resize-y overflow-auto bg-white px-3 py-2 font-mono text-[11px] leading-relaxed text-gray-800 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-primary"
+        />
+      )}
     </div>
   );
 }

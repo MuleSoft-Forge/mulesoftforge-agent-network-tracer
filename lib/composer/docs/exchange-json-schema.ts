@@ -134,7 +134,7 @@ export const EXCHANGE_JSON_TOP_LEVEL: ExchangeJsonFieldDoc[] = [
 export const EXCHANGE_ASSET_VERSION_UI_DETAIL = {
   title: "Exchange release identity",
   summary:
-    "This is your Exchange release version — bump it when publishing a new release of the network asset.",
+    "This is your Exchange release version — leave 0.0.0 and Build will bump itself to the next in line.",
   points: [
     "Together with organization id and asset id, it forms the GAV coordinate Exchange uses to identify each publication (groupId:assetId:version).",
     "Changing it creates a new Exchange version entry. Republishing the same version may conflict with an existing release.",

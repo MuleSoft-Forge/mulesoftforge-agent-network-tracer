@@ -35,6 +35,7 @@ import RegistryConvertPicker from "@/components/composer/RegistryConvertPicker";
 import { Button, SelectField, TextArea, TextField } from "@/components/composer/ui";
 
 type RegistryKind = RegistryEntityKind;
+type RegistryFilterKind = RegistryKind | "all";
 
 const MCP_TRANSPORT_OPTIONS: Array<{ value: RegistryMcpTransportKind; label: string }> = [
   { value: "sse", label: "SSE" },
@@ -622,7 +623,7 @@ export function RegistryPanel({
   onFocusHandled?: () => void;
 }) {
   const { project, dispatch } = useComposer();
-  const [kind, setKind] = useState<RegistryKind>("agents");
+  const [kind, setKind] = useState<RegistryFilterKind>("all");
   const registry = project.registry ?? emptyNetworkRegistry();
   const convertible = useMemo(() => listConvertibleRegistryEntities(project), [project]);
 
@@ -641,6 +642,8 @@ export function RegistryPanel({
 
   const entities = useMemo(() => {
     switch (kind) {
+      case "all":
+        return [...registry.agents, ...registry.mcps, ...registry.llms];
       case "agents":
         return registry.agents;
       case "mcps":
@@ -692,7 +695,7 @@ export function RegistryPanel({
         </div>
       ) : null}
       <div className="flex gap-2">
-        {(["agents", "mcps", "llms"] as const).map((k) => (
+        {(["all", "agents", "mcps", "llms"] as const).map((k) => (
           <Button
             key={k}
             variant={kind === k ? "primary" : "secondary"}
@@ -705,10 +708,12 @@ export function RegistryPanel({
       </div>
 
       {entities.length === 0 ? (
-        <p className="text-xs text-gray-400">No {kind} defined yet.</p>
+        <p className="text-xs text-gray-400">
+          {kind === "all" ? "No registry entities defined yet." : `No ${kind} defined yet.`}
+        </p>
       ) : null}
 
-      {kind === "agents"
+      {(kind === "all" || kind === "agents")
         ? registry.agents.map((entity, index) => (
             <AgentEntityEditor
               key={entity.key || `agent-${index}`}
@@ -737,7 +742,7 @@ export function RegistryPanel({
           ))
         : null}
 
-      {kind === "mcps"
+      {(kind === "all" || kind === "mcps")
         ? registry.mcps.map((entity, index) => (
             <McpEntityEditor
               key={entity.key || `mcp-${index}`}
@@ -758,7 +763,7 @@ export function RegistryPanel({
           ))
         : null}
 
-      {kind === "llms"
+      {(kind === "all" || kind === "llms")
         ? registry.llms.map((entity, index) => (
             <LlmEntityEditor
               key={entity.key || `llm-${index}`}
@@ -779,33 +784,40 @@ export function RegistryPanel({
           ))
         : null}
 
-      <Button
-        variant="secondary"
-        className="h-7 px-2 text-xs"
-        onClick={() => {
-          if (kind === "agents") {
-            updateEntities("agents", [
-              ...registry.agents,
-              {
-                key: `agent-${registry.agents.length + 1}`,
-                metadata: { platform: "Custom", interfaces: { a2a: { card: { name: "Agent", version: "1.0.0" } } } },
-              },
-            ]);
-          } else if (kind === "mcps") {
-            updateEntities("mcps", [
-              ...registry.mcps,
-              { key: `mcp-${registry.mcps.length + 1}`, metadata: { transport: { kind: "streamableHttp" } } },
-            ]);
-          } else {
-            updateEntities("llms", [
-              ...registry.llms,
-              { key: `llm-${registry.llms.length + 1}`, metadata: { platform: "OpenAI" } },
-            ]);
-          }
-        }}
-      >
-        <Plus className="h-3 w-3" /> Add {kind.slice(0, -1)}
-      </Button>
+      {kind === "all" ? (
+        <p className="text-[11px] text-gray-500">
+          Select <span className="font-medium">agents</span>, <span className="font-medium">mcps</span>, or{" "}
+          <span className="font-medium">llms</span> to add a new registry entity.
+        </p>
+      ) : (
+        <Button
+          variant="secondary"
+          className="h-7 px-2 text-xs"
+          onClick={() => {
+            if (kind === "agents") {
+              updateEntities("agents", [
+                ...registry.agents,
+                {
+                  key: `agent-${registry.agents.length + 1}`,
+                  metadata: { platform: "Custom", interfaces: { a2a: { card: { name: "Agent", version: "1.0.0" } } } },
+                },
+              ]);
+            } else if (kind === "mcps") {
+              updateEntities("mcps", [
+                ...registry.mcps,
+                { key: `mcp-${registry.mcps.length + 1}`, metadata: { transport: { kind: "streamableHttp" } } },
+              ]);
+            } else {
+              updateEntities("llms", [
+                ...registry.llms,
+                { key: `llm-${registry.llms.length + 1}`, metadata: { platform: "OpenAI" } },
+              ]);
+            }
+          }}
+        >
+          <Plus className="h-3 w-3" /> Add {kind.slice(0, -1)}
+        </Button>
+      )}
 
       {registry.extra && Object.keys(registry.extra).length > 0 ? (
         <p className="text-[11px] text-amber-700">

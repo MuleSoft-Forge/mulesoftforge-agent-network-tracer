@@ -150,6 +150,13 @@ async function createWindow() {
     },
   });
 
+  // Defensive reset: if zoom was changed accidentally (trackpad pinch / cmd+plus),
+  // the landing page can appear as a giant cropped icon. Always normalize on boot.
+  mainWindow.webContents.setZoomFactor(1);
+  mainWindow.webContents.setVisualZoomLevelLimits(1, 1).catch(() => {
+    // best effort; older Electron builds may reject before first navigation
+  });
+
   // Open target=_blank / external links in the system browser, not new windows.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith(BASE_URL)) return { action: "allow" };
@@ -161,9 +168,18 @@ async function createWindow() {
   // sets window.location could navigate the main frame off localhost, leaving
   // a remote page running behind our preload bridge.
   mainWindow.webContents.on("will-navigate", (event, url) => {
+    logLine(`[nav] will-navigate ${url}`);
     if (url.startsWith(BASE_URL)) return;
     event.preventDefault();
     shell.openExternal(url);
+  });
+
+  mainWindow.webContents.on("did-navigate", (_event, url) => {
+    logLine(`[nav] did-navigate ${url}`);
+  });
+
+  mainWindow.webContents.on("did-fail-load", (_event, code, description, url) => {
+    logLine(`[nav] did-fail-load code=${code} url=${url} desc=${description}`);
   });
 
   await waitForServer(BASE_URL);

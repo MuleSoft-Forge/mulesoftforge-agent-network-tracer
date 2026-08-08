@@ -11,7 +11,9 @@ export function agentScriptTypeFromJsonSchema(propertySchema: unknown): string {
   if (type === "integer" || type === "number") return "number";
   if (type === "boolean") return "boolean";
   if (type === "object") return "object";
-  if (type === "array") return "array";
+  // AgentScript action input types do not support `array` directly; represent
+  // list-like tool params as `object` so generated brokers remain buildable.
+  if (type === "array") return "object";
   return "string";
 }
 

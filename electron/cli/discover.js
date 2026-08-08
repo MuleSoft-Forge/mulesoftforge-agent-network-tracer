@@ -11,6 +11,10 @@ const os = require("node:os");
 
 const CLI_BIN = "anypoint-cli-v4";
 const PROBE_TIMEOUT_MS = 20000;
+const AGENT_FABRIC_PLUGIN_NAMES = [
+  "mulesoft-anypoint-cli-agent-fabric-plugin",
+  "anypoint-cli-agent-fabric-plugin",
+];
 
 /** Extra places to look when PATH is missing (GUI apps on macOS don't inherit shell PATH). */
 function candidateDirs() {
@@ -147,6 +151,20 @@ function probe(cliPath, args) {
   });
 }
 
+function hasAgentNetworkTopic(text) {
+  const value = String(text || "");
+  return /\bagent-network\b/i.test(value) && /\b(project|setup)\b/i.test(value);
+}
+
+function hasMissingCommandSignal(text) {
+  return /\b(not found|unknown command|command .* not found)\b/i.test(String(text || ""));
+}
+
+function hasKnownAgentFabricPlugin(text) {
+  const value = String(text || "").toLowerCase();
+  return AGENT_FABRIC_PLUGIN_NAMES.some((name) => value.includes(name));
+}
+
 /**
  * Full preflight.
  * @returns {Promise<{available:boolean, cliPath:string|null, version:string|null,
@@ -184,12 +202,22 @@ async function detectCli() {
     };
   }
 
-  // The agent-fabric plugin supplies the `agent-network` command topic. When it
-  // is absent the CLI prints "Command agent-network not found" — and (observed
-  // on 1.6.25) still exits 0, so we must inspect the text, not just the code.
+  // The agent-fabric plugin supplies the `agent-network` command topic. Older
+  // and newer CLI builds format missing-command output differently (and some
+  // variants still exit 0), so treat help output as a signal and fall back to
+  // parsing `plugins` output for known plugin package names.
   const help = await probe(cliPath, ["agent-network", "--help"]);
   const combined = `${help.stdout}\n${help.stderr}`;
-  const pluginInstalled = !/not found/i.test(combined);
+  let pluginInstalled = false;
+  if (hasAgentNetworkTopic(combined)) {
+    pluginInstalled = true;
+  } else if (hasMissingCommandSignal(combined)) {
+    pluginInstalled = false;
+  } else {
+    const plugins = await probe(cliPath, ["plugins"]);
+    const pluginsOutput = `${plugins.stdout}\n${plugins.stderr}`;
+    pluginInstalled = plugins.ok && hasKnownAgentFabricPlugin(pluginsOutput);
+  }
 
   if (!pluginInstalled) {
     return {

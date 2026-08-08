@@ -36,6 +36,7 @@
     "jszip": "^3.10.1",
     "lucide-react": "^0.563.0",
     "monaco-editor": "0.50.0",
+    "monaco-yaml": "^5.5.1",
     "next": "^15.1.6",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

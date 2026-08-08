@@ -17,9 +17,22 @@ export interface ExchangeSearchHit {
   name?: string;
   version?: string;
   type?: string;
+  /** Display name of the org that publishes the asset (e.g. "MuleSoft"). */
+  organizationName?: string;
+  /** Owning org id of the asset. */
+  organizationId?: string;
 }
 
 type FetchFn = (input: string, init?: RequestInit) => Promise<Response>;
+
+/**
+ * Exchange marks provider-managed assets (GitHub MCP, Salesforce SObject MCP,
+ * MuleSoft Platform MCP, etc.) with `organizationName === "MuleSoft"`. This is
+ * the same signal behind the Exchange UI's "Provided by MuleSoft" filter and is
+ * control-plane agnostic — unlike the provider org's UUID/groupId, which differs
+ * per control plane (US/EU/…). We match on it instead of hardcoding any org id.
+ */
+export const MULESOFT_PROVIDER_ORG_NAME = "mulesoft";
 
 /**
  * Search filter values recognized by pseas/ang (from mule-exchange-services
@@ -54,6 +67,8 @@ interface PseasHit {
     assetType?: string;
     majorVersion?: string;
     minorVersion?: string;
+    organizationName?: string;
+    organizationId?: string;
     patch?: Array<{ semverVersion?: { value?: string } }>;
   };
 }
@@ -68,6 +83,8 @@ function mapPseasHit(hit: PseasHit): ExchangeSearchHit | null {
     name: src.name,
     version: latestPatch ?? `${src.majorVersion ?? ""}.${src.minorVersion ?? ""}`,
     type: src.assetType,
+    organizationName: src.organizationName,
+    organizationId: src.organizationId,
   };
 }
 
@@ -152,6 +169,67 @@ async function searchViaAng(
   if (!res.ok) return [];
   const data = (await res.json()) as { hits?: AngHit[] };
   return (data.hits ?? []).map(mapAngHit).filter((h): h is ExchangeSearchHit => h !== null);
+}
+
+/**
+ * Lists MuleSoft-supplied (provider-managed) assets for the given types.
+ *
+ * How this works, and why there is no hardcoded org id:
+ *
+ * An unscoped pseas search returns every asset the caller can see — their own
+ * business-group assets AND the provider (MuleSoft) catalog — each hit tagged
+ * with the publishing org's `organizationName`. Exchange's UI "Provided by
+ * MuleSoft" filter is simply `organizationName === "MuleSoft"`, so we replicate
+ * that client-side. This matches on every control plane (US/EU/gov/…) because
+ * the provider org's display name is stable, whereas its UUID/groupId is not.
+ *
+ * We deliberately do NOT gate on "has instances": when a customer governs a
+ * public MuleSoft MCP, the instance is registered in THEIR org, not in the
+ * provider org — so the public asset never reports instances. Governed status
+ * is determined separately (see governed-assets) and results are simply
+ * annotated rather than filtered.
+ */
+export async function searchMulesoftSuppliedAssets(
+  baseUrl: string,
+  searchTerm: string,
+  authHeader: Record<string, string>,
+  fetchFn: FetchFn = fetch,
+  types: string[] = [EXCHANGE_SEARCH_TYPES.MCP]
+): Promise<ExchangeSearchHit[]> {
+  const body: Record<string, unknown> = {
+    // The provider catalog is large (100+ MCPs); pull a wide page so the full
+    // "Provided by MuleSoft" list survives the client-side org filter below.
+    size: 250,
+    search: searchTerm,
+  };
+  if (types.length > 0) body.types = types;
+
+  let hits: PseasHit[] = [];
+  try {
+    const res = await fetchFn(`${baseUrl}/exchange/api/v2/pseas/_search`, {
+      method: "POST",
+      headers: { ...authHeader, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) {
+      const data = (await res.json()) as { hits?: PseasHit[] };
+      hits = data.hits ?? [];
+    }
+  } catch {
+    return [];
+  }
+
+  const byKey = new Map<string, ExchangeSearchHit>();
+  for (const raw of hits) {
+    const hit = mapPseasHit(raw);
+    if (!hit) continue;
+    if ((hit.organizationName ?? "").trim().toLowerCase() !== MULESOFT_PROVIDER_ORG_NAME) {
+      continue;
+    }
+    const key = `${hit.groupId}:${hit.assetId}`;
+    if (!byKey.has(key)) byKey.set(key, hit);
+  }
+  return Array.from(byKey.values());
 }
 
 /**

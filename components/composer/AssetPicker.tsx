@@ -18,6 +18,8 @@ interface SearchResult {
   version: string | null;
   kind: AssetKind;
   rawType?: string;
+  source: "business-group" | "mulesoft-supplied";
+  governed: boolean;
 }
 
 const KIND_FILTERS: Array<{ value: AssetKind; label: string }> = [
@@ -30,7 +32,9 @@ export default function AssetPicker({ onClose }: { onClose: () => void }) {
   const { project, dispatch } = useComposer();
   const orgId = project.identity.organizationId;
   const [query, setQuery] = useState("");
-  const [kinds, setKinds] = useState<AssetKind[]>(["agent", "mcp", "llm"]);
+  const [kind, setKind] = useState<AssetKind>("llm");
+  const [includeBusinessGroup, setIncludeBusinessGroup] = useState(true);
+  const [includeMulesoftSupplied, setIncludeMulesoftSupplied] = useState(false);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [importingKey, setImportingKey] = useState<string | null>(null);
@@ -61,7 +65,9 @@ export default function AssetPicker({ onClose }: { onClose: () => void }) {
       const params = new URLSearchParams({
         organizationId: orgId,
         q: query,
-        kinds: kinds.join(","),
+        kinds: kind,
+        includeBusinessGroup: String(includeBusinessGroup),
+        includeMulesoftSupplied: String(includeMulesoftSupplied),
       });
       const res = await fetch(`/api/exchange/search?${params.toString()}`);
       if (isStale()) return;
@@ -80,7 +86,7 @@ export default function AssetPicker({ onClose }: { onClose: () => void }) {
     } finally {
       if (!isStale()) setLoading(false);
     }
-  }, [orgId, query, kinds]);
+  }, [orgId, query, kind, includeBusinessGroup, includeMulesoftSupplied]);
 
   const runSearchRef = useRef(runSearch);
   runSearchRef.current = runSearch;
@@ -89,9 +95,8 @@ export default function AssetPicker({ onClose }: { onClose: () => void }) {
   // would hammer Exchange, so text is submitted via Enter or the button.
   useEffect(() => {
     void runSearchRef.current();
-  }, [kinds]);
+  }, [kind, includeBusinessGroup, includeMulesoftSupplied]);
 
-  // Escape to close, and restore focus to whatever opened the dialog.
   useEffect(() => {
     const previouslyFocused = document.activeElement as HTMLElement | null;
     searchInputRef.current?.focus();
@@ -104,10 +109,6 @@ export default function AssetPicker({ onClose }: { onClose: () => void }) {
       previouslyFocused?.focus?.();
     };
   }, [onClose]);
-
-  function toggleKind(k: AssetKind) {
-    setKinds((prev) => (prev.includes(k) ? prev.filter((x) => x !== k) : [...prev, k]));
-  }
 
   async function handleImport(r: SearchResult) {
     const key = resultKey(r);
@@ -190,9 +191,9 @@ export default function AssetPicker({ onClose }: { onClose: () => void }) {
             {KIND_FILTERS.map((f) => (
               <button
                 key={f.value}
-                onClick={() => toggleKind(f.value)}
+                onClick={() => setKind(f.value)}
                 className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium ${
-                  kinds.includes(f.value)
+                  kind === f.value
                     ? "border-primary bg-primary/10 text-primary"
                     : "border-gray-300 text-gray-500 hover:bg-gray-50"
                 }`}
@@ -201,6 +202,38 @@ export default function AssetPicker({ onClose }: { onClose: () => void }) {
                 {f.label}
               </button>
             ))}
+          </div>
+          <div className="mt-2 flex items-center gap-4 text-xs text-gray-600">
+            <label className="inline-flex items-center gap-1.5">
+              <input
+                type="checkbox"
+                checked={includeBusinessGroup}
+                onChange={(e) => {
+                  const next = e.target.checked;
+                  if (!next && !includeMulesoftSupplied) {
+                    // Keep at least one scope selected to avoid blank searches.
+                    return;
+                  }
+                  setIncludeBusinessGroup(next);
+                }}
+              />
+              Business Group
+            </label>
+            <label className="inline-flex items-center gap-1.5">
+              <input
+                type="checkbox"
+                checked={includeMulesoftSupplied}
+                onChange={(e) => {
+                  const next = e.target.checked;
+                  if (!next && !includeBusinessGroup) {
+                    // Keep at least one scope selected to avoid blank searches.
+                    return;
+                  }
+                  setIncludeMulesoftSupplied(next);
+                }}
+              />
+              MuleSoft Supplied
+            </label>
           </div>
         </div>
 
@@ -223,7 +256,25 @@ export default function AssetPicker({ onClose }: { onClose: () => void }) {
                   <li key={`${r.groupId}:${r.assetId}:${r.kind}:${i}`} className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50">
                     <KindBadge kind={r.kind} />
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-gray-900">{r.name}</p>
+                      <div className="flex items-center gap-1.5">
+                        <p className="truncate text-sm font-medium text-gray-900">{r.name}</p>
+                        {r.source === "mulesoft-supplied" ? (
+                          <span
+                            className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+                              r.governed
+                                ? "bg-emerald-100 text-emerald-700"
+                                : "bg-gray-100 text-gray-500"
+                            }`}
+                            title={
+                              r.governed
+                                ? "Governed — an instance of this MuleSoft-supplied asset exists in your org."
+                                : "Not governed in your org — no instance found."
+                            }
+                          >
+                            {r.governed ? "Governed" : "Not governed"}
+                          </span>
+                        ) : null}
+                      </div>
                       <p className="truncate font-mono text-[11px] text-gray-400">
                         {r.assetId} · {r.version ?? "?"}
                       </p>
