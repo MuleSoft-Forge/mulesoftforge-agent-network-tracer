@@ -7,6 +7,7 @@ import { serializeProject, type SerializedFile } from "@/lib/composer/serialize"
 import { parseProjectFiles, type ParseFilesInput } from "@/lib/composer/parse";
 import ProjectComparePanel from "@/components/composer/ProjectComparePanel";
 import SegmentedControl from "@/components/composer/SegmentedControl";
+import JsonMonacoEditor from "@/components/composer/JsonMonacoEditor";
 import YamlMonacoEditor from "@/components/composer/YamlMonacoEditor";
 import { Button } from "@/components/composer/ui";
 import {
@@ -127,6 +128,7 @@ function EditableFileBlock({
   onChange: (next: string) => void;
 }) {
   const isYaml = file.language === "yaml";
+  const isJson = file.language === "json";
   return (
     <div className="mb-3 overflow-hidden rounded-md border border-gray-200">
       <div className="flex items-center justify-between border-b border-gray-200 bg-gray-50 px-3 py-1.5">
@@ -136,6 +138,10 @@ function EditableFileBlock({
       {isYaml ? (
         <div className="h-[360px] w-full bg-white">
           <YamlMonacoEditor value={value} onChange={onChange} className="h-full w-full" />
+        </div>
+      ) : isJson ? (
+        <div className="h-[360px] w-full bg-white">
+          <JsonMonacoEditor value={value} onChange={onChange} className="h-full w-full" />
         </div>
       ) : (
         <textarea
