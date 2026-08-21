@@ -26,9 +26,13 @@ interface JsonSchemaNode {
   then?: JsonSchemaNode;
   else?: JsonSchemaNode;
   properties?: Record<string, JsonSchemaNode>;
+  items?: JsonSchemaNode | JsonSchemaNode[];
   required?: string[];
   format?: string;
+  default?: unknown;
 }
+
+export type PolicyConfigScaffoldMode = "required" | "defaults";
 
 function schemaType(node: JsonSchemaNode): string | undefined {
   if (typeof node.type === "string") return node.type;
@@ -239,6 +243,165 @@ function appendFields(
       });
     }
   }
+}
+
+function appendUnsupportedPaths(out: string[], node: JsonSchemaNode, prefix: string): void {
+  for (const [key, child] of Object.entries(node.properties ?? {})) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    const childType = schemaType(child);
+    if (childType === "object") {
+      if (child.properties) appendUnsupportedPaths(out, child, path);
+      else out.push(path);
+      continue;
+    }
+    if (childType === "array") out.push(path);
+  }
+}
+
+/**
+ * Parameters the flattened form can't render — arrays (for example rate-limiting's
+ * `rateLimits`) and free-form objects. They are only editable as raw YAML, so the
+ * editor has to say so instead of silently dropping them.
+ */
+export function policyConfigUnsupportedPaths(configurationSchema: unknown): string[] {
+  const root = configurationSchema as JsonSchemaNode | null;
+  if (!root || typeof root !== "object") return [];
+  const out: string[] = [];
+  appendUnsupportedPaths(out, root, "");
+  return out;
+}
+
+function schemaDefault(node: JsonSchemaNode): unknown {
+  const value = node.default;
+  if (value === undefined) return undefined;
+  return JSON.parse(JSON.stringify(value)) as unknown;
+}
+
+function hasRequiredDescendant(node: JsonSchemaNode): boolean {
+  const required = Array.isArray(node.required) ? node.required : [];
+  if (required.length > 0) return true;
+  if (node.type === "array") {
+    const itemSchema = Array.isArray(node.items) ? node.items[0] : node.items;
+    if (itemSchema && typeof itemSchema === "object") return hasRequiredDescendant(itemSchema);
+  }
+  for (const child of Object.values(node.properties ?? {})) {
+    if (hasRequiredDescendant(child)) return true;
+  }
+  return false;
+}
+
+function placeholderForType(type: string | undefined): unknown {
+  switch (type) {
+    case "boolean":
+      return false;
+    case "number":
+    case "integer":
+      return 0;
+    case "array":
+      return [];
+    case "object":
+      return {};
+    case "string":
+    default:
+      return "";
+  }
+}
+
+function buildScaffold(node: JsonSchemaNode, mode: PolicyConfigScaffoldMode): unknown {
+  const defaultValue = schemaDefault(node);
+  const type = schemaType(node);
+  if (mode === "defaults" && defaultValue !== undefined) {
+    // Some policy schemas default arrays/objects to partial shapes (for example
+    // rateLimits: [{}]); enrich those defaults with required descendants so users
+    // get a deployable structure immediately.
+    if (type === "object" && defaultValue && typeof defaultValue === "object" && !Array.isArray(defaultValue)) {
+      const requiredShape = buildScaffold(node, "required");
+      if (requiredShape && typeof requiredShape === "object" && !Array.isArray(requiredShape)) {
+        return deepMergeScaffold(requiredShape as Record<string, unknown>, defaultValue as Record<string, unknown>);
+      }
+    }
+    if (type === "array" && Array.isArray(defaultValue)) {
+      const itemSchema = (node as { items?: JsonSchemaNode }).items;
+      if (itemSchema && typeof itemSchema === "object") {
+        const requiredItem = buildScaffold(itemSchema, "required");
+        return defaultValue.map((item) => {
+          if (item && typeof item === "object" && !Array.isArray(item) && requiredItem && typeof requiredItem === "object" && !Array.isArray(requiredItem)) {
+            return deepMergeScaffold(requiredItem as Record<string, unknown>, item as Record<string, unknown>);
+          }
+          return item;
+        });
+      }
+    }
+    return defaultValue;
+  }
+
+  if (type === "object") {
+    const props = node.properties ?? {};
+    const required = new Set(Array.isArray(node.required) ? node.required : []);
+    const out: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(props)) {
+      const childDefault = schemaDefault(child);
+      const includeByMode =
+        mode === "required"
+          ? required.has(key) || hasRequiredDescendant(child)
+          : childDefault !== undefined || required.has(key);
+      if (!includeByMode) continue;
+      out[key] = buildScaffold(child, mode);
+    }
+    return out;
+  }
+
+  if (type === "array") {
+    const itemSchema = (node as { items?: JsonSchemaNode }).items;
+    if (!itemSchema || typeof itemSchema !== "object") return [];
+    const item = buildScaffold(itemSchema, mode);
+    return [item];
+  }
+
+  return placeholderForType(type);
+}
+
+function deepMergeScaffold(
+  requiredShape: Record<string, unknown>,
+  defaultsShape: Record<string, unknown>
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...requiredShape };
+  for (const [key, value] of Object.entries(defaultsShape)) {
+    const current = out[key];
+    if (
+      current &&
+      typeof current === "object" &&
+      !Array.isArray(current) &&
+      value &&
+      typeof value === "object" &&
+      !Array.isArray(value)
+    ) {
+      out[key] = deepMergeScaffold(
+        current as Record<string, unknown>,
+        value as Record<string, unknown>
+      );
+      continue;
+    }
+    out[key] = value;
+  }
+  return out;
+}
+
+/**
+ * Schema-driven starter configuration for YAML mode.
+ * - `required`: minimal structure for required fields.
+ * - `defaults`: required structure plus any schema defaults.
+ */
+export function policyConfigScaffold(
+  configurationSchema: unknown,
+  mode: PolicyConfigScaffoldMode
+): Record<string, unknown> {
+  const root = configurationSchema as JsonSchemaNode | null;
+  if (!root || typeof root !== "object") return {};
+  const built = buildScaffold(root, mode);
+  return built && typeof built === "object" && !Array.isArray(built)
+    ? (built as Record<string, unknown>)
+    : {};
 }
 
 export function policyConfigFieldSpecs(

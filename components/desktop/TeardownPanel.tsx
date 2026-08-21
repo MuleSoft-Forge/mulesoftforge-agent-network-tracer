@@ -324,11 +324,11 @@ export default function TeardownPanel({ busy, runningCommand, onRun }: TeardownP
         needs to know what to remove.
       </p>
 
-      <fieldset className="mt-4" disabled={busy}>
+      <fieldset className="mt-4 min-w-0" disabled={busy}>
         <legend className="text-xs font-medium text-gray-700">What to remove</legend>
 
         {target ? (
-          <div className="mt-2 flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2">
+          <div className="mt-2 flex w-full max-w-full min-w-0 items-center gap-2 overflow-hidden rounded-xl border border-gray-200 bg-gray-50 px-3 py-2">
             <div className="min-w-0 flex-1">
               <p className="truncate text-xs font-medium text-gray-900">{target.assetId}</p>
               <p className="truncate font-mono text-[11px] text-gray-500">{target.gav}</p>
@@ -360,7 +360,7 @@ export default function TeardownPanel({ busy, runningCommand, onRun }: TeardownP
 
         <div className="mt-3">
           <p className="text-xs font-medium text-gray-700">Environment</p>
-          <div className="mt-1 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-800">
+          <div className="mt-1 w-full max-w-full min-w-0 overflow-hidden rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-800">
             {selectedEnvironment
               ? `${selectedEnvironment.name}${selectedEnvironment.type ? ` (${selectedEnvironment.type})` : ""}`
               : contextEnvId

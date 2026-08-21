@@ -263,22 +263,22 @@
       "groupId": "68ef9520-24e9-4cf2-b2f5-620025690913",
       "assetId": "client-id-enforcement",
       "version": "1.2.0",
-      "classifier": "schema",
-      "packaging": "json"
+      "classifier": "policy",
+      "packaging": "zip"
     },
     {
       "groupId": "68ef9520-24e9-4cf2-b2f5-620025690913",
       "assetId": "rate-limiting",
       "version": "1.4.0",
-      "classifier": "schema",
-      "packaging": "json"
+      "classifier": "policy",
+      "packaging": "zip"
     },
     {
       "groupId": "68ef9520-24e9-4cf2-b2f5-620025690913",
       "assetId": "prompt-guard",
       "version": "1.0.1",
-      "classifier": "schema",
-      "packaging": "json"
+      "classifier": "policy",
+      "packaging": "zip"
     }
   ],
   "groupId": "68ef9520-24e9-4cf2-b2f5-620025690913",

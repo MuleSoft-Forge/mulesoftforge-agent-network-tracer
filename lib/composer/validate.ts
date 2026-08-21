@@ -635,7 +635,7 @@ export function validateProject(project: ComposerProject): ValidationResult {
   }
 
   // Security posture: permissive-by-default configurations that still deploy.
-  for (const governanceIssue of governanceIssues(project, broker)) {
+  for (const governanceIssue of governanceIssues(project)) {
     issues.push(governanceIssue);
   }
 

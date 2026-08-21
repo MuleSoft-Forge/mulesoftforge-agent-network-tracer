@@ -1357,6 +1357,144 @@ console.log("\n[15] Policy configuration variable refs + exchange.json derivatio
   );
 }
 
+// ---------------------------------------------------------------------------
+console.log("\n[15b] Policy dependencies: ACB classifier + configuration validation");
+{
+  const { validatePolicyConfiguration } = await import("@/lib/composer/connectivity/policy-config-validation");
+  const { policyConfigUnsupportedPaths } = await import("@/lib/composer/connectivity/policy-schema-fields");
+  const MULESOFT_ORG = "68ef9520-24e9-4cf2-b2f5-620025690913";
+
+  let p = createScaffoldProject("ORG");
+  p = apply(
+    p,
+    {
+      type: "updateBroker",
+      patch: {
+        interfacePolicies: { inbound: [{ mode: "ref", name: "rate-limiting", namespace: MULESOFT_ORG }] },
+      },
+    },
+    {
+      type: "ensurePolicyBinding",
+      bindingName: "rate-limiting",
+      binding: {
+        ref: { name: "rate-limiting", namespace: MULESOFT_ORG },
+        configuration: { rateLimits: [{ maximumRequests: 10, timePeriodInMilliseconds: 60000 }] },
+        templateVersion: "1.5.1",
+      },
+    }
+  );
+
+  type DepRow = { assetId: string; classifier: string; packaging: string; version: string };
+  const policyDepsOf = (project: typeof p): DepRow[] =>
+    (JSON.parse(serializeExchangeJson(project)).dependencies as DepRow[]).filter(
+      (d) => d.assetId === "rate-limiting"
+    );
+
+  const policyDeps = policyDepsOf(p);
+  check(
+    "policy dependency uses ACB's classifier, exactly once",
+    policyDeps.length === 1 && policyDeps[0]?.classifier === "policy",
+    JSON.stringify(policyDeps)
+  );
+  check("policy dependency packaging is zip", policyDeps[0]?.packaging === "zip");
+
+  const exchangeJson = serializeExchangeJson(p);
+  const agentYaml = serializeAgentNetworkYaml(p);
+  const roundTrip = parseProjectFiles({ exchangeJson, agentYaml });
+  check("ACB-shaped policy dependency round-trips", roundTrip.ok, roundTrip.ok ? "" : roundTrip.errors.join("; "));
+  if (roundTrip.ok) {
+    // The yaml carries no version, so the binding can only learn it from the dependency.
+    check(
+      "import gives the binding its template version",
+      roundTrip.project.policyBindings["rate-limiting"]?.templateVersion === "1.5.1"
+    );
+    check(
+      "the claimed dependency is not also kept as an unmatched leftover",
+      !(roundTrip.project.unmatchedDependencies ?? []).some((d) => d.assetId === "rate-limiting")
+    );
+    check("re-export emits one policy dependency", policyDepsOf(roundTrip.project).length === 1);
+  }
+
+  const legacy = parseProjectFiles({
+    exchangeJson: exchangeJson.replace('"classifier": "policy"', '"classifier": "schema"'),
+    agentYaml,
+  });
+  check("a legacy schema-classified policy dependency imports", legacy.ok, legacy.ok ? "" : legacy.errors.join("; "));
+  if (legacy.ok) {
+    const legacyDeps = policyDepsOf(legacy.project);
+    check(
+      "legacy policy dependency is re-exported with ACB's classifier",
+      legacyDeps.length === 1 && legacyDeps[0]?.classifier === "policy",
+      JSON.stringify(legacyDeps)
+    );
+  }
+
+  // Published rate-limiting 1.5.1 schema: keySelector must be an expression, and
+  // rateLimits carries a default that fails its own item requirements.
+  const rateLimitingSchema = {
+    $schema: "https://json-schema.org/draft/2019-09/schema",
+    type: "object",
+    required: [],
+    properties: {
+      keySelector: { title: "Identifier", type: "string", format: "dataweaveExpression" },
+      rateLimits: {
+        title: "Limits",
+        type: "array",
+        minItems: 1,
+        default: [{}],
+        items: {
+          type: "object",
+          required: ["maximumRequests", "timePeriodInMilliseconds"],
+          properties: {
+            maximumRequests: { type: "integer", minimum: 1 },
+            timePeriodInMilliseconds: { type: "integer", minimum: 1 },
+          },
+        },
+      },
+      exposeHeaders: { type: "boolean", default: false },
+    },
+  };
+  const limits = { rateLimits: [{ maximumRequests: 10, timePeriodInMilliseconds: 60000 }] };
+
+  check("a valid rate-limiting configuration passes", validatePolicyConfiguration(rateLimitingSchema, limits).length === 0);
+
+  const literalKeySelector = validatePolicyConfiguration(rateLimitingSchema, {
+    ...limits,
+    keySelector: "client_id",
+  });
+  check(
+    "a literal keySelector is rejected the way the CLI rejects it",
+    literalKeySelector.some((i) => i.path === "keySelector" && i.message.includes("dataweaveExpression")),
+    JSON.stringify(literalKeySelector)
+  );
+  check(
+    "a DataWeave expression keySelector passes",
+    validatePolicyConfiguration(rateLimitingSchema, {
+      ...limits,
+      keySelector: "#[attributes.headers['client_id']]",
+    }).length === 0
+  );
+  check(
+    "a deploy variable keySelector passes",
+    validatePolicyConfiguration(rateLimitingSchema, {
+      ...limits,
+      keySelector: "${rateLimiting.keySelector}",
+    }).length === 0
+  );
+
+  const emptyConfig = validatePolicyConfiguration(rateLimitingSchema, {});
+  check(
+    "an empty configuration is judged on the defaults the CLI injects",
+    emptyConfig.some((i) => i.path.startsWith("rateLimits") && i.message.includes("maximumRequests")),
+    JSON.stringify(emptyConfig)
+  );
+
+  check(
+    "array parameters are reported as uneditable in the form",
+    policyConfigUnsupportedPaths(rateLimitingSchema).includes("rateLimits")
+  );
+}
+
 console.log("\n[16] Schema gap closure (yaml info, broker card/policies, headerName, policy access, inline)");
 {
   let p = createScaffoldProject("ORG");
@@ -5241,42 +5379,16 @@ console.log("\n[feedback issue formatting]");
 
 console.log("\n[governance rules]");
 {
-  const { governanceIssues } = await import("@/lib/composer/validation/governance-issues");
-
   const scaffold = apply(createScaffoldProject("ORG"), {
     type: "setIdentity",
     patch: { name: "Governance Fixture", assetId: "governance-fixture" },
   });
 
-  const ingress = validateProject(scaffold).issues.filter(
-    (i) => i.code === "access.inbound-policies.missing"
-  );
-  check("unprotected broker ingress warns exactly once", ingress.length === 1, `${ingress.length}`);
-  check("ingress finding is a warning, not an export blocker", ingress[0]?.severity === "warning");
-  check("ingress finding routes to the access tab", ingress[0]?.location.tab === "access");
-
-  const guarded = apply(scaffold, {
-    type: "updateBroker",
-    patch: { interfacePolicies: { inbound: [{ mode: "ref", name: "client-id-enforcement" }] } },
-  });
+  // An A2A interface with no inbound policies is a deliberate deployment choice,
+  // so nothing here may flag it.
   check(
-    "an inbound binding clears the ingress warning",
-    !validateProject(guarded).issues.some((i) => i.code === "access.inbound-policies.missing")
-  );
-
-  // Outbound bindings govern egress, so they must not silence the front door.
-  const outboundOnly = apply(scaffold, {
-    type: "updateBroker",
-    patch: { interfacePolicies: { outbound: [{ mode: "ref", name: "http-caching" }] } },
-  });
-  check(
-    "an outbound-only binding still warns about ingress",
-    validateProject(outboundOnly).issues.some((i) => i.code === "access.inbound-policies.missing")
-  );
-
-  check(
-    "no broker means no ingress warning to give",
-    !governanceIssues(scaffold, undefined).some((i) => i.code === "access.inbound-policies.missing")
+    "an open A2A interface is not a finding",
+    !validateProject(scaffold).issues.some((i) => i.location.tab === "access")
   );
 
   function withAgentTools(tools: RegistryAgentTool[]): ComposerProject {
@@ -5335,14 +5447,11 @@ console.log("\n[governance rules]");
   ).issues.filter((i) => i.code === "registry.agent.mcp-tools.unrestricted");
   check("one finding per unrestricted server", perServer.length === 2, `${perServer.length}`);
 
-  // Both rules describe permissive-but-valid setups, so neither may block export.
+  // The rule describes a permissive-but-valid setup, so it may not block export.
   const governance = validateProject(withAgentTools([{ mcp: { ref: { name: "billing-mcp" } } }])).errors;
   check(
     "governance findings never surface as errors",
-    !governance.some(
-      (i) =>
-        i.code === "access.inbound-policies.missing" || i.code === "registry.agent.mcp-tools.unrestricted"
-    )
+    !governance.some((i) => i.code === "registry.agent.mcp-tools.unrestricted")
   );
 }
 

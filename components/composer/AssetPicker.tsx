@@ -5,7 +5,7 @@ import { Search, Plus, X, Loader2 } from "lucide-react";
 import { MuleIcon } from "@/components/composer/MuleIcon";
 import { useComposer } from "@/lib/composer/store";
 import { importAsset } from "@/lib/composer/factory";
-import { exchangeDependencyAssets } from "@/lib/composer/model";
+import { exchangeDependencyAssets, isPolicyClassifier, POLICY_CLASSIFIER } from "@/lib/composer/model";
 import { connectionNameForAsset } from "@/lib/composer/model";
 import type { AssetKind } from "@/lib/composer/model";
 import { fetchMcpMetadataFromApi } from "@/components/composer/useMcpTools";
@@ -57,11 +57,19 @@ export default function AssetPicker({ onClose }: { onClose: () => void }) {
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const existingAssetKeys = new Set(project.assets.map((a) => `${a.groupId}:${a.assetId}`));
-  const existingPolicyKeys = new Set(
-    (project.unmatchedDependencies ?? [])
-      .filter((dep) => dep.classifier === "schema")
-      .map((dep) => `${dep.groupId}:${dep.assetId}:${dep.version}`)
-  );
+  // A policy is already in the project whether it arrived as a dependency or as a
+  // binding that owns its template version.
+  const existingPolicyKeys = new Set([
+    ...(project.unmatchedDependencies ?? [])
+      .filter((dep) => isPolicyClassifier(dep.classifier))
+      .map((dep) => `${dep.groupId}:${dep.assetId}:${dep.version}`),
+    ...Object.values(project.policyBindings)
+      .filter((binding) => binding.templateVersion)
+      .map(
+        (binding) =>
+          `${binding.ref.namespace ?? orgId}:${binding.ref.name}:${binding.templateVersion}`
+      ),
+  ]);
 
   function resultKey(r: SearchResult): string {
     return `${r.groupId}:${r.assetId}`;
@@ -219,7 +227,7 @@ export default function AssetPicker({ onClose }: { onClose: () => void }) {
         groupId: r.groupId,
         assetId: r.assetId,
         version: r.version,
-        classifier: "schema",
+        classifier: POLICY_CLASSIFIER,
         packaging: "zip",
       },
     });

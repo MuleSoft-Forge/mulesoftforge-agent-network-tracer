@@ -11,7 +11,7 @@ import type { ProjectFocusTarget } from "@/lib/composer/project-field-anchors";
 import { PROJECT_ANCHOR } from "@/lib/composer/project-field-anchors";
 import ProjectCompletenessPanel from "@/components/composer/ProjectCompletenessPanel";
 import { MuleIcon } from "@/components/composer/MuleIcon";
-import { connectionNameForAsset, exchangeDependencyAssets, toIdentifier, variableGroupForAsset, type Broker, type ImportedAsset, type YamlNetworkInfo } from "@/lib/composer/model";
+import { connectionNameForAsset, exchangeDependencyAssets, isPolicyClassifier, POLICY_CLASSIFIER, toIdentifier, variableGroupForAsset, type Broker, type ImportedAsset, type YamlNetworkInfo } from "@/lib/composer/model";
 import { BROKER_KEY_HINT, normalizeBrokerKey } from "@/lib/composer/broker-key";
 import {
   ANF_ID_HINT,
@@ -722,13 +722,13 @@ export function ComposerPanelContent({
         groupId: binding.ref.namespace ?? project.identity.organizationId,
         assetId: binding.ref.name,
         version,
-        classifier: "schema",
+        classifier: POLICY_CLASSIFIER,
         packaging: "zip",
         source: "binding",
       });
     }
     for (const dep of project.unmatchedDependencies ?? []) {
-      if (dep.classifier !== "schema") continue;
+      if (!isPolicyClassifier(dep.classifier)) continue;
       rows.push({
         groupId: dep.groupId,
         assetId: dep.assetId,
@@ -740,7 +740,9 @@ export function ComposerPanelContent({
     }
     const seen = new Set<string>();
     return rows.filter((row) => {
-      const key = `${row.groupId}:${row.assetId}:${row.version}:${row.classifier}:${row.packaging}`;
+      // Keyed without the classifier so an imported "schema" copy doesn't show up
+      // beside the binding-derived row for the same policy.
+      const key = `${row.groupId}:${row.assetId}:${row.version}:${row.packaging}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
@@ -829,7 +831,7 @@ export function ComposerPanelContent({
         <div className="shrink-0 border-b border-composer-border px-4 py-2.5">
           <h2 className="text-sm font-semibold text-gray-900">{panelTitle(tab)}</h2>
         </div>
-        <div className="min-h-0 flex-1 space-y-3 overflow-auto p-4 scrollbar-thin">
+        <div className="min-h-0 flex-1 space-y-3 overflow-auto px-4 pt-4 pb-24 scrollbar-thin">
           {tab === "identity" && (
             <div className="flex flex-col gap-4 xl:flex-row">
               <div className="min-w-0 flex-1 space-y-6">
@@ -1310,7 +1312,8 @@ export function ComposerPanelContent({
                   <p className="text-[11px] text-gray-500">
                     Referenced policy bindings with known template versions. These export to{" "}
                     <span className="font-mono">exchange.json dependencies[]</span> as{" "}
-                    <span className="font-mono">classifier: schema</span>.
+                    <span className="font-mono">classifier: {POLICY_CLASSIFIER}</span>, matching Anypoint Code
+                    Builder.
                   </p>
                   <div className="space-y-2">
                     {policyDependencies.map((dep) => (

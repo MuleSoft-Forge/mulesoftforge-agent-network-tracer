@@ -24,8 +24,10 @@ import {
   CLASSIFIER_BY_KIND,
   ComposerProjectSchema,
   deriveVariables,
+  isPolicyClassifier,
   toIdentifier,
 } from "@/lib/composer/model";
+import { referencedPolicyBindingNames } from "@/lib/composer/connectivity/policy-bindings";
 import { normalizeBrokerKey, isValidBrokerKey } from "@/lib/composer/broker-key";
 import { connectionIdForBaseName, isValidAnfId, normalizeAnfId } from "@/lib/composer/anf-id";
 import { defaultLlmBaseUrlForAsset } from "@/lib/composer/connectivity/llm-default-urls";
@@ -230,6 +232,33 @@ function buildAssets(
     return asset;
   });
   return { assets, unmatched: remaining };
+}
+
+/**
+ * A policy binding names its template but carries no version — that lives in the
+ * exchange dependency. Claim it so the binding owns the version (which is what
+ * loads the policy's configuration schema in the Composer) and export re-derives
+ * the dependency instead of passing an imported copy through beside it.
+ */
+function claimPolicyDependencies(project: ComposerProject): {
+  policyBindings: ComposerProject["policyBindings"];
+  unmatchedDependencies: NonNullable<ComposerProject["unmatchedDependencies"]>;
+} {
+  const remaining = [...(project.unmatchedDependencies ?? [])];
+  const policyBindings = { ...project.policyBindings };
+  for (const name of referencedPolicyBindingNames(project)) {
+    const binding = policyBindings[name];
+    if (!binding || binding.templateVersion) continue;
+    const groupId = binding.ref.namespace ?? project.identity.organizationId;
+    const matches = (dep: (typeof remaining)[number], scoped: boolean) =>
+      dep.assetId === binding.ref.name && isPolicyClassifier(dep.classifier) && (!scoped || dep.groupId === groupId);
+    let index = remaining.findIndex((dep) => matches(dep, true));
+    if (index < 0) index = remaining.findIndex((dep) => matches(dep, false));
+    if (index < 0) continue;
+    const [dep] = remaining.splice(index, 1);
+    policyBindings[name] = { ...binding, templateVersion: dep.version };
+  }
+  return { policyBindings, unmatchedDependencies: remaining };
 }
 
 function buildVariableOverrides(exchange: ParsedExchangeJson): Record<string, VariableOverride> {
@@ -540,6 +569,13 @@ export function parseProjectFiles(input: ParseFilesInput): ParseFilesResult {
         }
       : {}),
   };
+  const claimed = claimPolicyDependencies(candidate);
+  candidate.policyBindings = claimed.policyBindings;
+  if (claimed.unmatchedDependencies.length > 0) {
+    candidate.unmatchedDependencies = claimed.unmatchedDependencies;
+  } else {
+    delete candidate.unmatchedDependencies;
+  }
   candidate.customVariables = buildCustomVariables(exchange, candidate);
 
   const parsed = ComposerProjectSchema.safeParse(candidate);

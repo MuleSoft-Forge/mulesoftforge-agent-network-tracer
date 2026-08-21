@@ -46,6 +46,22 @@ export const CLASSIFIER_BY_KIND: Record<AssetKind, string> = {
   llm: "llm-metadata",
 };
 
+/**
+ * exchange.json dependency classifier for policy templates. ACB writes the
+ * Exchange asset type here, and the CLI ignores the field entirely (it resolves
+ * policies by groupId + assetId), so matching ACB is what keeps a project
+ * readable by both builders.
+ */
+export const POLICY_CLASSIFIER = "policy";
+
+/** ACB's asset type plus the policy file classifiers older projects wrote. */
+const POLICY_CLASSIFIERS = new Set([POLICY_CLASSIFIER, "schema", "fat-schema"]);
+
+/** True for any classifier a policy dependency has been written with. */
+export function isPolicyClassifier(classifier: string | null | undefined): boolean {
+  return POLICY_CLASSIFIERS.has((classifier ?? "").trim().toLowerCase());
+}
+
 /** kind -> agent-network.yaml connection kind AND .agent URI scheme (they coincide). */
 export const CONNECTION_KIND_BY_KIND: Record<AssetKind, "a2a" | "mcp" | "llm"> = {
   agent: "a2a",

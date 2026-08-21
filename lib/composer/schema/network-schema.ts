@@ -11,20 +11,17 @@
  */
 
 import Ajv from "ajv";
-import type { ErrorObject, ValidateFunction } from "ajv";
+import type { ValidateFunction } from "ajv";
 import {
   AGENT_NETWORK_ROOT_SCHEMA,
   referencedSchemasByFilename,
 } from "@/lib/composer/schema/anf/catalog";
+import { collectSchemaIssues, type SchemaIssue } from "@/lib/composer/schema/schema-issues";
 
 /** Referenced schemas keyed by the filename used in their `$ref`s. */
 const REFERENCED_SCHEMAS = referencedSchemasByFilename();
 
-export interface SchemaIssue {
-  /** JSON pointer-ish path into the document, e.g. "context.connections.x.kind". */
-  path: string;
-  message: string;
-}
+export type { SchemaIssue };
 
 let validator: ValidateFunction | null = null;
 let buildError: string | null = null;
@@ -51,23 +48,6 @@ function getValidator(): ValidateFunction | null {
   }
 }
 
-function formatError(err: ErrorObject): SchemaIssue {
-  const path = err.instancePath ? err.instancePath.replace(/^\//, "").replace(/\//g, ".") : "(root)";
-  let message = err.message ?? "is invalid";
-  if (err.keyword === "additionalProperties") {
-    const extra = (err.params as { additionalProperty?: string }).additionalProperty;
-    message = `unexpected property "${extra}"`;
-  } else if (err.keyword === "required") {
-    const missing = (err.params as { missingProperty?: string }).missingProperty;
-    message = `missing required property "${missing}"`;
-  } else if (err.keyword === "const" || err.keyword === "enum") {
-    const allowed = (err.params as { allowedValue?: unknown; allowedValues?: unknown[] });
-    const values = allowed.allowedValues ?? (allowed.allowedValue !== undefined ? [allowed.allowedValue] : []);
-    message = `${message} (${JSON.stringify(values)})`;
-  }
-  return { path, message };
-}
-
 /**
  * Validate an agent-network.yaml document object against the official schema.
  * Returns [] when valid, or when the validator itself couldn't be built (so a
@@ -76,19 +56,8 @@ function formatError(err: ErrorObject): SchemaIssue {
 export function validateAgentNetworkDoc(doc: unknown): SchemaIssue[] {
   const validate = getValidator();
   if (!validate) return [];
-  const ok = validate(doc);
-  if (ok || !validate.errors) return [];
-  // De-dupe: anyOf branches produce many near-identical errors.
-  const seen = new Set<string>();
-  const issues: SchemaIssue[] = [];
-  for (const err of validate.errors) {
-    const issue = formatError(err);
-    const key = `${issue.path}::${issue.message}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    issues.push(issue);
-  }
-  return issues;
+  if (validate(doc)) return [];
+  return collectSchemaIssues(validate.errors);
 }
 
 /** Exposed for diagnostics/tests. */

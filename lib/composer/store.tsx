@@ -24,7 +24,12 @@ import type { DeclaredPolicyBinding } from "@/lib/composer/connectivity/policy-b
 import type { NetworkRegistry } from "@/lib/composer/registry/types";
 import { sanitizeConnectionPolicies } from "@/lib/composer/connectivity/connection-extras";
 import { pruneUnreferencedPolicyBindings } from "@/lib/composer/connectivity/policy-bindings";
-import { assignDefaultConnectionName, connectionNameForAsset } from "@/lib/composer/model";
+import {
+  assignDefaultConnectionName,
+  connectionNameForAsset,
+  isPolicyClassifier,
+  POLICY_CLASSIFIER,
+} from "@/lib/composer/model";
 import {
   createActionForAsset,
   createActionsForMcpAsset,
@@ -324,13 +329,18 @@ function uniqueNodeName(broker: Broker, kind: GraphNodeKind): string {
 }
 
 export function composerReducer(project: ComposerProject, action: ComposerAction): ComposerProject {
+  // Policy classifiers are normalized so an ACB-written "policy" dependency and a
+  // "schema" one from an older project are recognized as the same dependency.
   const dependencyKey = (dep: {
     groupId: string;
     assetId: string;
     version: string;
     classifier: string;
     packaging?: string;
-  }): string => `${dep.groupId}:${dep.assetId}:${dep.version}:${dep.classifier}:${dep.packaging ?? "zip"}`;
+  }): string => {
+    const classifier = isPolicyClassifier(dep.classifier) ? POLICY_CLASSIFIER : dep.classifier;
+    return `${dep.groupId}:${dep.assetId}:${dep.version}:${classifier}:${dep.packaging ?? "zip"}`;
+  };
 
   const normalizedUnmatchedDependencies = (
     deps: Array<{ groupId: string; assetId: string; version: string; classifier: string; packaging: string }> | undefined
@@ -480,7 +490,7 @@ export function composerReducer(project: ComposerProject, action: ComposerAction
           groupId: nextBinding.ref.namespace ?? project.identity.organizationId,
           assetId: nextBinding.ref.name,
           version,
-          classifier: "schema",
+          classifier: POLICY_CLASSIFIER,
           packaging: "zip",
         };
         if (!hasDependency(dep)) {
@@ -514,7 +524,7 @@ export function composerReducer(project: ComposerProject, action: ComposerAction
         groupId: binding.ref.namespace ?? project.identity.organizationId,
         assetId: binding.ref.name,
         version,
-        classifier: "schema",
+        classifier: POLICY_CLASSIFIER,
         packaging: "zip",
       };
       if (hasDependency(dep)) return next;

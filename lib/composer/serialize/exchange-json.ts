@@ -1,5 +1,10 @@
 import type { ComposerProject } from "@/lib/composer/model";
-import { deriveDependencies, deriveVariables } from "@/lib/composer/model";
+import {
+  deriveDependencies,
+  deriveVariables,
+  isPolicyClassifier,
+  POLICY_CLASSIFIER,
+} from "@/lib/composer/model";
 import { extractGraphLayouts, serializeBuilderMetadata } from "@/lib/composer/builder-metadata";
 import { referencedPolicyBindingNames } from "@/lib/composer/connectivity/policy-bindings";
 import { isFlatVariable } from "@/lib/composer/variable-keys";
@@ -33,18 +38,28 @@ function derivePolicyDependencies(project: ComposerProject): ExchangeDependencyE
       groupId: binding.ref.namespace ?? project.identity.organizationId,
       assetId: binding.ref.name,
       version,
-      classifier: "schema",
+      classifier: POLICY_CLASSIFIER,
       packaging: "zip",
     });
   }
   return out;
 }
 
+/**
+ * A policy is the same dependency whichever classifier wrote it (ACB's "policy",
+ * our older "schema"), so imported copies collapse into the derived entry rather
+ * than shipping twice.
+ */
+function dependencyKey(dep: ExchangeDependencyEntry): string {
+  const classifier = isPolicyClassifier(dep.classifier) ? POLICY_CLASSIFIER : dep.classifier;
+  return `${dep.groupId}:${dep.assetId}:${dep.version}:${classifier}:${dep.packaging}`;
+}
+
 function dedupeDependencies(deps: ExchangeDependencyEntry[]): ExchangeDependencyEntry[] {
   const seen = new Set<string>();
   const out: ExchangeDependencyEntry[] = [];
   for (const dep of deps) {
-    const key = `${dep.groupId}:${dep.assetId}:${dep.version}:${dep.classifier}:${dep.packaging}`;
+    const key = dependencyKey(dep);
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(dep);

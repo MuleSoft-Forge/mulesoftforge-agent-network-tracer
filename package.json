@@ -26,6 +26,7 @@
     "@sf-agentscript/monaco": "^2.2.17",
     "@xyflow/react": "^12.11.2",
     "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
     "bullmq": "^5.81.3",
     "ioredis": "^5.11.1",
     "iron-session": "^8.0.4",

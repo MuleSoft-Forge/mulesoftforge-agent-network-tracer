@@ -201,7 +201,8 @@ export const EXCHANGE_JSON_DEPENDENCY: ExchangeJsonNestedDoc = {
       type: "string",
       composerUi: "Assets (kind)",
       composerSource: "derived",
-      notes: 'agent-metadata | mcp-metadata | llm-metadata (and policy "schema" in some projects).',
+      notes:
+        'agent-metadata | mcp-metadata | llm-metadata, and "policy" for policy templates (the asset type ACB writes; older projects wrote the "schema" file classifier instead).',
     },
     {
       field: "packaging",

@@ -5,33 +5,15 @@
  * `schemaVersion: 1.0.0` — so the targets below are re-derived against v2 rather
  * than ported literally. Do not "correct" them back to the published paths.
  *
- * Both are warnings: each flags a permissive setup that still deploys and still
+ * These are warnings: they flag a permissive setup that still deploys and still
  * passes schema, so blocking export would be wrong.
  */
 
-import type { Broker, ComposerProject } from "@/lib/composer/model";
+import type { ComposerProject } from "@/lib/composer/model";
 import type { ValidationIssue } from "@/lib/composer/validation/issue";
 
 function warn(code: string, message: string, location: ValidationIssue["location"]): ValidationIssue {
   return { code, message, location, severity: "warning", origin: "consistency" };
-}
-
-/**
- * v2 keeps the binding at `brokers.*.interfaces.a2a.policies.inbound`. Inbound
- * is also the sole input to the card's securitySchemes — see
- * deriveA2aCardSecurityFromInterfacePolicies, which returns undefined on an
- * empty list — so an empty list leaves the network both unprotected and
- * advertising that it needs no credentials.
- */
-function inboundPolicyIssues(broker: Broker): ValidationIssue[] {
-  if ((broker.interfacePolicies?.inbound?.length ?? 0) > 0) return [];
-  return [
-    warn(
-      "access.inbound-policies.missing",
-      "Broker A2A interface has no inbound policies — the front door accepts unauthenticated calls, and the exported card advertises no security schemes to callers.",
-      { tab: "access" }
-    ),
-  ];
 }
 
 /**
@@ -62,9 +44,6 @@ function unrestrictedMcpToolIssues(project: ComposerProject): ValidationIssue[] 
   return issues;
 }
 
-export function governanceIssues(
-  project: ComposerProject,
-  broker: Broker | undefined
-): ValidationIssue[] {
-  return [...(broker ? inboundPolicyIssues(broker) : []), ...unrestrictedMcpToolIssues(project)];
+export function governanceIssues(project: ComposerProject): ValidationIssue[] {
+  return unrestrictedMcpToolIssues(project);
 }

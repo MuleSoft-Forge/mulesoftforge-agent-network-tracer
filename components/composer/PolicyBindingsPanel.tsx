@@ -6,6 +6,7 @@ import type { ConnectionAccess, ConnectionPolicies, ConnectionPolicyItem } from 
 import { sanitizeConnectionPolicyItems } from "@/lib/composer/connectivity/connection-extras";
 import type { DeclaredPolicyBinding } from "@/lib/composer/connectivity/policy-bindings-zod";
 import { newId } from "@/lib/composer/factory";
+import { POLICY_CLASSIFIER } from "@/lib/composer/model";
 import { PolicyConfigurationEditor } from "@/components/composer/PolicyConfigurationEditor";
 import type {
   ExchangePolicyCatalog,
@@ -238,7 +239,7 @@ function PolicyBindingList({
       groupId: picked.groupId,
       assetId: picked.assetId,
       version: picked.version,
-      classifier: "schema",
+      classifier: POLICY_CLASSIFIER,
       packaging: "zip",
     });
     onEnsurePolicyBinding(ref.name, {
@@ -353,7 +354,7 @@ function PolicyBindingList({
                     groupId: picked.groupId,
                     assetId: picked.assetId,
                     version: picked.version,
-                    classifier: "schema",
+                    classifier: POLICY_CLASSIFIER,
                     packaging: "zip",
                   });
                   onEnsurePolicyBinding(ref.name, {
