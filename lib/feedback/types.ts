@@ -28,7 +28,8 @@ export interface BugReportPayload {
 
 export interface FeedbackConfigResponse {
   enabled: boolean;
-  contactEmail: string;
+  /** Null when the deployment sets no FEEDBACK_CONTACT_EMAIL. */
+  contactEmail: string | null;
 }
 
 export interface FeedbackSubmitResponse {

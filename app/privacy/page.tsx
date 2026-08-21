@@ -14,7 +14,7 @@ export default function PrivacyPage() {
         Status: Personal Project (Unofficial)
       </p>
 
-      <PrivacyPolicyContent />
+      <PrivacyPolicyContent contactEmail={process.env.FEEDBACK_CONTACT_EMAIL?.trim() || null} />
 
       <div className="mt-10 flex flex-col gap-4 border-t border-gray-200 pt-8">
         <PrivacyAcceptButton />

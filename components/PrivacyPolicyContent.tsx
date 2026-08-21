@@ -1,4 +1,16 @@
-export default function PrivacyPolicyContent() {
+type PrivacyPolicyContentProps = {
+  /**
+   * Supplied by the server-rendered /privacy page from the environment. Omitted
+   * in the pre-sign-in modal, which has no server context — the surrounding
+   * copy already directs people to the maintainer, and /privacy carries the
+   * address.
+   */
+  contactEmail?: string | null;
+};
+
+export default function PrivacyPolicyContent({
+  contactEmail,
+}: PrivacyPolicyContentProps = {}) {
   return (
     <div className="space-y-8 text-gray-700">
       <section>
@@ -97,15 +109,17 @@ export default function PrivacyPolicyContent() {
           directly. Do not use official MuleSoft/Salesforce support channels for this unofficial
           project.
         </p>
-        <p className="mt-2">
-          Email:{" "}
-          <a
-            href="mailto:jeffcock@mulesoftforge.com"
-            className="font-medium text-primary hover:underline focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
-          >
-            jeffcock@mulesoftforge.com
-          </a>
-        </p>
+        {contactEmail ? (
+          <p className="mt-2">
+            Email:{" "}
+            <a
+              href={`mailto:${contactEmail}`}
+              className="font-medium text-primary hover:underline focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
+            >
+              {contactEmail}
+            </a>
+          </p>
+        ) : null}
       </section>
     </div>
   );

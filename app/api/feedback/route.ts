@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { apiError, validationError } from "@/lib/api/error-responses";
 import { debugError } from "@/lib/api-logger";
 import { MAX_SCREENSHOT_BYTES } from "@/lib/feedback/capture-screenshot";
-import { FEEDBACK_CONTACT_EMAIL, getFeedbackGitHubConfig } from "@/lib/feedback/config";
+import { getFeedbackContactEmail, getFeedbackGitHubConfig } from "@/lib/feedback/config";
 import { buildIssueBody, buildIssueTitle } from "@/lib/feedback/format-issue";
 import {
   attachScreenshotComment,
@@ -24,10 +24,11 @@ function clientRateLimitKey(request: NextRequest): string {
 export async function POST(request: NextRequest) {
   const config = getFeedbackGitHubConfig();
   if (!config) {
+    const contactEmail = getFeedbackContactEmail();
     return apiError(
       "Bug report submission is not configured on this deployment.",
       503,
-      `Email ${FEEDBACK_CONTACT_EMAIL} instead.`
+      contactEmail ? `Email ${contactEmail} instead.` : undefined
     );
   }
 

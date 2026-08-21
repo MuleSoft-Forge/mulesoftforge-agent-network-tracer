@@ -53,9 +53,7 @@ function BugReportModal() {
     fetch("/api/feedback/config")
       .then((r) => r.json())
       .then((data: FeedbackConfigResponse) => setConfig(data))
-      .catch(() =>
-        setConfig({ enabled: false, contactEmail: "jeffcock@mulesoftforge.com" })
-      );
+      .catch(() => setConfig({ enabled: false, contactEmail: null }));
   }, [open, prefill]);
 
   useEffect(() => {
@@ -355,14 +353,19 @@ function BugReportModal() {
                     className="font-medium underline"
                   >
                     copy debug bundle
-                  </button>{" "}
-                  and email{" "}
-                  <a
-                    href={`mailto:${config?.contactEmail ?? "jeffcock@mulesoftforge.com"}`}
-                    className="font-medium underline"
-                  >
-                    {config?.contactEmail ?? "jeffcock@mulesoftforge.com"}
-                  </a>
+                  </button>
+                  {config?.contactEmail ? (
+                    <>
+                      {" "}
+                      and email{" "}
+                      <a
+                        href={`mailto:${config.contactEmail}`}
+                        className="font-medium underline"
+                      >
+                        {config.contactEmail}
+                      </a>
+                    </>
+                  ) : null}
                   .
                 </p>
               ) : null}

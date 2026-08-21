@@ -1,4 +1,14 @@
-export const FEEDBACK_CONTACT_EMAIL = "jeffcock@mulesoftforge.com";
+/**
+ * Fallback contact address, offered when GitHub issue filing is unavailable.
+ *
+ * Read from the environment rather than hardcoded: this repository is public, so
+ * a literal address here would be scraped straight out of source. Returns null
+ * when unset, and callers then omit the contact affordance entirely instead of
+ * rendering a dead mailto link.
+ */
+export function getFeedbackContactEmail(): string | null {
+  return process.env.FEEDBACK_CONTACT_EMAIL?.trim() || null;
+}
 
 export const DEFAULT_FEEDBACK_REPO = "MuleSoft-Forge/mulesoftforge-agent-network-tracer";
 
