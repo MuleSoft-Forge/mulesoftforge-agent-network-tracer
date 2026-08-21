@@ -25,6 +25,7 @@ import {
   RotateCw,
   Server,
   Square,
+  Terminal,
   Trash2,
   XCircle,
 } from "lucide-react";
@@ -412,7 +413,7 @@ export default function OpsDashboard() {
     );
   }
 
-  const { checks, fly, queue, stuckJobs, redis } = report;
+  const { checks, fly, queue, stuckJobs, redis, mulesoft } = report;
   const worst: OpsCheckLevel = checks.some((check) => check.level === "fail")
     ? "fail"
     : checks.some((check) => check.level === "warn")
@@ -763,6 +764,53 @@ export default function OpsDashboard() {
             )}
           </>
         )}
+      </Section>
+
+      <Section
+        title="MuleSoft CLI and plugin"
+        subtitle="Runtime dependency audit for lifecycle publish/deploy"
+        Icon={Terminal}
+      >
+        <div className="grid gap-4 px-5 py-4 lg:grid-cols-2">
+          <dl className="divide-y divide-gray-100 rounded-xl border border-gray-200">
+            {[
+              ["CLI path", mulesoft.cliPath],
+              ["CLI installed", mulesoft.cliInstalledVersion ?? "not detected"],
+              ["CLI latest (npm)", mulesoft.cliLatestVersion ?? "unknown"],
+              ["Plugin installed", mulesoft.pluginInstalledVersion ?? "not detected"],
+              ["Plugin latest (npm)", mulesoft.pluginLatestVersion ?? "unknown"],
+              [
+                "Updates",
+                mulesoft.cliUpdateAvailable || mulesoft.pluginUpdateAvailable
+                  ? "available"
+                  : "none detected",
+              ],
+            ].map(([label, value]) => (
+              <div key={label} className="flex items-start justify-between gap-4 px-4 py-2.5 text-sm">
+                <dt className="text-gray-500">{label}</dt>
+                <dd className="text-right font-mono text-xs text-gray-900">{value}</dd>
+              </div>
+            ))}
+          </dl>
+
+          <div className="rounded-xl border border-blue-200 bg-blue-50/60 p-4 text-xs leading-relaxed text-blue-900">
+            <p className="font-semibold">Update checklist (persistent path)</p>
+            <ol className="mt-2 list-decimal space-y-1 pl-4">
+              <li>Check latest: `npm view anypoint-cli-v4 version` and `npm view mulesoft-anypoint-cli-agent-fabric-plugin version`.</li>
+              <li>Update pinned versions in `Dockerfile` (`ANYPOINT_CLI_VERSION` and plugin version).</li>
+              <li>Deploy a new image with `flyctl deploy --local-only`.</li>
+              <li>Refresh this page and confirm installed matches latest.</li>
+            </ol>
+            <p className="mt-3 text-blue-800">
+              Runtime installs done manually in a live container are ephemeral and will be lost on restart/scale/replacement.
+            </p>
+            {mulesoft.notes.length > 0 ? (
+              <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800">
+                Probe notes: {mulesoft.notes.join(" ")}
+              </p>
+            ) : null}
+          </div>
+        </div>
       </Section>
 
       <Section

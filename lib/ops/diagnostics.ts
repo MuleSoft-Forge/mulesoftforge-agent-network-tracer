@@ -20,6 +20,7 @@ import {
   type FlyMachine,
 } from "@/lib/fly/machines";
 import { ABANDON_AFTER_MS, readQueueSnapshot, readRedisHealth, readStuckJobs } from "./queue-inspector";
+import { readMulesoftVersions } from "./mulesoft-versions";
 import type {
   FlyMachineSummary,
   FlySnapshot,
@@ -339,8 +340,66 @@ function flyChecks(fly: FlySnapshot): OpsCheck[] {
   return checks;
 }
 
+function mulesoftCheck(versions: {
+  cliDetected: boolean;
+  pluginDetected: boolean;
+  cliInstalledVersion: string | null;
+  cliLatestVersion: string | null;
+  pluginInstalledVersion: string | null;
+  pluginLatestVersion: string | null;
+  cliUpdateAvailable: boolean;
+  pluginUpdateAvailable: boolean;
+  notes: string[];
+}): OpsCheck {
+  if (!versions.cliDetected || !versions.pluginDetected) {
+    return {
+      id: "mulesoft-cli",
+      title: "MuleSoft CLI and plugin",
+      level: "fail",
+      detail: `CLI detected: ${versions.cliDetected ? "yes" : "no"} · plugin detected: ${versions.pluginDetected ? "yes" : "no"}.`,
+      action:
+        "Lifecycle publish/deploy depends on both. Rebuild and deploy an image that installs the CLI and agent-fabric plugin.",
+    };
+  }
+
+  if (versions.cliUpdateAvailable || versions.pluginUpdateAvailable) {
+    const pending = [
+      versions.cliUpdateAvailable
+        ? `CLI ${versions.cliInstalledVersion ?? "?"} -> ${versions.cliLatestVersion ?? "?"}`
+        : null,
+      versions.pluginUpdateAvailable
+        ? `plugin ${versions.pluginInstalledVersion ?? "?"} -> ${versions.pluginLatestVersion ?? "?"}`
+        : null,
+    ]
+      .filter((entry): entry is string => Boolean(entry))
+      .join(" · ");
+    return {
+      id: "mulesoft-cli",
+      title: "MuleSoft CLI and plugin",
+      level: "warn",
+      detail: `Update available: ${pending}`,
+      action: "Bump Dockerfile pins, then run flyctl deploy --local-only so updates persist across machines.",
+    };
+  }
+
+  const noteSuffix = versions.notes.length > 0 ? " (latest check had warnings)" : "";
+  return {
+    id: "mulesoft-cli",
+    title: "MuleSoft CLI and plugin",
+    level: "ok",
+    detail:
+      `CLI ${versions.cliInstalledVersion ?? "?"} (latest ${versions.cliLatestVersion ?? "?"}) · ` +
+      `plugin ${versions.pluginInstalledVersion ?? "?"} (latest ${versions.pluginLatestVersion ?? "?"})${noteSuffix}`,
+    action: null,
+  };
+}
+
 export async function buildOpsReport(): Promise<OpsReport> {
-  const [redis, fly] = await Promise.all([readRedisHealth(), readFlySnapshot()]);
+  const [redis, fly, mulesoft] = await Promise.all([
+    readRedisHealth(),
+    readFlySnapshot(),
+    readMulesoftVersions(),
+  ]);
 
   let queue: QueueSnapshot | null = null;
   let queueError: string | null = null;
@@ -371,6 +430,7 @@ export async function buildOpsReport(): Promise<OpsReport> {
   if (redis.reachable && queue) {
     checks.push(abandonedCheck(stuckJobs));
   }
+  checks.push(mulesoftCheck(mulesoft));
   checks.push(...flyChecks(fly));
 
   const memory = process.memoryUsage();
@@ -383,6 +443,7 @@ export async function buildOpsReport(): Promise<OpsReport> {
     queueError,
     stuckJobs,
     fly,
+    mulesoft,
     process: {
       nodeVersion: process.version,
       nodeEnv: process.env.NODE_ENV ?? "unknown",

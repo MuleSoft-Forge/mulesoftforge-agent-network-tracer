@@ -137,6 +137,19 @@ export interface ProcessInfo {
   abandonAfterMs: number;
 }
 
+export interface MulesoftVersions {
+  cliPath: string;
+  cliInstalledVersion: string | null;
+  cliLatestVersion: string | null;
+  pluginInstalledVersion: string | null;
+  pluginLatestVersion: string | null;
+  cliUpdateAvailable: boolean;
+  pluginUpdateAvailable: boolean;
+  cliDetected: boolean;
+  pluginDetected: boolean;
+  notes: string[];
+}
+
 export interface OpsReport {
   generatedAt: string;
   checks: OpsCheck[];
@@ -145,6 +158,7 @@ export interface OpsReport {
   queueError: string | null;
   stuckJobs: StuckJobSummary[];
   fly: FlySnapshot;
+  mulesoft: MulesoftVersions;
   process: ProcessInfo;
 }
 
