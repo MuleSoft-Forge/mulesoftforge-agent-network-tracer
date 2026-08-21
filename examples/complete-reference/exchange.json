@@ -1,0 +1,287 @@
+{
+  "main": "agent-network.yaml",
+  "name": "Complete Reference Agent Network",
+  "classifier": "agentic-network",
+  "organizationId": "68ef9520-24e9-4cf2-b2f5-620025690913",
+  "descriptorVersion": "1.0.0",
+  "tags": [
+    "reference",
+    "complete",
+    "schema-coverage",
+    "broker",
+    "a2a",
+    "mcp",
+    "llm"
+  ],
+  "description": "Reference Exchange descriptor that populates every key the Agent Network Builder reads or writes: full GAV identity, every dependency classifier, nested deploy variable groups, all seven runtime system limit variables, and the Builder canvas metadata extension.",
+  "metadata": {
+    "variables": {
+      "openai": {
+        "baseUrl": {
+          "description": "OpenAI API base URL.",
+          "default": "https://api.openai.com/v1",
+          "secret": false
+        },
+        "apiKey": {
+          "description": "OpenAI API key used by openai_connection.",
+          "default": "",
+          "secret": true
+        }
+      },
+      "gemini": {
+        "baseUrl": {
+          "description": "Google Gemini API base URL.",
+          "default": "https://generativelanguage.googleapis.com/v1beta",
+          "secret": false
+        },
+        "apiKey": {
+          "description": "Google Gemini API key used by gemini_connection.",
+          "default": "",
+          "secret": true
+        }
+      },
+      "azureOpenai": {
+        "baseUrl": {
+          "description": "Azure OpenAI deployment base URL.",
+          "default": "https://example.openai.azure.com/openai/v1",
+          "secret": false
+        },
+        "apiKey": {
+          "description": "Azure OpenAI API key used by azure_openai_connection.",
+          "default": "",
+          "secret": true
+        }
+      },
+      "mcpBasic": {
+        "username": {
+          "description": "Basic auth username for mcp_basic_auth_connection.",
+          "default": "mcp-service-account",
+          "secret": false
+        },
+        "password": {
+          "description": "Basic auth password for mcp_basic_auth_connection.",
+          "default": "",
+          "secret": true
+        }
+      },
+      "mcpApiKey": {
+        "apiKey": {
+          "description": "API key sent as X-API-Key by mcp_api_key_connection.",
+          "default": "",
+          "secret": true
+        }
+      },
+      "mcpApiKeyClientCreds": {
+        "clientId": {
+          "description": "client_id for mcp_apikey_client_credentials_connection.",
+          "default": "",
+          "secret": false
+        },
+        "clientSecret": {
+          "description": "client_secret for mcp_apikey_client_credentials_connection.",
+          "default": "",
+          "secret": true
+        }
+      },
+      "mcpOauth2": {
+        "clientId": {
+          "description": "OAuth 2.0 client id for mcp_oauth2_client_credentials_connection.",
+          "default": "",
+          "secret": false
+        },
+        "clientSecret": {
+          "description": "OAuth 2.0 client secret for mcp_oauth2_client_credentials_connection.",
+          "default": "",
+          "secret": true
+        }
+      },
+      "agentObo": {
+        "clientId": {
+          "description": "Token-exchange client id for agent_oauth2_obo_connection.",
+          "default": "",
+          "secret": false
+        },
+        "clientSecret": {
+          "description": "Token-exchange client secret for agent_oauth2_obo_connection.",
+          "default": "",
+          "secret": true
+        }
+      },
+      "agentEntraObo": {
+        "clientId": {
+          "description": "Microsoft Entra ID OBO client id for agent_entra_obo_connection.",
+          "default": "",
+          "secret": false
+        },
+        "clientSecret": {
+          "description": "Microsoft Entra ID OBO client secret for agent_entra_obo_connection.",
+          "default": "",
+          "secret": true
+        }
+      },
+      "clientIdEnforcement": {
+        "clientId": {
+          "description": "Client id consumed by the client-id-enforcement policy binding.",
+          "default": "",
+          "secret": false
+        },
+        "clientSecret": {
+          "description": "Client secret consumed by the client-id-enforcement policy binding.",
+          "default": "",
+          "secret": true
+        }
+      },
+      "MODULE_GRAPH_ERROR_SETTINGS_MAX_HANDOFF_ITERATIONS": {
+        "description": "Maximum node-to-node transitions allowed per turn.",
+        "default": "30",
+        "secret": false
+      },
+      "MODULE_GRAPH_ERROR_SETTINGS_MAX_REASONING_ITERATIONS": {
+        "description": "Maximum LLM reasoning loops allowed within a single node.",
+        "default": "20",
+        "secret": false
+      },
+      "MODULE_GRAPH_ERROR_SETTINGS_MAX_SUBGRAPH_DEPTH": {
+        "description": "Maximum nesting depth for subgraphs.",
+        "default": "10",
+        "secret": false
+      },
+      "MODULE_GRAPH_ERROR_SETTINGS_MAX_NODE_TOOL_CALL_ITERATIONS": {
+        "description": "Maximum tool executor runs allowed per node.",
+        "default": "20",
+        "secret": false
+      },
+      "MODULE_GRAPH_ERROR_SETTINGS_MAX_TURN_TOOL_CALL_COUNTS": {
+        "description": "Total tool invocations allowed across all nodes per turn.",
+        "default": "50",
+        "secret": false
+      },
+      "MODULE_GRAPH_ERROR_SETTINGS_MAX_STATE_SIZE_BYTES": {
+        "description": "Maximum accumulated state size in bytes during graph execution (10 MB).",
+        "default": "10485760",
+        "secret": false
+      },
+      "OBJECT_STORE_DEFAULT_TTL_MS": {
+        "description": "Conversational memory retention in milliseconds. Documented default is 24 hours without this variable; 30 days is the maximum.",
+        "default": "2592000000",
+        "secret": false
+      }
+    },
+    "agentNetworkBuilder": {
+      "graphLayoutPinned": true,
+      "graphLayoutDirection": "vertical",
+      "graphLayouts": {
+        "complete_reference_broker": {
+          "complete_reference_broker": { "x": 480, "y": 0 },
+          "a2a_v1_agent": { "x": 160, "y": 220 },
+          "a2a_v03_agent": { "x": 480, "y": 220 },
+          "other_protocol_agent": { "x": 800, "y": 220 },
+          "streamable_http_mcp": { "x": 80, "y": 440 },
+          "sse_mcp": { "x": 400, "y": 440 },
+          "stdio_mcp": { "x": 720, "y": 440 },
+          "minimal_mcp": { "x": 1040, "y": 440 },
+          "openai_provider": { "x": 160, "y": 660 },
+          "gemini_provider": { "x": 480, "y": 660 },
+          "azure_openai_provider": { "x": 800, "y": 660 }
+        }
+      }
+    }
+  },
+  "apiVersion": "v1.0",
+  "dependencies": [
+    {
+      "groupId": "68ef9520-24e9-4cf2-b2f5-620025690913",
+      "assetId": "a2a-v1-agent",
+      "version": "1.0.0",
+      "classifier": "agent-metadata",
+      "packaging": "zip"
+    },
+    {
+      "groupId": "68ef9520-24e9-4cf2-b2f5-620025690913",
+      "assetId": "a2a-v03-agent",
+      "version": "1.0.0",
+      "classifier": "agent-metadata",
+      "packaging": "zip"
+    },
+    {
+      "groupId": "68ef9520-24e9-4cf2-b2f5-620025690913",
+      "assetId": "other-protocol-agent",
+      "version": "1.0.0",
+      "classifier": "agent-metadata",
+      "packaging": "zip"
+    },
+    {
+      "groupId": "68ef9520-24e9-4cf2-b2f5-620025690913",
+      "assetId": "streamable-http-mcp",
+      "version": "1.0.0",
+      "classifier": "mcp-metadata",
+      "packaging": "zip"
+    },
+    {
+      "groupId": "68ef9520-24e9-4cf2-b2f5-620025690913",
+      "assetId": "sse-mcp",
+      "version": "1.0.0",
+      "classifier": "mcp-metadata",
+      "packaging": "zip"
+    },
+    {
+      "groupId": "68ef9520-24e9-4cf2-b2f5-620025690913",
+      "assetId": "stdio-mcp",
+      "version": "1.0.0",
+      "classifier": "mcp-metadata",
+      "packaging": "zip"
+    },
+    {
+      "groupId": "68ef9520-24e9-4cf2-b2f5-620025690913",
+      "assetId": "minimal-mcp",
+      "version": "1.0.0",
+      "classifier": "mcp-metadata",
+      "packaging": "zip"
+    },
+    {
+      "groupId": "68ef9520-24e9-4cf2-b2f5-620025690913",
+      "assetId": "openai-provider",
+      "version": "1.0.0",
+      "classifier": "llm-metadata",
+      "packaging": "zip"
+    },
+    {
+      "groupId": "68ef9520-24e9-4cf2-b2f5-620025690913",
+      "assetId": "gemini-provider",
+      "version": "1.0.0",
+      "classifier": "llm-metadata",
+      "packaging": "zip"
+    },
+    {
+      "groupId": "68ef9520-24e9-4cf2-b2f5-620025690913",
+      "assetId": "azure-openai-provider",
+      "version": "1.0.0",
+      "classifier": "llm-metadata",
+      "packaging": "zip"
+    },
+    {
+      "groupId": "68ef9520-24e9-4cf2-b2f5-620025690913",
+      "assetId": "client-id-enforcement",
+      "version": "1.2.0",
+      "classifier": "schema",
+      "packaging": "json"
+    },
+    {
+      "groupId": "68ef9520-24e9-4cf2-b2f5-620025690913",
+      "assetId": "rate-limiting",
+      "version": "1.4.0",
+      "classifier": "schema",
+      "packaging": "json"
+    },
+    {
+      "groupId": "68ef9520-24e9-4cf2-b2f5-620025690913",
+      "assetId": "prompt-guard",
+      "version": "1.0.1",
+      "classifier": "schema",
+      "packaging": "json"
+    }
+  ],
+  "groupId": "68ef9520-24e9-4cf2-b2f5-620025690913",
+  "assetId": "complete-reference-agent-network",
+  "version": "0.0.0"
+}

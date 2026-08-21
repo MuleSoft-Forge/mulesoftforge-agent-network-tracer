@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# A newer push to main makes an in-flight run irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Type-check, lint, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # tsc --noEmit && next lint && the composer suite. No credentials needed:
+      # the suite runs entirely on in-repo fixtures.
+      - run: npm run check
+
+  build:
+    name: Production build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Catches App Router issues that `tsc` alone does not, such as a route or
+      # layout that fails to compile under the production bundler.
+      - run: npm run build
+        env:
+          # Build-time only. The real value is a deployment secret; this just
+          # satisfies the non-development length check so the build can proceed.
+          SESSION_SECRET: ci-placeholder-session-secret-not-a-real-key

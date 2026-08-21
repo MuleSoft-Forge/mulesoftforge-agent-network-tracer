@@ -1,0 +1,67 @@
+{
+  "main": "agent-network.yaml",
+  "name": "Vogue Premiere Agent Network",
+  "classifier": "agentic-network",
+  "organizationId": "{ENTER YOUR ORG ID HERE}",
+  "descriptorVersion": "1.0.0",
+  "apiVersion": "v1",
+  "tags": [
+    "agentscript",
+    "vogue-premiere"
+  ],
+  "metadata": {
+    "variables": {
+      "stylingAgent": {
+        "url": {
+          "description": "Styling A2A agent URL",
+          "default": "https://www.a2d-ai.com/api/platform/71ffb179-20e9-4cdc-8ba3-f4fd4abdc2e1/a2a",
+          "secret": false
+        }
+      },
+      "availabilityAgent": {
+        "url": {
+          "description": "Availability A2A agent URL",
+          "default": "https://www.a2d-ai.com/api/platform/8e503ffc-8e5f-480d-aa3b-8421b572a5a2/a2a",
+          "secret": false
+        }
+      },
+      "loyaltyAgent": {
+        "url": {
+          "description": "Loyalty A2A agent URL",
+          "default": "https://www.a2d-ai.com/api/platform/dbebcf30-1327-4fcb-b8cd-525c2f37417c/a2a",
+          "secret": false
+        }
+      },
+      "customerMcp": {
+        "url": {
+          "description": "Customer MCP server URL",
+          "default": "https://www.a2d-ai.com/api/platform/5b9581fd-ffae-460f-a21a-d8a3afab99fb",
+          "secret": false
+        }
+      },
+      "orderMcp": {
+        "url": {
+          "description": "Order MCP server URL",
+          "default": "https://www.a2d-ai.com/api/platform/8bbb5f18-1a6d-4d10-baca-fe3873f88cf7",
+          "secret": false
+        }
+      },
+      "openai": {
+        "url": {
+          "description": "OpenAI (or proxy) base URL",
+          "default": "https://llm-proxy.workshops.mulesoft.com/openai/v1/",
+          "secret": false
+        },
+        "apiKey": {
+          "description": "OpenAI API key",
+          "default": "",
+          "secret": true
+        }
+      }
+    }
+  },
+  "dependencies": [],
+  "groupId": "{ENTER YOUR ORG ID HERE}",
+  "assetId": "vogue-premiere-broker-v2-template",
+  "version": "0.0.0"
+}

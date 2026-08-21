@@ -1,0 +1,33 @@
+# VCS / editor / OS
+.git
+.gitignore
+.vscode
+.cursor
+.claude
+.DS_Store
+
+# Installed/built inside the image
+node_modules
+.next
+tsconfig.tsbuildinfo
+
+# Local env & secrets — never bake these into the image
+.env
+.env.local
+.env.bundled
+.env*.local
+
+# Desktop / Electron build outputs (not part of the web image)
+electron-dist
+electron-out
+
+# Local-only tooling, scratch, and previous platform metadata
+private
+hidefromgit
+.venv-temp
+.vercel
+*.log
+
+# Not needed at build/runtime
+docs
+examples

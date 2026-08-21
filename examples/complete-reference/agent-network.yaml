@@ -1,0 +1,1312 @@
+# =============================================================================
+# Agent Network Specification 2.0.0 — complete reference document
+#
+# Every property defined by the bundled ANF schema bundle is populated here:
+#   agent_network_v2.json  (root, registry, context, brokers, auth, policies)
+#   a2a_v1.json            (Agent Card v1.x — used by `a2a` interfaces)
+#   a2a.json               (AgentCard v0.3.x — used by `a2a_v03` interfaces)
+#   other_card.json        (generic card — used by `other` interfaces)
+#   mcp_metadata.json      (MCPServer metadata)
+#   agent_metadata.json    (agent platform)
+#   references.json        (AgentRef / MCPRef / LLMRef / PolicyRef)
+#
+# Only exception: the AgentScript body referenced by brokers[].implementation
+# is intentionally not authored here.
+# =============================================================================
+
+agentNetwork: 2.0.0
+
+# --- NetworkInfoObject --------------------------------------------------------
+info:
+  label: Complete Reference Agent Network
+  summary: Reference network exercising every field in the Agent Network 2.0.0 schema.
+  description: |
+    A documentation-grade agent network that populates **every** property in the
+    Agent Network Specification 2.0.0 bundle. CommonMark is allowed here.
+
+    - three registry agents, one per interface flavour (`a2a`, `a2a_v03`, `other`)
+    - three registry MCP servers, one per transport (`streamableHttp`, `sse`, `stdio`)
+    - three registry LLM providers, one per supported platform
+    - every connection kind and every authentication kind
+    - reusable policy bindings plus inline policy bindings on every attachment point
+  version: 1.0.0
+  termsOfService: https://example.com/agent-network/terms
+  tags:
+    - reference
+    - complete
+    - schema-coverage
+  contact:
+    name: Agent Platform Team
+    url: https://example.com/agent-network/support
+    email: agent-platform@example.com
+  license:
+    name: Apache License 2.0
+    # `identifier` (SPDX) and `url` are mutually exclusive per the schema.
+    # Swap the two lines below to use the URL form instead.
+    identifier: Apache-2.0
+    # url: https://www.apache.org/licenses/LICENSE-2.0.html
+
+# =============================================================================
+# registry — publishable, reusable definitions (agents, MCP servers, LLMs)
+# =============================================================================
+registry:
+  # ---------------------------------------------------------------------------
+  # agents
+  # ---------------------------------------------------------------------------
+  agents:
+    # -- AgentEntity #1: A2A v1.x interface (a2a_v1.json "Agent Card") ---------
+    a2a_v1_agent:
+      info:
+        label: A2A v1 Reference Agent
+        description: Demonstrates every field of the A2A protocol v1.x agent card.
+        tags:
+          - a2a
+          - v1
+          - reference
+      urls:
+        - name: production
+          url: https://api.example.com/agents/a2a-v1
+        - name: staging
+          url: https://staging.example.com/agents/a2a-v1
+        - name: development
+          url: http://localhost:8080/agents/a2a-v1
+      metadata:
+        platform: MuleSoft
+        # metadata.llm — the LLM provider this agent runs on
+        llm:
+          ref:
+            name: openai_provider
+            namespace: 68ef9520-24e9-4cf2-b2f5-620025690913
+        # metadata.tools — both ToolsRef variants
+        tools:
+          - mcp:
+              ref:
+                name: streamable_http_mcp
+                namespace: 68ef9520-24e9-4cf2-b2f5-620025690913
+              allowed:
+                - search_knowledge_base
+                - create_incident
+          - a2a:
+              ref:
+                name: a2a_v03_agent
+                namespace: 68ef9520-24e9-4cf2-b2f5-620025690913
+        interfaces:
+          a2a:
+            card:
+              name: A2A v1 Reference Agent
+              description: Reference agent exposing the complete A2A v1.x agent card surface.
+              version: 1.4.2
+              documentationUrl: https://example.com/docs/agents/a2a-v1
+              iconUrl: https://example.com/icons/a2a-v1-agent.png
+              provider:
+                organization: Example Corp
+                url: https://example.com
+              capabilities:
+                streaming: true
+                pushNotifications: true
+                extendedAgentCard: true
+                extensions:
+                  - uri: https://developers.google.com/identity/protocols/oauth2
+                    description: Google OAuth 2.0 authentication extension.
+                    required: false
+                    params:
+                      audience: https://api.example.com
+                      prompt: consent
+                  - uri: https://example.com/extensions/trace-context
+                    description: Propagates W3C trace context across the network.
+                    required: true
+                    params:
+                      header: traceparent
+              defaultInputModes:
+                - text/plain
+                - application/json
+                - image/png
+              defaultOutputModes:
+                - text/plain
+                - application/json
+              supportedInterfaces:
+                - protocolBinding: JSONRPC
+                  protocolVersion: "1.0"
+                  url: https://api.example.com/a2a/v1
+                  tenant: acme-prod
+                - protocolBinding: GRPC
+                  protocolVersion: "1.0"
+                  url: https://grpc.example.com/a2a
+                  tenant: acme-prod
+                - protocolBinding: HTTP+JSON
+                  protocolVersion: "0.3"
+                  url: https://rest.example.com/a2a/v1
+                  tenant: acme-prod
+              securitySchemes:
+                # a2a_v1 wraps each scheme in a discriminating property name.
+                api_key_scheme:
+                  apiKeySecurityScheme:
+                    description: Static API key issued by the Example developer portal.
+                    location: header
+                    name: X-API-Key
+                bearer_scheme:
+                  httpAuthSecurityScheme:
+                    description: HTTP bearer token authentication.
+                    scheme: Bearer
+                    bearerFormat: JWT
+                mtls_scheme:
+                  mtlsSecurityScheme:
+                    description: Mutual TLS using a client certificate issued by Example CA.
+                oidc_scheme:
+                  openIdConnectSecurityScheme:
+                    description: OpenID Connect discovery based authentication.
+                    openIdConnectUrl: https://idp.example.com/.well-known/openid-configuration
+                oauth2_scheme:
+                  oauth2SecurityScheme:
+                    description: OAuth 2.0 with every flow declared.
+                    oauth2MetadataUrl: https://idp.example.com/.well-known/oauth-authorization-server
+                    flows:
+                      authorizationCode:
+                        authorizationUrl: https://idp.example.com/oauth2/v1/authorize
+                        tokenUrl: https://idp.example.com/oauth2/v1/token
+                        refreshUrl: https://idp.example.com/oauth2/v1/token
+                        pkceRequired: true
+                        scopes:
+                          agent:read: Read agent state and task history.
+                          agent:write: Send messages and create tasks.
+                      clientCredentials:
+                        tokenUrl: https://idp.example.com/oauth2/v1/token
+                        refreshUrl: https://idp.example.com/oauth2/v1/token
+                        scopes:
+                          agent:invoke: Machine-to-machine agent invocation.
+                      deviceCode:
+                        deviceAuthorizationUrl: https://idp.example.com/oauth2/v1/device/authorize
+                        tokenUrl: https://idp.example.com/oauth2/v1/token
+                        refreshUrl: https://idp.example.com/oauth2/v1/token
+                        scopes:
+                          agent:read: Read agent state from an input-constrained device.
+                      implicit:
+                        # Deprecated in the spec: prefer authorizationCode + PKCE.
+                        authorizationUrl: https://idp.example.com/oauth2/v1/authorize
+                        refreshUrl: https://idp.example.com/oauth2/v1/token
+                        scopes:
+                          agent:read: Read agent state.
+                      password:
+                        # Deprecated in the spec: prefer authorizationCode + PKCE or deviceCode.
+                        tokenUrl: https://idp.example.com/oauth2/v1/token
+                        refreshUrl: https://idp.example.com/oauth2/v1/token
+                        scopes:
+                          agent:read: Read agent state.
+              securityRequirements:
+                # Explicit `schemes` map form (String List values).
+                - schemes:
+                    oauth2_scheme:
+                      list:
+                        - agent:read
+                        - agent:write
+                # Shorthand form via additionalProperties (scheme -> scopes array).
+                - api_key_scheme: []
+                  mtls_scheme: []
+              signatures:
+                - protected: eyJhbGciOiJFUzI1NiIsImtpZCI6ImV4YW1wbGUta2V5LTEifQ
+                  signature: MEUCIQDexampleSignatureValueBase64UrlEncodedAAAAAAAAAA
+                  header:
+                    kid: example-key-1
+                    jku: https://example.com/.well-known/jwks.json
+              skills:
+                - id: knowledge-search
+                  name: Knowledge Base Search
+                  description: Searches the corporate knowledge base and returns ranked articles.
+                  tags:
+                    - knowledge-base
+                    - search
+                  examples:
+                    - How do I reset my VPN password?
+                    - Find the runbook for database failover.
+                  inputModes:
+                    - text/plain
+                    - application/json
+                  outputModes:
+                    - application/json
+                  securityRequirements:
+                    - schemes:
+                        oauth2_scheme:
+                          list:
+                            - agent:read
+                - id: incident-create
+                  name: Incident Creation
+                  description: Opens an incident in the ticketing system on behalf of the caller.
+                  tags:
+                    - incident
+                    - write
+                  examples:
+                    - Open a P1 incident for the checkout outage.
+                  inputModes:
+                    - application/json
+                  outputModes:
+                    - application/json
+                  securityRequirements:
+                    - schemes:
+                        oauth2_scheme:
+                          list:
+                            - agent:write
+              # a2a_v1.json also accepts protobuf snake_case aliases for the
+              # camelCase keys above. They are alternates, not extra settings:
+              #   default_input_modes, default_output_modes, documentation_url,
+              #   icon_url, security_requirements, security_schemes,
+              #   supported_interfaces, security
+              # and on skills: input_modes, output_modes, security_requirements.
+
+    # -- AgentEntity #2: A2A v0.3.x interface (a2a.json "AgentCard") -----------
+    a2a_v03_agent:
+      info:
+        label: A2A v0.3 Reference Agent
+        description: Demonstrates every field of the A2A protocol v0.3.x agent card.
+        tags:
+          - a2a
+          - v0.3
+          - reference
+      urls:
+        - name: production
+          url: https://api.example.com/agents/a2a-v03
+        - name: staging
+          url: https://staging.example.com/agents/a2a-v03
+      metadata:
+        platform: Other
+        llm:
+          ref:
+            name: gemini_provider
+        tools:
+          - mcp:
+              ref:
+                name: sse_mcp
+              allowed:
+                - list_tickets
+          - a2a:
+              ref:
+                name: other_protocol_agent
+        interfaces:
+          a2a_v03:
+            card:
+              name: A2A v0.3 Reference Agent
+              description: Reference agent exposing the complete A2A v0.3.x agent card surface.
+              protocolVersion: 0.3.0
+              version: 2.1.0
+              url: https://api.example.com/a2a/v03
+              preferredTransport: JSONRPC
+              documentationUrl: https://example.com/docs/agents/a2a-v03
+              iconUrl: https://example.com/icons/a2a-v03-agent.png
+              supportsAuthenticatedExtendedCard: true
+              provider:
+                organization: Example Corp
+                url: https://example.com
+              additionalInterfaces:
+                - transport: JSONRPC
+                  url: https://api.example.com/a2a/v03
+                - transport: GRPC
+                  url: https://grpc.example.com/a2a/v03
+                - transport: HTTP+JSON
+                  url: https://rest.example.com/a2a/v03
+              capabilities:
+                streaming: true
+                pushNotifications: true
+                stateTransitionHistory: true
+                extensions:
+                  - uri: https://example.com/extensions/audit-log
+                    description: Emits an immutable audit record for every task transition.
+                    required: false
+                    params:
+                      sink: https://audit.example.com/ingest
+                      retentionDays: 365
+              defaultInputModes:
+                - text/plain
+                - application/json
+              defaultOutputModes:
+                - text/plain
+                - application/json
+              securitySchemes:
+                # a2a.json v0.3 schemes are discriminated by an inline `type`.
+                api_key_scheme:
+                  type: apiKey
+                  description: Static API key issued by the Example developer portal.
+                  in: header
+                  name: X-API-Key
+                bearer_scheme:
+                  type: http
+                  description: HTTP bearer token authentication.
+                  scheme: Bearer
+                  bearerFormat: JWT
+                mtls_scheme:
+                  type: mutualTLS
+                  description: Mutual TLS using a client certificate issued by Example CA.
+                oidc_scheme:
+                  type: openIdConnect
+                  description: OpenID Connect discovery based authentication.
+                  openIdConnectUrl: https://idp.example.com/.well-known/openid-configuration
+                oauth2_scheme:
+                  type: oauth2
+                  description: OAuth 2.0 with every v0.3 flow declared.
+                  oauth2MetadataUrl: https://idp.example.com/.well-known/oauth-authorization-server
+                  flows:
+                    authorizationCode:
+                      authorizationUrl: https://idp.example.com/oauth2/v1/authorize
+                      tokenUrl: https://idp.example.com/oauth2/v1/token
+                      refreshUrl: https://idp.example.com/oauth2/v1/token
+                      scopes:
+                        agent:read: Read agent state and task history.
+                        agent:write: Send messages and create tasks.
+                    clientCredentials:
+                      tokenUrl: https://idp.example.com/oauth2/v1/token
+                      refreshUrl: https://idp.example.com/oauth2/v1/token
+                      scopes:
+                        agent:invoke: Machine-to-machine agent invocation.
+                    implicit:
+                      authorizationUrl: https://idp.example.com/oauth2/v1/authorize
+                      refreshUrl: https://idp.example.com/oauth2/v1/token
+                      scopes:
+                        agent:read: Read agent state.
+                    password:
+                      tokenUrl: https://idp.example.com/oauth2/v1/token
+                      refreshUrl: https://idp.example.com/oauth2/v1/token
+                      scopes:
+                        agent:read: Read agent state.
+              security:
+                # OR of ANDs: OAuth2 alone, or API key AND mTLS together.
+                - oauth2_scheme:
+                    - agent:read
+                    - agent:write
+                - api_key_scheme: []
+                  mtls_scheme: []
+              signatures:
+                - protected: eyJhbGciOiJFUzI1NiIsImtpZCI6ImV4YW1wbGUta2V5LTIifQ
+                  signature: MEQCIH0exampleSignatureValueBase64UrlEncodedBBBBBBBB
+                  header:
+                    kid: example-key-2
+                    jku: https://example.com/.well-known/jwks.json
+              skills:
+                - id: ticket-triage
+                  name: Ticket Triage
+                  description: Classifies inbound support tickets and assigns a priority.
+                  tags:
+                    - it-support
+                    - triage
+                  examples:
+                    - Triage this ticket about a failed deployment.
+                  inputModes:
+                    - text/plain
+                  outputModes:
+                    - application/json
+                  security:
+                    - oauth2_scheme:
+                        - agent:read
+
+    # -- AgentEntity #3: non-A2A interface (other_card.json "OtherCard") -------
+    other_protocol_agent:
+      info:
+        label: Custom Protocol Reference Agent
+        description: Demonstrates the generic `other` interface and its card.
+        tags:
+          - custom-protocol
+          - reference
+      urls:
+        - name: production
+          url: https://api.example.com/agents/custom
+      metadata:
+        platform: Salesforce
+        llm:
+          ref:
+            name: azure_openai_provider
+        tools:
+          - mcp:
+              ref:
+                name: stdio_mcp
+              allowed:
+                - read_file
+                - write_file
+        interfaces:
+          other:
+            protocol: acme-agent-protocol/1.2
+            card:
+              name: Custom Protocol Reference Agent
+              description: Reference agent speaking a non-A2A, vendor-specific protocol.
+              version: 3.0.0
+              url: https://api.example.com/custom/v1
+              documentationUrl: https://example.com/docs/agents/custom
+              iconUrl: https://example.com/icons/custom-agent.png
+              provider:
+                organization: Example Corp
+                url: https://example.com
+              defaultInputModes:
+                - text/plain
+                - application/json
+              defaultOutputModes:
+                - application/json
+              securitySchemes:
+                api_key_scheme:
+                  type: apiKey
+                  description: Static API key.
+                  in: query
+                  name: api_key
+                bearer_scheme:
+                  type: http
+                  description: HTTP bearer token authentication.
+                  scheme: Bearer
+                  bearerFormat: JWT
+                oidc_scheme:
+                  type: openIdConnect
+                  description: OpenID Connect discovery based authentication.
+                  openIdConnectUrl: https://idp.example.com/.well-known/openid-configuration
+              security:
+                - api_key_scheme: []
+                - oidc_scheme:
+                    - openid
+                    - profile
+              skills:
+                - id: batch-translate
+                  name: Batch Translation
+                  description: Translates a batch of documents between supported locales.
+                  tags:
+                    - translation
+                    - batch
+                  examples:
+                    - Translate these 40 release notes into de-DE.
+                  inputModes:
+                    - application/json
+                  outputModes:
+                    - application/json
+
+  # ---------------------------------------------------------------------------
+  # mcps — one entity per MCP transport
+  # ---------------------------------------------------------------------------
+  mcps:
+    # -- MCPServerEntity #1: streamableHttp transport, fully populated ---------
+    streamable_http_mcp:
+      info:
+        label: Streamable HTTP MCP Server
+        description: MCP server exercising every property of mcp_metadata.json MCPServer.
+        tags:
+          - mcp
+          - streamable-http
+          - reference
+      urls:
+        - name: production
+          url: https://mcp.example.com
+        - name: staging
+          url: https://mcp-staging.example.com
+      metadata:
+        platform: MuleSoft
+        protocolVersion: 2025-11-25
+        transport:
+          kind: streamableHttp
+          path: /mcp
+        provider:
+          organization: Example Corp
+          url: https://example.com
+        capabilities:
+          logging:
+            level: info
+          completions: {}
+          experimental:
+            exampleBatching:
+              maxBatchSize: 25
+          prompts:
+            listChanged: true
+          resources:
+            listChanged: true
+            subscribe: true
+          tools:
+            listChanged: true
+          tasks:
+            cancel: {}
+            list: {}
+            requests:
+              tools:
+                call: {}
+        logging:
+          supportedLevels:
+            - debug
+            - info
+            - warning
+            - error
+        tools:
+          - name: search_knowledge_base
+            title: Search Knowledge Base
+            description: Full-text search across the corporate knowledge base.
+            _meta:
+              owner: knowledge-platform
+              costTier: low
+            annotations:
+              title: Search Knowledge Base
+              readOnlyHint: true
+              destructiveHint: false
+              idempotentHint: true
+              openWorldHint: true
+            execution:
+              taskSupport: optional
+            icons:
+              - src: https://example.com/icons/search-48.png
+                mimeType: image/png
+                sizes:
+                  - 48x48
+                  - 96x96
+                theme: light
+              - src: https://example.com/icons/search-dark.svg
+                mimeType: image/svg+xml
+                sizes:
+                  - any
+                theme: dark
+            inputSchema:
+              $schema: http://json-schema.org/draft-07/schema#
+              type: object
+              properties:
+                query:
+                  type: string
+                  description: The natural language search query.
+                limit:
+                  type: integer
+                  description: Maximum number of results to return.
+                  default: 10
+              required:
+                - query
+            outputSchema:
+              $schema: http://json-schema.org/draft-07/schema#
+              type: object
+              properties:
+                results:
+                  type: array
+                  description: Ranked knowledge base articles.
+              required:
+                - results
+          - name: create_incident
+            title: Create Incident
+            description: Creates an incident record in the ticketing system.
+            _meta:
+              owner: itsm-platform
+            annotations:
+              title: Create Incident
+              readOnlyHint: false
+              destructiveHint: false
+              idempotentHint: false
+              openWorldHint: true
+            execution:
+              taskSupport: required
+            icons:
+              - src: https://example.com/icons/incident.png
+                mimeType: image/png
+                sizes:
+                  - 64x64
+                theme: light
+            inputSchema:
+              $schema: http://json-schema.org/draft-07/schema#
+              type: object
+              properties:
+                summary:
+                  type: string
+                priority:
+                  type: string
+                  enum:
+                    - P1
+                    - P2
+                    - P3
+              required:
+                - summary
+                - priority
+            outputSchema:
+              $schema: http://json-schema.org/draft-07/schema#
+              type: object
+              properties:
+                incidentId:
+                  type: string
+              required:
+                - incidentId
+        resources:
+          - name: runbook-database-failover
+            title: Runbook — Database Failover
+            uri: https://mcp.example.com/resources/runbooks/db-failover.md
+            description: Step-by-step runbook for failing over the primary database.
+            mimeType: text/markdown
+            size: 18342
+            _meta:
+              reviewedBy: sre-team
+            annotations:
+              audience:
+                - user
+                - assistant
+              priority: 0.9
+              lastModified: "2026-01-12T15:00:58Z"
+            icons:
+              - src: https://example.com/icons/runbook.png
+                mimeType: image/png
+                sizes:
+                  - 32x32
+                theme: light
+        resourceTemplates:
+          - name: incident-by-id
+            title: Incident by ID
+            uriTemplate: https://mcp.example.com/resources/incidents/{incidentId}
+            description: Retrieves a single incident record by its identifier.
+            mimeType: application/json
+            _meta:
+              generator: itsm-connector
+            annotations:
+              audience:
+                - assistant
+              priority: 0.6
+              lastModified: "2026-02-01T09:12:00Z"
+            icons:
+              - src: https://example.com/icons/incident-template.svg
+                mimeType: image/svg+xml
+                sizes:
+                  - any
+                theme: dark
+        prompts:
+          - name: summarize_incident
+            title: Summarize Incident
+            description: Produces an executive summary of an incident and its timeline.
+            _meta:
+              version: 3
+            icons:
+              - src: https://example.com/icons/summary.png
+                mimeType: image/png
+                sizes:
+                  - 48x48
+                theme: light
+            arguments:
+              - name: incidentId
+                title: Incident ID
+                description: Identifier of the incident to summarize.
+                required: true
+              - name: audience
+                title: Target Audience
+                description: Who the summary is written for (exec, engineer, customer).
+                required: false
+        securitySchemes:
+          api_key_scheme:
+            type: apiKey
+            description: Static API key for the MCP endpoint.
+            in: header
+            name: X-API-Key
+          bearer_scheme:
+            type: http
+            description: HTTP bearer token authentication.
+            scheme: Bearer
+            bearerFormat: JWT
+          mtls_scheme:
+            type: mutualTLS
+            description: Mutual TLS using a client certificate issued by Example CA.
+          oidc_scheme:
+            type: openIdConnect
+            description: OpenID Connect discovery based authentication.
+            openIdConnectUrl: https://idp.example.com/.well-known/openid-configuration
+          oauth2_scheme:
+            type: oauth2
+            description: OAuth 2.0 protected MCP endpoint.
+            oauth2MetadataUrl: https://idp.example.com/.well-known/oauth-authorization-server
+            flows:
+              clientCredentials:
+                tokenUrl: https://idp.example.com/oauth2/v1/token
+                refreshUrl: https://idp.example.com/oauth2/v1/token
+                scopes:
+                  mcp:invoke: Invoke MCP tools.
+
+    # -- MCPServerEntity #2: sse transport -------------------------------------
+    sse_mcp:
+      info:
+        label: SSE MCP Server
+        description: MCP server using the Server-Sent Events transport.
+        tags:
+          - mcp
+          - sse
+      urls:
+        - name: production
+          url: https://sse-mcp.example.com
+      metadata:
+        platform: Other
+        protocolVersion: 2025-06-18
+        transport:
+          kind: sse
+          ssePath: /sse
+          messagesPath: /messages
+        provider:
+          organization: Example Corp
+          url: https://example.com
+        capabilities:
+          # Deprecated boolean shorthand for the capability objects above.
+          logging: true
+          prompts: false
+          resources: true
+          tools: true
+        tools:
+          - name: list_tickets
+            title: List Tickets
+            description: Lists open tickets assigned to a queue.
+            annotations:
+              title: List Tickets
+              readOnlyHint: true
+              openWorldHint: false
+            execution:
+              taskSupport: forbidden
+            inputSchema:
+              type: object
+              properties:
+                queue:
+                  type: string
+              required:
+                - queue
+        resources:
+          - name: ticket-queues
+            uri: https://sse-mcp.example.com/resources/queues.json
+            description: The catalog of available ticket queues.
+            mimeType: application/json
+        prompts:
+          - name: draft_ticket_reply
+            description: Drafts a customer-facing reply for a ticket.
+            arguments:
+              - name: ticketId
+                required: true
+        securitySchemes:
+          bearer_scheme:
+            type: http
+            scheme: Bearer
+            bearerFormat: JWT
+
+    # -- MCPServerEntity #3: stdio transport -----------------------------------
+    stdio_mcp:
+      info:
+        label: Stdio MCP Server
+        description: Locally launched MCP server communicating over standard I/O.
+        tags:
+          - mcp
+          - stdio
+          - local
+      urls:
+        - name: development
+          url: file:///usr/local/bin/example-mcp
+      metadata:
+        platform: Other
+        protocolVersion: 2024-11-05
+        transport:
+          kind: stdio
+          instructions: npx -y @example/filesystem-mcp --root /workspace
+        provider:
+          organization: Example Corp
+          url: https://example.com
+        capabilities:
+          tools:
+            listChanged: false
+        tools:
+          - name: read_file
+            description: Reads a UTF-8 file from the workspace.
+            inputSchema:
+              type: object
+              properties:
+                path:
+                  type: string
+              required:
+                - path
+          - name: write_file
+            description: Writes a UTF-8 file into the workspace.
+            annotations:
+              readOnlyHint: false
+              destructiveHint: true
+              idempotentHint: false
+              openWorldHint: false
+            inputSchema:
+              type: object
+              properties:
+                path:
+                  type: string
+                contents:
+                  type: string
+              required:
+                - path
+                - contents
+
+    # -- MCPServerEntity #4: minimal entity (only the required property) -------
+    minimal_mcp:
+      metadata:
+        transport:
+          kind: streamableHttp
+
+  # ---------------------------------------------------------------------------
+  # llms — one entity per supported platform
+  # ---------------------------------------------------------------------------
+  llms:
+    openai_provider:
+      info:
+        label: OpenAI
+        description: OpenAI hosted models used across the network.
+        tags:
+          - llm
+          - openai
+      urls:
+        - name: production
+          url: https://api.openai.com/v1
+      metadata:
+        platform: OpenAI
+        models:
+          - gpt-4.1
+          - gpt-4.1-mini
+          - o4-mini
+    gemini_provider:
+      info:
+        label: Google Gemini
+        description: Google Gemini models.
+        tags:
+          - llm
+          - gemini
+      urls:
+        - name: production
+          url: https://generativelanguage.googleapis.com/v1beta
+      metadata:
+        platform: Gemini
+        models:
+          - gemini-2.5-pro
+          - gemini-2.5-flash
+    azure_openai_provider:
+      info:
+        label: Azure OpenAI
+        description: Azure-hosted OpenAI deployments.
+        tags:
+          - llm
+          - azure
+      urls:
+        - name: production
+          url: https://example.openai.azure.com/openai/v1
+        - name: staging
+          url: https://example-staging.openai.azure.com/openai/v1
+      metadata:
+        platform: AzureOpenai
+        models:
+          - gpt-4.1
+          - gpt-4o
+
+# =============================================================================
+# context — document-scoped reusable entities (connections, policies)
+# =============================================================================
+context:
+  # ---------------------------------------------------------------------------
+  # policies — reusable PolicyBinding definitions referenced by name elsewhere
+  # ---------------------------------------------------------------------------
+  policies:
+    client-id-enforcement:
+      ref:
+        name: client-id-enforcement
+        namespace: 68ef9520-24e9-4cf2-b2f5-620025690913
+      access: shared
+      configuration:
+        clientId: ${clientIdEnforcement.clientId}
+        clientSecret: ${clientIdEnforcement.clientSecret}
+        credentialsOrigin: customExpression
+    rate-limiting:
+      ref:
+        name: rate-limiting
+        namespace: 68ef9520-24e9-4cf2-b2f5-620025690913
+      access: internal
+      configuration:
+        rateLimits:
+          - maximumRequests: 100
+            timePeriodInMilliseconds: 60000
+        clusterizable: true
+        exposeHeaders: true
+    prompt-guard:
+      ref:
+        name: prompt-guard
+        namespace: 68ef9520-24e9-4cf2-b2f5-620025690913
+      access: shared
+      configuration:
+        blockOnDetection: true
+        categories:
+          - prompt-injection
+          - jailbreak
+        threshold: 0.8
+    pii-redaction:
+      ref:
+        name: pii-redaction
+      access: internal
+      configuration:
+        entities:
+          - EMAIL_ADDRESS
+          - CREDIT_CARD
+          - US_SSN
+        action: mask
+        maskCharacter: "*"
+
+  # ---------------------------------------------------------------------------
+  # connections — every ConnectionElement kind and every Authentication kind
+  # ---------------------------------------------------------------------------
+  connections:
+    # -- LLMConnection (LLMAuthentication only allows kind: apiKey) ------------
+    openai_connection:
+      kind: llm
+      access: shared
+      ref:
+        name: openai_provider
+        namespace: 68ef9520-24e9-4cf2-b2f5-620025690913
+      url: https://api.openai.com/v1
+      authentication:
+        kind: apiKey
+        apiKey: ${openai.apiKey}
+      policies:
+        inbound:
+          - ref:
+              name: rate-limiting
+              namespace: 68ef9520-24e9-4cf2-b2f5-620025690913
+        outbound:
+          - policy:
+              ref:
+                name: llm-token-budget
+                namespace: 68ef9520-24e9-4cf2-b2f5-620025690913
+              access: internal
+              configuration:
+                maxTokensPerMinute: 120000
+                onExceeded: reject
+
+    gemini_connection:
+      kind: llm
+      access: internal
+      ref:
+        name: gemini_provider
+      url: https://generativelanguage.googleapis.com/v1beta
+      authentication:
+        kind: apiKey
+        apiKey: ${gemini.apiKey}
+
+    azure_openai_connection:
+      kind: llm
+      access: internal
+      ref:
+        name: azure_openai_provider
+      url: https://example.openai.azure.com/openai/v1
+      authentication:
+        kind: apiKey
+        apiKey: ${azureOpenai.apiKey}
+
+    # -- MCPServerConnection with kind: basic ---------------------------------
+    mcp_basic_auth_connection:
+      kind: mcp
+      access: internal
+      ref:
+        name: streamable_http_mcp
+        namespace: 68ef9520-24e9-4cf2-b2f5-620025690913
+      url: https://mcp.example.com
+      authentication:
+        kind: basic
+        username: ${mcpBasic.username}
+        password: ${mcpBasic.password}
+        headerName: Authorization
+      policies:
+        inbound:
+          - ref:
+              name: client-id-enforcement
+              namespace: 68ef9520-24e9-4cf2-b2f5-620025690913
+        outbound:
+          - ref:
+              name: pii-redaction
+
+    # -- MCPServerConnection with kind: apiKey --------------------------------
+    mcp_api_key_connection:
+      kind: mcp
+      access: shared
+      ref:
+        name: sse_mcp
+      url: https://sse-mcp.example.com
+      authentication:
+        kind: apiKey
+        apiKey: ${mcpApiKey.apiKey}
+        headerName: X-API-Key
+
+    # -- MCPServerConnection with kind: apikey-client-credentials -------------
+    mcp_apikey_client_credentials_connection:
+      kind: mcp
+      access: internal
+      ref:
+        name: stdio_mcp
+      url: https://stdio-bridge.example.com
+      authentication:
+        kind: apikey-client-credentials
+        clientId:
+          name: client_id
+          value: ${mcpApiKeyClientCreds.clientId}
+        clientSecret:
+          name: client_secret
+          value: ${mcpApiKeyClientCreds.clientSecret}
+
+    # -- MCPServerConnection with kind: oauth2-client-credentials -------------
+    mcp_oauth2_client_credentials_connection:
+      kind: mcp
+      access: internal
+      ref:
+        name: minimal_mcp
+      url: https://minimal-mcp.example.com
+      authentication:
+        kind: oauth2-client-credentials
+        clientId: ${mcpOauth2.clientId}
+        clientSecret: ${mcpOauth2.clientSecret}
+        scopes:
+          - mcp:invoke
+          - mcp:read
+        token:
+          url: https://idp.example.com/oauth2/v1/token
+          timeout: 30
+          bodyEncoding: form
+
+    # -- AgentConnection with kind: oauth2-obo (RFC 8693 token exchange) ------
+    agent_oauth2_obo_connection:
+      kind: a2a
+      access: shared
+      ref:
+        name: a2a_v1_agent
+        namespace: 68ef9520-24e9-4cf2-b2f5-620025690913
+      url: https://api.example.com/a2a/v1
+      authentication:
+        kind: oauth2-obo
+        flow: oauth2-token-exchange
+        clientId: ${agentObo.clientId}
+        clientSecret: ${agentObo.clientSecret}
+        tokenEndpoint: https://idp.example.com/oauth2/v1/token
+        targetType: audience
+        targetValue: https://api.example.com/a2a/v1
+        scope: agent:invoke
+        timeout: 10000
+        distributed: true
+        cibaEnabled: true
+        cibaEndpoint: https://idp.example.com/oauth2/v1/bc-authorize
+        cibaLoginHintClaim: email
+        cibaBindingMessage: Approve the agent request from the Complete Reference Network.
+      policies:
+        inbound:
+          - ref:
+              name: prompt-guard
+              namespace: 68ef9520-24e9-4cf2-b2f5-620025690913
+        outbound:
+          - policy:
+              ref:
+                name: circuit-breaker
+              access: internal
+              configuration:
+                failureThreshold: 5
+                resetTimeoutMs: 30000
+
+    # -- AgentConnection with kind: oauth2-obo (Microsoft Entra ID OBO) -------
+    agent_entra_obo_connection:
+      kind: a2a
+      access: internal
+      ref:
+        name: a2a_v03_agent
+      url: https://api.example.com/a2a/v03
+      authentication:
+        kind: oauth2-obo
+        flow: microsoft-entra-obo
+        clientId: ${agentEntraObo.clientId}
+        clientSecret: ${agentEntraObo.clientSecret}
+        tokenEndpoint: https://login.microsoftonline.com/common/oauth2/v2.0/token
+        targetType: resource
+        targetValue: api://downstream-client-id
+        scope: api://downstream-client-id/.default
+        timeout: 15000
+        distributed: false
+
+    # -- AgentConnection with kind: in-task-authorization-code ----------------
+    agent_in_task_auth_code_connection:
+      kind: a2a
+      access: internal
+      ref:
+        name: other_protocol_agent
+      url: https://api.example.com/custom/v1
+      authentication:
+        kind: in-task-authorization-code
+        secondaryAuthProvider: okta
+        authorizationEndpoint: https://idp.example.com/oauth2/v1/authorize
+        tokenEndpoint: https://idp.example.com/oauth2/v1/token
+        scopes: openid profile email transaction:execute
+        redirectUri: https://app.example.com/oauth2/callback
+        responseType: code
+        codeChallengeMethod: S256
+        tokenAudience: https://api.example.com/custom/v1
+        bodyEncoding: form
+        tokenTimeout: 300
+        challengeResponseStatusCode: 200
+        distributed: true
+        subjectTokenType: urn:ietf:params:oauth:token-type:access_token
+        requestedTokenType: urn:ietf:params:oauth:token-type:access_token
+
+# =============================================================================
+# brokers — AgentScript-backed orchestrators exposed over A2A v1
+#
+# NOTE: `implementation` points at an AgentScript file that is intentionally
+# NOT authored in this reference. Create ./brokers/complete-reference.agent
+# before building or publishing this project.
+# =============================================================================
+brokers:
+  complete_reference_broker:
+    info:
+      label: Complete Reference Broker
+      description: Broker exercising every BrokerEntity property, including both inbound and outbound policy binding forms.
+      tags:
+        - broker
+        - reference
+        - orchestrator
+    kind: AgentScript
+    implementation: ./brokers/complete-reference.agent
+    interfaces:
+      a2a:
+        policies:
+          inbound:
+            # Reference form — points at context.policies["client-id-enforcement"].
+            - ref:
+                name: client-id-enforcement
+                namespace: 68ef9520-24e9-4cf2-b2f5-620025690913
+            - ref:
+                name: rate-limiting
+                namespace: 68ef9520-24e9-4cf2-b2f5-620025690913
+            # Inline form — a full PolicyBinding declared at the attachment point.
+            - policy:
+                ref:
+                  name: jwt-validation
+                  namespace: 68ef9520-24e9-4cf2-b2f5-620025690913
+                access: shared
+                configuration:
+                  jwksUrl: https://idp.example.com/.well-known/jwks.json
+                  jwtOrigin: httpBearerAuthenticationHeader
+                  skipClientIdValidation: false
+                  clientIdExpression: "#[vars.claimSet.client_id]"
+                  validateAudClaim: true
+                  supportedAudiences: https://api.example.com/a2a/v1
+          outbound:
+            - ref:
+                name: prompt-guard
+                namespace: 68ef9520-24e9-4cf2-b2f5-620025690913
+            - policy:
+                ref:
+                  name: response-content-filter
+                access: internal
+                configuration:
+                  blockOnDetection: false
+                  categories:
+                    - toxicity
+                    - self-harm
+                  threshold: 0.7
+        card:
+          name: Complete Reference Broker
+          description: Orchestrates the reference agents and MCP servers on behalf of a caller.
+          version: 1.0.0
+          documentationUrl: https://example.com/docs/brokers/complete-reference
+          iconUrl: https://example.com/icons/broker.png
+          provider:
+            organization: Example Corp
+            url: https://example.com
+          capabilities:
+            streaming: true
+            pushNotifications: true
+            extendedAgentCard: true
+            extensions:
+              - uri: https://example.com/extensions/trace-context
+                description: Propagates W3C trace context to every downstream agent.
+                required: true
+                params:
+                  header: traceparent
+          defaultInputModes:
+            - text/plain
+            - application/json
+          defaultOutputModes:
+            - text/plain
+            - application/json
+          supportedInterfaces:
+            - protocolBinding: JSONRPC
+              protocolVersion: "1.0"
+              url: https://broker.example.com/a2a/v1
+              tenant: acme-prod
+            - protocolBinding: HTTP+JSON
+              protocolVersion: "1.0"
+              url: https://broker.example.com/a2a/rest
+              tenant: acme-prod
+          securitySchemes:
+            broker_oauth2:
+              oauth2SecurityScheme:
+                description: OAuth 2.0 authorization for broker callers.
+                oauth2MetadataUrl: https://idp.example.com/.well-known/oauth-authorization-server
+                flows:
+                  authorizationCode:
+                    authorizationUrl: https://idp.example.com/oauth2/v1/authorize
+                    tokenUrl: https://idp.example.com/oauth2/v1/token
+                    refreshUrl: https://idp.example.com/oauth2/v1/token
+                    pkceRequired: true
+                    scopes:
+                      broker:invoke: Invoke the broker.
+                  clientCredentials:
+                    tokenUrl: https://idp.example.com/oauth2/v1/token
+                    scopes:
+                      broker:invoke: Machine-to-machine broker invocation.
+                  deviceCode:
+                    deviceAuthorizationUrl: https://idp.example.com/oauth2/v1/device/authorize
+                    tokenUrl: https://idp.example.com/oauth2/v1/token
+                    scopes:
+                      broker:invoke: Invoke the broker from a constrained device.
+                  implicit:
+                    authorizationUrl: https://idp.example.com/oauth2/v1/authorize
+                    scopes:
+                      broker:invoke: Invoke the broker.
+                  password:
+                    tokenUrl: https://idp.example.com/oauth2/v1/token
+                    scopes:
+                      broker:invoke: Invoke the broker.
+            broker_api_key:
+              apiKeySecurityScheme:
+                description: API key for service-to-service broker calls.
+                location: header
+                name: X-Broker-Key
+            broker_bearer:
+              httpAuthSecurityScheme:
+                description: HTTP bearer token authentication.
+                scheme: Bearer
+                bearerFormat: JWT
+            broker_mtls:
+              mtlsSecurityScheme:
+                description: Mutual TLS for internal callers.
+            broker_oidc:
+              openIdConnectSecurityScheme:
+                description: OpenID Connect discovery based authentication.
+                openIdConnectUrl: https://idp.example.com/.well-known/openid-configuration
+          securityRequirements:
+            - schemes:
+                broker_oauth2:
+                  list:
+                    - broker:invoke
+            - broker_api_key: []
+              broker_mtls: []
+          signatures:
+            - protected: eyJhbGciOiJFUzI1NiIsImtpZCI6ImJyb2tlci1rZXktMSJ9
+              signature: MEYCIQCexampleBrokerSignatureBase64UrlEncodedCCCCCCC
+              header:
+                kid: broker-key-1
+                jku: https://example.com/.well-known/jwks.json
+          skills:
+            - id: investigate
+              name: Cross-System Investigation
+              description: Investigates an issue by fanning out to the registry agents and MCP tools.
+              tags:
+                - orchestration
+                - investigation
+              examples:
+                - Why did the checkout service start erroring at 14:02?
+                - Find the owner of the failing deployment and open a P1.
+              inputModes:
+                - text/plain
+                - application/json
+              outputModes:
+                - application/json
+              securityRequirements:
+                - schemes:
+                    broker_oauth2:
+                      list:
+                        - broker:invoke
+            - id: resolve
+              name: Guided Resolution
+              description: Walks a caller through remediation steps and applies approved fixes.
+              tags:
+                - remediation
+                - guided
+              examples:
+                - Walk me through restoring the database from last night's snapshot.
+              inputModes:
+                - text/plain
+              outputModes:
+                - text/plain
+              securityRequirements:
+                - broker_api_key: []

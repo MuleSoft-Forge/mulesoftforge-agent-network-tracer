@@ -1,0 +1,59 @@
+# Fly.io config for the consolidated Agent Network Tracer (web + worker).
+#
+# One image, two process groups:
+#   web    — Next.js server (UI + /api/lifecycle). Kept warm; see min_machines_running.
+#   worker — lifecycle-worker.ts. Always-on so queued jobs are drained promptly.
+#
+# Change `app` and `primary_region` to your own before `fly deploy`.
+# (`fly launch --no-deploy` will fill these in for you.)
+
+app = "agent-network-tracer"
+primary_region = "dub"   # Dublin — closest to Cloudhub EU-West-1. Adjust as needed.
+
+# The worker needs longer than Fly's 5s default to stop its CLI children and
+# record a terminal state for in-flight jobs before the machine is killed.
+kill_timeout = "30s"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "3000"
+  NODE_ENV = "production"
+  WORKSPACE_ROOT = "/tmp/anf-jobs"
+  # ANYPOINT_CLI_DEBUG = "1"   # uncomment to append --debug to every CLI run
+
+[processes]
+  web = "npm run start"
+  worker = "npm run worker"
+
+# Public HTTPS endpoint — only the web process serves traffic.
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  # Keep one web machine up. Scaling to zero stalls an active session: reading a
+  # finished build log sends no requests, the proxy autostops the only machine,
+  # and the next click lands while it is still stopping ("machine is in a
+  # non-startable state"). The request fails and a client-side route change just
+  # never completes.
+  min_machines_running = 1
+  processes = ["web"]
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 200
+    hard_limit = 250
+
+# Web can be small and scale to zero.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
+  processes = ["web"]
+
+# Worker runs the Anypoint CLI builds — give it headroom and keep 1 always on.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
+  processes = ["worker"]

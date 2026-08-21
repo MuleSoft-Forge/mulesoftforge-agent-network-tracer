@@ -1,0 +1,13 @@
+# Issues must stay ENABLED in repository settings: the in-app bug reporter files
+# them through the GitHub API using GITHUB_FEEDBACK_TOKEN. Turning Issues off
+# would break that feature. This file only removes the "blank issue" option from
+# the web UI and points people at the better route; API-created issues are
+# unaffected.
+blank_issues_enabled: false
+contact_links:
+  - name: Report a bug from inside the app
+    url: https://github.com/MuleSoft-Forge/mulesoftforge-agent-network-tracer#readme
+    about: Use the bug icon in the running app — it attaches the route, app version, and recent console output automatically, which makes the report far easier to act on.
+  - name: Security disclosure
+    url: https://github.com/MuleSoft-Forge/mulesoftforge-agent-network-tracer/blob/main/SECURITY.md
+    about: Please report vulnerabilities privately, not as a public issue.

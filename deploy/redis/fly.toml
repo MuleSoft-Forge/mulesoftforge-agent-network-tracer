@@ -1,0 +1,30 @@
+# Private, self-hosted Redis for the lifecycle queue + job store.
+#
+# Not exposed to the public internet: it has no [http_service]/ports, so it is
+# only reachable over Fly's private network (6PN) at
+#   agent-network-tracer-redis.internal:6379
+#
+# Setup (run from deploy/redis/):
+#   fly launch --no-deploy --name agent-network-tracer-redis --region dub
+#   fly volumes create redis_data --size 1 --region dub
+#   fly secrets set REDIS_PASSWORD="$(openssl rand -base64 32)"
+#   fly deploy
+#
+# Then point the main app at it:
+#   fly secrets set --app agent-network-tracer \
+#     REDIS_URL="redis://default:<password>@agent-network-tracer-redis.internal:6379"
+
+app = "agent-network-tracer-redis"
+primary_region = "dub"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[[mounts]]
+  source = "redis_data"
+  destination = "/data"
+
+# Single always-on instance; do not autoscale a stateful store.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
