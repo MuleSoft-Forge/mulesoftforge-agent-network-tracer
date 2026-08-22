@@ -207,15 +207,53 @@ export default function ProjectMethodologyModal({
               <p className="mt-1">
                 There is a best-practice order to composing an Agent Network. Each step should be validated, and your design intent should stay clear.
               </p>
-              <ol className="mt-2 list-decimal space-y-1 pl-4">
-                <li>Project details</li>
-                <li>Exchange assets (LLM / MCP / Agent assets to be used)</li>
-                <li>A2A broker security (how consumers connect)</li>
-                <li>A2A broker card</li>
-                <li>AgentScript: general instructions</li>
-                <li>AgentScript: LLM settings</li>
-                <li>AgentScript: available actions</li>
-                <li>AgentScript: graph composition</li>
+              <ol className="mt-2 list-decimal space-y-1.5 pl-4 marker:text-composer-label-muted">
+                <li>
+                  <span className="mr-1">📘</span>
+                  <span className="font-semibold text-composer-label">Project Details</span> — Set
+                  the project name, asset id, version, and business group.
+                </li>
+                <li>
+                  <span className="mr-1">📦</span>
+                  <span className="font-semibold text-composer-label">Exchange Assets</span> —
+                  Gather the agentic assets you plan to use from Exchange (LLM / MCP / Agent).
+                </li>
+                <li>
+                  <span className="mr-1">🔐</span>
+                  <span className="font-semibold text-composer-label">A2A Broker Security</span> —
+                  Define how consumers authenticate and connect to your broker.
+                </li>
+                <li>
+                  <span className="mr-1">🪪</span>
+                  <span className="font-semibold text-composer-label">A2A Broker Card</span> —
+                  Define your broker&apos;s card and discoverability metadata.
+                </li>
+                <li>
+                  <span className="mr-1">✍️</span>
+                  <span className="font-semibold text-composer-label">
+                    AgentScript: General Instructions
+                  </span>{" "}
+                  — Set the broker&apos;s overall behavior and purpose.
+                </li>
+                <li>
+                  <span className="mr-1">🧠</span>
+                  <span className="font-semibold text-composer-label">
+                    AgentScript: LLM Settings
+                  </span>{" "}
+                  — Configure model/provider/runtime behavior.
+                </li>
+                <li>
+                  <span className="mr-1">🧰</span>
+                  <span className="font-semibold text-composer-label">AgentScript: Actions</span> —
+                  Define the actions/tools available to your node graph.
+                </li>
+                <li>
+                  <span className="mr-1">🕸️</span>
+                  <span className="font-semibold text-composer-label">
+                    AgentScript: Graph Composition
+                  </span>{" "}
+                  — Compose the execution graph and finalize flow logic.
+                </li>
               </ol>
               <p className="mt-2">
                 Why this works: each step provides required context for the next, so by the time you compose the graph, your broker is secure, well-defined, and execution-ready.

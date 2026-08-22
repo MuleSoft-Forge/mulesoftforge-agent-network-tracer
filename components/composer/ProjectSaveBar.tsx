@@ -53,7 +53,7 @@ export default function ProjectSaveBar() {
 
       <div className="space-y-1.5">
         <Button
-          variant="secondary"
+          variant="primary"
           className="w-full"
           title="Keep this project in this browser so you can reopen it from the Projects screen"
           onClick={keepInBrowser}
@@ -62,7 +62,7 @@ export default function ProjectSaveBar() {
         </Button>
 
         <Button
-          variant="primary"
+          variant="secondary"
           className="w-full"
           disabled={saving || !folderSaveSupported}
           title={folderTitle}

@@ -18,8 +18,8 @@ export function ProjectFilesToggle({
       aria-expanded={open}
       className={`inline-flex shrink-0 items-center gap-1.5 rounded-anypoint px-2.5 py-1 text-sm font-medium transition-anypoint ${
         open
-          ? "bg-primary/10 text-primary ring-1 ring-primary/20"
-          : "text-composer-label-muted hover:bg-composer-surface-muted"
+          ? "text-composer-label-muted hover:bg-composer-surface-muted"
+          : "bg-primary text-white hover:bg-primary/90"
       }`}
     >
       {open ? <PanelBottomClose className="h-4 w-4" /> : <PanelBottomOpen className="h-4 w-4" />}
