@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
-import { ArrowLeft, ArrowRight, ExternalLink, Loader2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, ExternalLink, Loader2, Trash2 } from "lucide-react";
 import { MuleIcon } from "@/components/composer/MuleIcon";
 import BetaBadge from "@/components/ui/BetaBadge";
 import { useComposer } from "@/lib/composer/store";
@@ -17,6 +17,12 @@ import { useLocalProjectImport } from "@/components/composer/useLocalProjectImpo
 import type { LocalProjectImportResult } from "@/components/composer/useLocalProjectImport";
 import { setLastProjectDir } from "@/lib/desktop/last-project-path";
 import { clearComposerSession, hasComposerDraft } from "@/lib/composer/session-persistence";
+import {
+  deleteSavedProject,
+  listSavedProjects,
+  PROJECT_LIBRARY_CHANGED_EVENT,
+  type SavedProjectEntry,
+} from "@/lib/composer/project-library";
 import { AGENT_NETWORK_BEST_PRACTICES_URL } from "@/lib/composer/anf-docs-urls";
 import { COMPOSER_EXAMPLES, COMPOSER_WORKSHOP_TEMPLATE } from "@/lib/composer/examples/catalog";
 import { loadComposerExample } from "@/lib/composer/examples/load-example";
@@ -63,6 +69,7 @@ export default function ComposerLanding({
   const [localProjectError, setLocalProjectError] = useState<string | null>(null);
   const [exampleError, setExampleError] = useState<string | null>(null);
   const [showDraftResume, setShowDraftResume] = useState(false);
+  const [savedProjects, setSavedProjects] = useState<SavedProjectEntry[]>([]);
   const [selectedKey, setSelectedKey] = useState("");
   const [selectedVersion, setSelectedVersion] = useState("");
 
@@ -78,6 +85,18 @@ export default function ComposerLanding({
     if (current?.orgId) {
       setOrgId(current.orgId);
     }
+  }, []);
+
+  useEffect(() => {
+    const syncSavedProjects = () => setSavedProjects(listSavedProjects());
+    syncSavedProjects();
+    // "storage" keeps a second tab in step; the custom event covers this tab.
+    window.addEventListener("storage", syncSavedProjects);
+    window.addEventListener(PROJECT_LIBRARY_CHANGED_EVENT, syncSavedProjects);
+    return () => {
+      window.removeEventListener("storage", syncSavedProjects);
+      window.removeEventListener(PROJECT_LIBRARY_CHANGED_EVENT, syncSavedProjects);
+    };
   }, []);
 
   function handleToggle() {
@@ -178,22 +197,52 @@ export default function ComposerLanding({
   }
 
   async function handleLocalFolderChange(e: React.ChangeEvent<HTMLInputElement>) {
+    if (!orgId) {
+      setLocalProjectError("Select a business group first.");
+      return;
+    }
     const files = e.target.files;
     if (!files?.length) return;
     setLocalProjectError(null);
-    const result = await importFromFolder(files, orgId || undefined);
+    const result = await importFromFolder(files, orgId);
     if (result) openLocalProject(result);
   }
 
   async function handlePickLocalFolder() {
+    if (!orgId) {
+      setLocalProjectError("Select a business group first.");
+      return;
+    }
     folderInputRef.current?.click();
   }
 
   async function handleLocalZipChange(e: React.ChangeEvent<HTMLInputElement>) {
+    if (!orgId) {
+      setLocalProjectError("Select a business group first.");
+      return;
+    }
     const file = e.target.files?.[0];
     if (!file) return;
-    const result = await importFromZip(file, orgId || undefined);
+    setLocalProjectError(null);
+    const result = await importFromZip(file, orgId);
     if (result) openLocalProject(result);
+  }
+
+  function handleOpenSavedProject(entry: SavedProjectEntry) {
+    dispatch({ type: "loadProject", project: entry.project });
+    if (!entry.project.identity.organizationId && orgId) {
+      dispatch({ type: "setIdentity", patch: { organizationId: orgId } });
+    }
+    onEnter();
+  }
+
+  function handleDiscardSavedProject(entry: SavedProjectEntry) {
+    const label = entry.project.identity.name || entry.id;
+    if (!window.confirm(`Discard "${label}"? The saved copy in this browser will be deleted.`)) {
+      return;
+    }
+    deleteSavedProject(entry.id);
+    setSavedProjects(listSavedProjects());
   }
 
   function handleDiscardDraft() {
@@ -289,6 +338,50 @@ export default function ComposerLanding({
             </section>
           ) : null}
 
+          {savedProjects.length > 0 ? (
+            <section className="mb-8 rounded-anypoint border border-composer-border bg-white p-5">
+              <div className="mb-1 flex items-center gap-2">
+                <MuleIcon name="agentNetwork" size={18} />
+                <h2 className="text-sm font-semibold text-gray-900">
+                  Saved projects ({savedProjects.length})
+                </h2>
+              </div>
+              <p className="text-xs leading-relaxed text-composer-label-muted">
+                Kept in this browser with <strong>Save in browser</strong>. Opening one replaces the project
+                currently in the Builder, so save that first if you still need it.
+              </p>
+              <ul className="mt-4 space-y-2">
+                {savedProjects.map((entry) => (
+                  <li
+                    key={entry.id}
+                    className="flex flex-wrap items-center gap-3 rounded-anypoint border border-composer-border bg-composer-surface-muted/20 px-4 py-3"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-gray-900">
+                        {entry.project.identity.name || "Untitled network"}
+                      </p>
+                      <p className="mt-0.5 truncate font-mono text-[11px] text-gray-500">
+                        {entry.project.identity.assetId || "no-asset-id"}
+                        {entry.project.identity.version ? ` · ${entry.project.identity.version}` : ""}
+                      </p>
+                      <p className="mt-0.5 truncate text-[11px] text-composer-label-muted">
+                        Saved {new Date(entry.savedAt).toLocaleString()}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 gap-2">
+                      <Button variant="primary" onClick={() => handleOpenSavedProject(entry)}>
+                        Open <ArrowRight className="h-4 w-4" />
+                      </Button>
+                      <Button variant="danger" onClick={() => handleDiscardSavedProject(entry)}>
+                        <Trash2 className="h-3.5 w-3.5" /> Discard
+                      </Button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+
           <header className="mb-8 flex items-start justify-between gap-6">
             <div className="min-w-0">
               <p className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest text-composer-label-muted">
@@ -299,7 +392,7 @@ export default function ComposerLanding({
                 Open or create a project
               </h1>
               <p className="mt-2 max-w-lg text-sm leading-relaxed text-composer-label-muted">
-                Compose broker graphs, wire Exchange assets, and export project files locally.
+                Compose broker graphs, wire Exchange assets, build, and export project files locally.
               </p>
             </div>
             <div className="relative hidden h-24 w-24 shrink-0 sm:block md:h-28 md:w-28">
@@ -321,102 +414,190 @@ export default function ComposerLanding({
               <span>Select a business group in the sidebar to create or import an agent network.</span>
             </div>
           ) : (
-            <div className="mb-6 grid gap-4 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
-              {/* Start blank — one-click path, smaller panel */}
-              <section className="flex flex-col justify-between rounded-anypoint border border-composer-border bg-white p-5">
-                <div>
-                  <div className="mb-2 flex items-center gap-2">
+            <>
+              <input
+                ref={folderInputRef}
+                type="file"
+                className="hidden"
+                multiple
+                {...({ webkitdirectory: "", directory: "" } as React.InputHTMLAttributes<HTMLInputElement>)}
+                onChange={(e) => void handleLocalFolderChange(e)}
+              />
+              <input
+                ref={zipInputRef}
+                type="file"
+                accept=".zip,application/zip"
+                className="hidden"
+                onChange={(e) => void handleLocalZipChange(e)}
+              />
+
+              <section className="mb-6 grid gap-4 sm:grid-cols-2">
+                {/* 1) Exchange */}
+                <article className="flex h-full flex-col rounded-anypoint border border-composer-border bg-white p-5">
+                  <div className="mb-3 flex items-center gap-2">
+                    <MuleIcon name="exchange" size={18} />
+                    <h2 className="text-sm font-semibold text-gray-900">1) Open from Exchange</h2>
+                  </div>
+                  <div className="flex-1 space-y-3">
+                    {loading ? (
+                      <div className="flex items-center gap-2 text-xs text-composer-label-muted">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading agent networks…
+                      </div>
+                    ) : error ? (
+                      <div className="space-y-2">
+                        <p className="text-xs text-red-600">{error}</p>
+                        <Button variant="secondary" className="h-7 px-2 text-xs" onClick={() => void refresh()}>
+                          Retry
+                        </Button>
+                      </div>
+                    ) : networks.length === 0 ? (
+                      <p className="text-xs text-composer-label-muted">
+                        No agent networks found in this organization.
+                      </p>
+                    ) : (
+                      <>
+                        <SelectField
+                          label="Agent network"
+                          uppercaseLabel
+                          value={selectedKey}
+                          options={[
+                            { value: "", label: "Select a network…" },
+                            ...networks.map((n) => ({ value: networkKey(n), label: n.name })),
+                          ]}
+                          onChange={(v) => {
+                            setSelectedKey(v);
+                            setSelectedVersion("");
+                          }}
+                        />
+                        <SelectField
+                          label="Version"
+                          uppercaseLabel
+                          value={selectedVersion}
+                          disabled={!selectedNetwork}
+                          options={[
+                            { value: "", label: "Select a version…" },
+                            ...(selectedNetwork?.versions.map((v) => ({
+                              value: v.version,
+                              label: `${v.version}${v.status ? ` (${v.status})` : ""}`,
+                            })) ?? []),
+                          ]}
+                          onChange={setSelectedVersion}
+                        />
+                      </>
+                    )}
+                  </div>
+                  {importError ? (
+                    <p className="mt-3 rounded-anypoint border border-red-200 bg-red-50 px-2.5 py-2 text-xs text-red-700">
+                      {importError}
+                    </p>
+                  ) : null}
+                  <Button
+                    variant="primary"
+                    className="mt-4 w-full"
+                    disabled={!selectedNetwork || !selectedVersion || importing}
+                    onClick={() => void handleImport()}
+                  >
+                    {importing ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" /> Importing…
+                      </>
+                    ) : (
+                      <>
+                        Open in Builder <ArrowRight className="h-4 w-4" />
+                      </>
+                    )}
+                  </Button>
+                </article>
+
+                {/* 2) Local */}
+                <article className="flex h-full flex-col rounded-anypoint border border-composer-border bg-white p-5">
+                  <div className="mb-3 flex items-center gap-2">
                     <MuleIcon name="agentNetwork" size={18} />
-                    <h2 className="text-sm font-semibold text-gray-900">Start blank</h2>
+                    <h2 className="text-sm font-semibold text-gray-900">2) Open local project</h2>
                   </div>
                   <p className="text-xs leading-relaxed text-composer-label-muted">
-                    Empty identity, broker shell, and graph — fill in project details and build from scratch.
+                    Folder or zip with <span className="font-mono">exchange.json</span>,{" "}
+                    <span className="font-mono">agent-network.yaml</span>, and{" "}
+                    <span className="font-mono">brokers/*.agent</span>.
                   </p>
-                </div>
-                <Button variant="primary" className="mt-5 w-full" onClick={handleCreateNew}>
-                  Create blank network <ArrowRight className="h-4 w-4" />
-                </Button>
-              </section>
-
-              {/* Exchange — primary path, more room for selects */}
-              <section className="flex flex-col rounded-anypoint border border-composer-border bg-white p-5">
-                <div className="mb-4 flex items-center gap-2">
-                  <MuleIcon name="exchange" size={18} />
-                  <h2 className="text-sm font-semibold text-gray-900">Open from Exchange</h2>
-                </div>
-
-                <div className="flex-1 space-y-3">
-                  {loading ? (
-                    <div className="flex items-center gap-2 text-xs text-composer-label-muted">
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading agent networks…
-                    </div>
-                  ) : error ? (
-                    <div className="space-y-2">
-                      <p className="text-xs text-red-600">{error}</p>
-                      <Button variant="secondary" className="h-7 px-2 text-xs" onClick={() => void refresh()}>
-                        Retry
-                      </Button>
-                    </div>
-                  ) : networks.length === 0 ? (
-                    <p className="text-xs text-composer-label-muted">
-                      No agent networks found in this organization.
+                  <div className="mt-4 flex-1 space-y-2">
+                    <Button
+                      variant="secondary"
+                      className="w-full justify-center"
+                      disabled={localImporting}
+                      onClick={() => void handlePickLocalFolder()}
+                    >
+                      {localImporting ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" /> Reading…
+                        </>
+                      ) : (
+                        "Choose project folder"
+                      )}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      className="w-full justify-center"
+                      disabled={localImporting}
+                      onClick={() => zipInputRef.current?.click()}
+                    >
+                      Choose project zip
+                    </Button>
+                  </div>
+                  {localProjectError ? (
+                    <p className="mt-2 rounded-anypoint border border-red-200 bg-red-50 px-2.5 py-2 text-xs text-red-700">
+                      {localProjectError}
                     </p>
-                  ) : (
-                    <>
-                      <SelectField
-                        label="Agent network"
-                        uppercaseLabel
-                        value={selectedKey}
-                        options={[
-                          { value: "", label: "Select a network…" },
-                          ...networks.map((n) => ({ value: networkKey(n), label: n.name })),
-                        ]}
-                        onChange={(v) => {
-                          setSelectedKey(v);
-                          setSelectedVersion("");
-                        }}
-                      />
-                      <SelectField
-                        label="Version"
-                        uppercaseLabel
-                        value={selectedVersion}
-                        disabled={!selectedNetwork}
-                        options={[
-                          { value: "", label: "Select a version…" },
-                          ...(selectedNetwork?.versions.map((v) => ({
-                            value: v.version,
-                            label: `${v.version}${v.status ? ` (${v.status})` : ""}`,
-                          })) ?? []),
-                        ]}
-                        onChange={setSelectedVersion}
-                      />
-                      {importError ? (
-                        <p className="rounded-anypoint border border-red-200 bg-red-50 px-2.5 py-2 text-xs text-red-700">
-                          {importError}
-                        </p>
-                      ) : null}
-                    </>
-                  )}
-                </div>
+                  ) : null}
+                  {localError ? (
+                    <p className="mt-2 rounded-anypoint border border-red-200 bg-red-50 px-2.5 py-2 text-xs text-red-700">
+                      {localError}
+                    </p>
+                  ) : null}
+                </article>
 
-                <Button
-                  variant="primary"
-                  className="mt-4 w-full"
-                  disabled={!selectedNetwork || !selectedVersion || importing}
-                  onClick={() => void handleImport()}
-                >
-                  {importing ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" /> Importing…
-                    </>
-                  ) : (
-                    <>
-                      Open in Builder <ArrowRight className="h-4 w-4" />
-                    </>
-                  )}
-                </Button>
+                {/* 3) Blank */}
+                <article className="flex h-full flex-col rounded-anypoint border border-composer-border bg-white p-5">
+                  <div className="mb-3 flex items-center gap-2">
+                    <MuleIcon name="agentNetwork" size={18} />
+                    <h2 className="text-sm font-semibold text-gray-900">3) Start blank</h2>
+                  </div>
+                  <p className="flex-1 text-xs leading-relaxed text-composer-label-muted">
+                    Empty identity, broker shell, and graph — build from scratch.
+                  </p>
+                  <Button variant="primary" className="mt-4 w-full" onClick={handleCreateNew}>
+                    Create blank network <ArrowRight className="h-4 w-4" />
+                  </Button>
+                </article>
+
+                {/* 4) Prebuilt */}
+                <article className="flex h-full flex-col rounded-anypoint border border-composer-border bg-white p-5">
+                  <p className="text-[11px] font-semibold uppercase tracking-widest text-primary">
+                    {COMPOSER_WORKSHOP_TEMPLATE.eyebrow}
+                  </p>
+                  <h2 className="mt-1 text-sm font-semibold text-gray-900">4) Open prebuilt template</h2>
+                  <p className="mt-2 flex-1 text-xs leading-relaxed text-composer-label-muted">
+                    {COMPOSER_WORKSHOP_TEMPLATE.summary}
+                  </p>
+                  <a
+                    href={COMPOSER_WORKSHOP_TEMPLATE.workshopUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-primary hover:text-primary/80"
+                  >
+                    {COMPOSER_WORKSHOP_TEMPLATE.workshopLabel}{" "}
+                    <ExternalLink className="h-3 w-3" aria-hidden />
+                  </a>
+                  <Button
+                    variant="primary"
+                    className="mt-4 w-full"
+                    onClick={() => handleLoadExample(COMPOSER_WORKSHOP_TEMPLATE.id)}
+                  >
+                    Open in Builder <ArrowRight className="h-4 w-4" />
+                  </Button>
+                </article>
               </section>
-            </div>
+            </>
           )}
 
           {exampleError ? (
@@ -426,69 +607,10 @@ export default function ComposerLanding({
           ) : null}
 
           {!noBusinessGroup ? (
-            <section className="mb-6 overflow-hidden rounded-anypoint border border-composer-border bg-white">
-              <div className="p-5">
-                <p className="text-[11px] font-semibold uppercase tracking-widest text-primary">
-                  {COMPOSER_WORKSHOP_TEMPLATE.eyebrow}
-                </p>
-                <h2 className="mt-1 text-lg font-semibold tracking-tight text-gray-900">
-                  {COMPOSER_WORKSHOP_TEMPLATE.title}
-                </h2>
-                <p className="mt-1.5 text-xs leading-relaxed text-composer-label-muted">
-                  {COMPOSER_WORKSHOP_TEMPLATE.summary}
-                </p>
-                <a
-                  href={COMPOSER_WORKSHOP_TEMPLATE.workshopUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-primary hover:text-primary/80"
-                >
-                  {COMPOSER_WORKSHOP_TEMPLATE.workshopLabel}{" "}
-                  <ExternalLink className="h-3 w-3" aria-hidden />
-                </a>
-
-                <p className="mt-4 text-xs font-medium text-composer-label">What ships in the template</p>
-                <ul className="mt-2 space-y-1.5">
-                  {COMPOSER_WORKSHOP_TEMPLATE.highlights.map((highlight) => (
-                    <li
-                      key={highlight}
-                      className="flex gap-2 text-xs leading-relaxed text-composer-label-muted"
-                    >
-                      <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-primary" aria-hidden />
-                      <span>{highlight}</span>
-                    </li>
-                  ))}
-                </ul>
-
-                <p className="mt-3 text-[11px] leading-relaxed text-composer-label-muted">
-                  {COMPOSER_WORKSHOP_TEMPLATE.note}
-                </p>
-
-                <Image
-                  src={COMPOSER_WORKSHOP_TEMPLATE.imageSrc}
-                  alt={COMPOSER_WORKSHOP_TEMPLATE.imageAlt}
-                  width={COMPOSER_WORKSHOP_TEMPLATE.imageWidth}
-                  height={COMPOSER_WORKSHOP_TEMPLATE.imageHeight}
-                  className="mt-4 h-auto w-full rounded-anypoint border border-composer-border"
-                  sizes="(min-width: 896px) 896px, 100vw"
-                />
-
-                <Button
-                  variant="primary"
-                  className="mt-4 self-start"
-                  onClick={() => handleLoadExample(COMPOSER_WORKSHOP_TEMPLATE.id)}
-                >
-                  Open in Builder <ArrowRight className="h-4 w-4" />
-                </Button>
-              </div>
-            </section>
-          ) : null}
-
-          {!noBusinessGroup ? (
             <section className="mb-6 rounded-anypoint border border-composer-border bg-white p-5">
               <div className="mb-3 flex items-center gap-2">
                 <MuleIcon name="agentNetwork" size={18} />
-                <h2 className="text-sm font-semibold text-gray-900">Try a MuleSoft example</h2>
+                <h2 className="text-sm font-semibold text-gray-900">More prebuilt examples</h2>
               </div>
               <p className="text-xs leading-relaxed text-composer-label-muted">
                 Open an official Agent Network 2.0 sample in Builder — explore a full broker graph, registry, and
@@ -541,72 +663,6 @@ export default function ComposerLanding({
               </ul>
             </section>
           ) : null}
-
-          {/* Local import — tertiary, not a third equal card */}
-          <section className="border-t border-composer-border pt-5">
-            <input
-              ref={folderInputRef}
-              type="file"
-              className="hidden"
-              multiple
-              {...({ webkitdirectory: "", directory: "" } as React.InputHTMLAttributes<HTMLInputElement>)}
-              onChange={(e) => void handleLocalFolderChange(e)}
-            />
-            <input
-              ref={zipInputRef}
-              type="file"
-              accept=".zip,application/zip"
-              className="hidden"
-              onChange={(e) => void handleLocalZipChange(e)}
-            />
-
-            <p className="text-xs font-medium text-composer-label">Or open a local project</p>
-            <p className="mt-0.5 text-[11px] text-composer-label-muted">
-              Folder or zip with exchange.json, agent-network.yaml, and brokers/*.agent
-            </p>
-            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
-              <button
-                type="button"
-                disabled={localImporting}
-                onClick={() => void handlePickLocalFolder()}
-                className="text-sm font-medium text-primary hover:text-primary/80 disabled:opacity-50"
-              >
-                {localImporting ? (
-                  <span className="inline-flex items-center gap-1.5">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Reading…
-                  </span>
-                ) : (
-                  "Choose project folder"
-                )}
-              </button>
-              <span className="text-composer-border" aria-hidden>
-                ·
-              </span>
-              <button
-                type="button"
-                disabled={localImporting}
-                onClick={() => zipInputRef.current?.click()}
-                className="text-sm font-medium text-primary hover:text-primary/80 disabled:opacity-50"
-              >
-                Choose project zip
-              </button>
-              {!orgId ? (
-                <span className="text-[11px] text-composer-label-muted">
-                  (select a business group to fill missing org ids)
-                </span>
-              ) : null}
-            </div>
-            {localProjectError ? (
-              <p className="mt-2 rounded-anypoint border border-red-200 bg-red-50 px-2.5 py-2 text-xs text-red-700">
-                {localProjectError}
-              </p>
-            ) : null}
-            {localError ? (
-              <p className="mt-2 rounded-anypoint border border-red-200 bg-red-50 px-2.5 py-2 text-xs text-red-700">
-                {localError}
-              </p>
-            ) : null}
-          </section>
 
           <section className="mt-8 border-t border-composer-border pt-5">
             <p className="text-xs font-medium text-composer-label">Governance</p>

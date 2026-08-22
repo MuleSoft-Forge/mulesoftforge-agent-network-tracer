@@ -39,7 +39,8 @@ export async function middleware(request: NextRequest) {
   ) {
     if (!(await hasValidSession(request))) {
       const signInUrl = new URL("/", request.url);
-      signInUrl.searchParams.set("redirect", pathname);
+      const destination = `${pathname}${request.nextUrl.search || ""}`;
+      signInUrl.searchParams.set("redirect", destination);
       return NextResponse.redirect(signInUrl);
     }
     return NextResponse.next();

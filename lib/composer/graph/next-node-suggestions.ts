@@ -1,5 +1,5 @@
 import type { GraphNode, GraphNodeKind } from "@/lib/composer/model";
-import { isTerminalEchoNode, nodeUsesOnExitTransition } from "@/lib/composer/graph-transitions";
+import { nodeUsesOnExitTransitionFor } from "@/lib/composer/graph-transitions";
 import { REQUEST_MESSAGE_TEXT_EXPRESSION } from "@/lib/composer/agentfabric-expression-catalog";
 
 export interface NextNodeSuggestion {
@@ -32,8 +32,9 @@ const TRIGGER_SUGGESTIONS: NextNodeSuggestion[] = [
 ];
 
 export function nextNodeSuggestionsFor(node: GraphNode): NextNodeSuggestion[] {
-  if (!nodeUsesOnExitTransition(node.kind)) return [];
-  if (node.kind === "echo" && isTerminalEchoNode(node)) return [];
+  // Terminal echoes end their path; nodeUsesOnExitTransitionFor already returns
+  // false for them, so no separate isTerminalEchoNode check is needed here.
+  if (!nodeUsesOnExitTransitionFor(node)) return [];
   if (node.kind === "trigger") return TRIGGER_SUGGESTIONS;
   return SUGGESTIONS;
 }

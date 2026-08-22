@@ -23,7 +23,7 @@ import {
   type GraphFieldAnchor,
 } from "@/lib/composer/project-field-anchors";
 import {
-  nodeUsesOnExitTransition,
+  nodeUsesOnExitTransitionFor,
   onExitTargetFieldHint,
   onExitTargetFieldLabel,
   onExitTargetOptional,
@@ -436,7 +436,7 @@ export default function NodeInspector({
           </>
         )}
 
-        {nodeUsesOnExitTransition(node.kind) ? (
+        {nodeUsesOnExitTransitionFor(node) ? (
           <FieldAnchor id={GRAPH_ANCHOR.onExit}>
             <SelectField
               label={onExitTargetFieldLabel(node.kind)}

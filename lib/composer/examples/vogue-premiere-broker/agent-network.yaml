@@ -1,7 +1,7 @@
 agentNetwork: 2.0.0
 info:
   label: Vogue Premiere Agent Network
-  version: v1
+  version: 1.0.0
 registry:
   agents:
     stylingAgent:

@@ -234,7 +234,7 @@ function Inner({
   const [pendingFocus, setPendingFocus] = useState<ProjectFocusTarget | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [pendingCanvasCommand, setPendingCanvasCommand] = useState<CanvasCommand | null>(null);
-  const [previewOpen, setPreviewOpen] = useState(true);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [previewHeight, setPreviewHeight] = useState(PREVIEW_INITIAL_PX);
   const [inspectorWidth, setInspectorWidth] = useState(INSPECTOR_DEFAULT_PX);
   const [orderedTabsOverride, setOrderedTabsOverride] = useState<boolean | null>(null);
@@ -500,16 +500,17 @@ function Inner({
           <span className="text-gray-300">/</span>
           <span className="max-w-[220px] truncate text-sm text-composer-label-muted">{project.identity.name}</span>
           <span className="text-gray-300">|</span>
-          <div className="flex items-center gap-0.5">
+          <div className="flex items-center gap-1">
             <button
               type="button"
               onClick={undo}
               disabled={!canUndo}
               title="Undo (⌘Z)"
               aria-label="Undo"
-              className="rounded-anypoint p-1.5 text-composer-label-muted transition-anypoint hover:bg-composer-surface-muted hover:text-composer-label disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
+              className="inline-flex items-center gap-1 rounded-anypoint px-2 py-1.5 text-xs font-medium text-composer-label-muted transition-anypoint hover:bg-composer-surface-muted hover:text-composer-label disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
             >
               <Undo2 className="h-4 w-4" />
+              <span className="hidden sm:inline">Undo</span>
             </button>
             <button
               type="button"
@@ -517,9 +518,10 @@ function Inner({
               disabled={!canRedo}
               title="Redo (⇧⌘Z)"
               aria-label="Redo"
-              className="rounded-anypoint p-1.5 text-composer-label-muted transition-anypoint hover:bg-composer-surface-muted hover:text-composer-label disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
+              className="inline-flex items-center gap-1 rounded-anypoint px-2 py-1.5 text-xs font-medium text-composer-label-muted transition-anypoint hover:bg-composer-surface-muted hover:text-composer-label disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
             >
               <Redo2 className="h-4 w-4" />
+              <span className="hidden sm:inline">Redo</span>
             </button>
           </div>
         </div>

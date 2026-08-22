@@ -13,8 +13,8 @@ export function ProjectFilesToggle({
     <button
       type="button"
       onClick={onToggle}
-      title={open ? "Hide project files" : "Show project files"}
-      aria-label={open ? "Hide project files" : "Show project files"}
+      title={open ? "Hide Project Files" : "Show Project Files"}
+      aria-label={open ? "Hide Project Files" : "Show Project Files"}
       aria-expanded={open}
       className={`inline-flex shrink-0 items-center gap-1.5 rounded-anypoint px-2.5 py-1 text-sm font-medium transition-anypoint ${
         open
@@ -23,7 +23,7 @@ export function ProjectFilesToggle({
       }`}
     >
       {open ? <PanelBottomClose className="h-4 w-4" /> : <PanelBottomOpen className="h-4 w-4" />}
-      Project files
+      {open ? "Hide Project Files" : "Show Project Files"}
     </button>
   );
 }

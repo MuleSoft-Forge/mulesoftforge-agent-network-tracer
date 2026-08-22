@@ -18,66 +18,66 @@ const STEPS: MethodologyStep[] = [
   {
     tab: "identity",
     group: "Agent network",
-    label: "Project",
+    label: "Project details",
     order: 1,
-    headline: "Ground every decision in a clear identity",
-    why: "Asset ID, version, and organization must exist before anything else can reference them. Getting these right first means your Exchange listing, GAV coordinate, and downstream YAML are all coherent from the start — no renaming cascades later.",
+    headline: "Set the project identity first",
+    why: "Add the project name, asset id, version, and business group first. Every other step references these values, so setting them now prevents rename and version cleanup later.",
   },
   {
     tab: "assets",
     group: "Agent network",
-    label: "Exchange Assets",
+    label: "Exchange assets",
     order: 2,
-    headline: "Compose real connections before wiring anything",
-    why: "LLMs, MCP servers, and agent dependencies must be declared as Exchange assets before the broker can reference them. Composing here creates the context.connections entries and exchange.json dependencies that the graph and AgentScript will draw on.",
+    headline: "Pick the assets this network will use",
+    why: "Add the LLM, MCP, and Agent dependencies from Exchange before building flow logic. This creates the connection entries and dependency list your broker and graph will use.",
   },
   {
     tab: "access",
     group: "Broker",
-    label: "A2A Interface",
+    label: "A2A broker security",
     order: 3,
-    headline: "Decide how callers reach this broker first",
-    why: "The inbound interface policies (auth, rate-limiting, observability) shape the security requirements that are automatically projected into the A2A card. Setting access before the card avoids hand-editing card.securitySchemes and card.securityRequirements.",
+    headline: "Define how consumers connect and authenticate",
+    why: "Set inbound and outbound policies before card details. Security settings here drive what is published in the card, so this keeps connection rules and metadata aligned.",
   },
   {
     tab: "a2a-card",
     group: "Broker",
-    label: "A2A Card",
+    label: "A2A broker card",
     order: 4,
-    headline: "Make the public contract explicit and complete",
-    why: "The card is what peer agents discover. It must accurately reflect the skills, capabilities, and security the broker will actually provide — not aspirational text. After the interface is set, derived security fields populate automatically so the card stays consistent.",
+    headline: "Describe your broker for discovery",
+    why: "Define the broker card name, description, capabilities, and metadata so other agents can find and use it. With security already set, the card stays consistent with real access rules.",
   },
   {
     tab: "behavior",
     group: "Broker",
-    label: "AS Instructions",
+    label: "AgentScript: general instructions",
     order: 5,
-    headline: "Set the persona before you bind models or actions",
-    why: "System instructions are the global identity of the broker's reasoning. Writing them before binding LLMs and actions keeps the prompt intentional rather than reverse-engineered from whatever model happened to be wired in first.",
+    headline: "Set the broker's overall behavior",
+    why: "Write the global instructions before model and tool details. This sets clear design intent so later settings support the behavior instead of defining it by accident.",
   },
   {
     tab: "llms",
     group: "Broker",
-    label: "AS LLM",
+    label: "AgentScript: LLM settings",
     order: 6,
-    headline: "Bind the reasoning engine once the persona is clear",
-    why: "Model choice, temperature, and reasoning effort should follow the instruction style, not drive it. Binding here lets you pick the right model tier for the sophistication of reasoning the instructions require.",
+    headline: "Configure model and runtime behavior",
+    why: "Choose model provider, model, and runtime settings after instructions are clear. This makes model choices intentional and matched to the behavior you want.",
   },
   {
     tab: "actions",
     group: "Broker",
-    label: "AS Actions",
+    label: "AgentScript: available actions",
     order: 7,
-    headline: "Register every tool the graph will call",
-    why: "Graph nodes reference actions as @actions.<name>. All tool bindings must exist before you build the graph so the node palette shows the right options and validation catches broken references immediately.",
+    headline: "Define the tools your graph can call",
+    why: "Add and configure actions before graph composition. Nodes reference these actions directly, so defining them first avoids broken references and rework.",
   },
   {
     tab: "graph",
     group: "Broker",
-    label: "AS Graph",
+    label: "AgentScript: graph composition",
     order: 8,
-    headline: "Compose the flow last, when all dependencies are declared",
-    why: "The graph is the orchestration logic. With identity, assets, interface, card, instructions, LLMs, and actions already set, you can focus entirely on control flow — triggers, conditions, and hand-offs — without context-switching back to fix missing bindings.",
+    headline: "Compose the execution flow last",
+    why: "Build the node graph after identity, assets, security, card, instructions, LLM settings, and actions are ready. That lets you focus on flow logic without missing dependencies.",
   },
 ];
 
@@ -202,6 +202,26 @@ export default function ProjectMethodologyModal({
           </div>
 
           <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-5">
+            <div className="rounded-anypoint border border-composer-border bg-composer-surface-muted/40 px-3 py-2.5 text-xs leading-relaxed text-composer-label-muted">
+              <p className="font-semibold text-composer-label">Best-practice order</p>
+              <p className="mt-1">
+                There is a best-practice order to composing an Agent Network. Each step should be validated, and your design intent should stay clear.
+              </p>
+              <ol className="mt-2 list-decimal space-y-1 pl-4">
+                <li>Project details</li>
+                <li>Exchange assets (LLM / MCP / Agent assets to be used)</li>
+                <li>A2A broker security (how consumers connect)</li>
+                <li>A2A broker card</li>
+                <li>AgentScript: general instructions</li>
+                <li>AgentScript: LLM settings</li>
+                <li>AgentScript: available actions</li>
+                <li>AgentScript: graph composition</li>
+              </ol>
+              <p className="mt-2">
+                Why this works: each step provides required context for the next, so by the time you compose the graph, your broker is secure, well-defined, and execution-ready.
+              </p>
+            </div>
+
             <div className="flex items-start gap-3">
               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-anypoint border border-composer-border bg-composer-surface-muted">
                 <MuleIcon tab={active.tab} size={20} />

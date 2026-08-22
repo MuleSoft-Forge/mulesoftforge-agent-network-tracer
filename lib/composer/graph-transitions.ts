@@ -39,6 +39,18 @@ export function nodeUsesOnExitTransition(kind: GraphNodeKind): boolean {
   }
 }
 
+/**
+ * Node-aware transition check. A terminal status echo (COMPLETED/FAILED/
+ * CANCELED/REJECTED) ends its path and has no on_exit — so the editor and
+ * next-node suggestions must hide the transition for it. Artifact echoes and
+ * non-terminal status echoes are NOT terminal: the A2A linter requires them to
+ * transition onward, so they keep the on_exit transition.
+ */
+export function nodeUsesOnExitTransitionFor(node: GraphNode): boolean {
+  if (node.kind === "echo" && isTerminalEchoNode(node)) return false;
+  return nodeUsesOnExitTransition(node.kind);
+}
+
 export function onExitTargetFieldLabel(kind: GraphNodeKind): string {
   switch (kind) {
     case "trigger":
@@ -65,7 +77,9 @@ export function onExitTargetFieldHint(kind: GraphNodeKind): string {
     case "executor":
       return "Optional next node after the action completes.";
     case "echo":
-      return "Required for artifact and non-terminal status events; optional after a terminal status event.";
+      // This field only renders for artifact and non-terminal status echoes;
+      // a terminal status echo ends its path and shows no transition at all.
+      return "Required — artifact and non-terminal status events must transition to the next node.";
     case "generator":
     case "orchestrator":
     case "subagent":

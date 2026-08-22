@@ -66,6 +66,7 @@ import { accentForKind } from "@/components/composer/graph/kind-accent";
 import { graphAdvice } from "@/lib/composer/graph/graph-advice";
 import { outcomeLabelForKind } from "@/lib/composer/graph/plain-language";
 import { nextNodeSuggestionsFor } from "@/lib/composer/graph/next-node-suggestions";
+import { isTerminalEchoNode } from "@/lib/composer/graph-transitions";
 import type { ProjectFocusTarget } from "@/lib/composer/project-field-anchors";
 
 const BASE_PALETTE: GraphNodeKind[] = ["generator", "orchestrator", "subagent", "executor", "router", "echo"];
@@ -266,7 +267,10 @@ function buildNodes({
       blockType: n.kind,
       kind: n.kind,
       connectedHandles: connectedHandles.get(n.id) ?? new Set<string>(),
-      terminal: n.kind === "echo",
+      // Only a terminal status echo ends its path (no on_exit). Artifact and
+      // non-terminal status echoes must transition onward, so they keep an
+      // outbound handle to wire that required exit on the canvas.
+      terminal: isTerminalEchoNode(n),
       summaryChips: nodeSummaryChips(n, broker),
       preview: nodePreviewText(n),
       issueSeverity: issue?.severity,

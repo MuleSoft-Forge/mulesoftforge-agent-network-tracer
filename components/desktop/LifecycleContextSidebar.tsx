@@ -1,9 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import BusinessGroupSelector from "@/components/BusinessGroupSelector";
 import EnvironmentSelector, { type AnypointEnvironment } from "@/components/EnvironmentSelector";
-import { readAnypointUiContext, writeAnypointUiContext } from "@/lib/anypoint/ui-context";
+import {
+  readAnypointUiContext,
+  UI_CONTEXT_CHANGED_EVENT,
+  writeAnypointUiContext,
+} from "@/lib/anypoint/ui-context";
 
 const SIDEBAR_EXPANDED_KEY = "agent-network-sidebar-expanded";
 
@@ -21,23 +25,55 @@ export default function LifecycleContextSidebar() {
   const [expanded, setExpanded] = useState(true);
   const [orgId, setOrgId] = useState<string>("");
   const [envId, setEnvId] = useState<string>("");
+  // BusinessGroupSelector only reads initialOrgId on mount, so it must be
+  // remounted when the org changes from OUTSIDE this component (another tab,
+  // the composer). Bumping the key only on external changes — not on a local
+  // dropdown pick — avoids a skeleton flash and a redundant profile fetch on
+  // every selection, while still reflecting external context updates.
+  const [selectorEpoch, setSelectorEpoch] = useState(0);
+  const orgIdRef = useRef("");
+
+  useEffect(() => {
+    orgIdRef.current = orgId;
+  }, [orgId]);
 
   useEffect(() => {
     setExpanded(getStoredExpanded());
-    const current = readAnypointUiContext();
-    if (!current) return;
-    setOrgId(current.orgId ?? "");
-    setEnvId(current.envId ?? "");
+    const syncFromUiContext = () => {
+      const current = readAnypointUiContext();
+      const nextOrgId = current?.orgId ?? "";
+      if (nextOrgId !== orgIdRef.current) {
+        orgIdRef.current = nextOrgId;
+        setOrgId(nextOrgId);
+        setSelectorEpoch((epoch) => epoch + 1);
+      }
+      setEnvId(current?.envId ?? "");
+    };
+    syncFromUiContext();
+    window.addEventListener("focus", syncFromUiContext);
+    window.addEventListener("storage", syncFromUiContext);
+    window.addEventListener(UI_CONTEXT_CHANGED_EVENT, syncFromUiContext);
+    return () => {
+      window.removeEventListener("focus", syncFromUiContext);
+      window.removeEventListener("storage", syncFromUiContext);
+      window.removeEventListener(UI_CONTEXT_CHANGED_EVENT, syncFromUiContext);
+    };
   }, []);
 
   const handleOrgSelect = (value: string) => {
+    const restored = readAnypointUiContext();
+    const restoredEnvId = restored?.orgId === value ? (restored.envId ?? "") : "";
     if (value && value === orgId) {
-      writeAnypointUiContext(envId ? { orgId: value, envId } : { orgId: value });
+      const nextEnvId = envId || restoredEnvId;
+      if (nextEnvId) setEnvId(nextEnvId);
+      writeAnypointUiContext(nextEnvId ? { orgId: value, envId: nextEnvId } : { orgId: value });
       return;
     }
     setOrgId(value);
-    setEnvId("");
-    writeAnypointUiContext(value ? { orgId: value } : null);
+    setEnvId(restoredEnvId);
+    writeAnypointUiContext(
+      value ? (restoredEnvId ? { orgId: value, envId: restoredEnvId } : { orgId: value }) : null
+    );
   };
 
   const handleEnvironmentSelect = (_envId: string, env: AnypointEnvironment | null) => {
@@ -47,7 +83,8 @@ export default function LifecycleContextSidebar() {
       writeAnypointUiContext({ orgId, envId: nextEnvId });
       return;
     }
-    writeAnypointUiContext(null);
+    // Clearing environment must keep the selected business group context.
+    writeAnypointUiContext(orgId ? { orgId } : null);
   };
 
   const handleToggle = () => {
@@ -91,7 +128,11 @@ export default function LifecycleContextSidebar() {
       >
         <div className="overflow-y-auto p-3">
           <div className="space-y-4">
-            <BusinessGroupSelector initialOrgId={orgId || undefined} onSelect={handleOrgSelect} />
+            <BusinessGroupSelector
+              key={selectorEpoch}
+              initialOrgId={orgId || undefined}
+              onSelect={handleOrgSelect}
+            />
             <EnvironmentSelector
               orgId={orgId || null}
               value={envId}

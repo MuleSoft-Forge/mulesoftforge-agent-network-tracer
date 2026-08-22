@@ -29,6 +29,8 @@ function resolveSessionPassword(): string | null {
 
 interface MinimalSession {
   accessToken?: string;
+  refreshToken?: string;
+  expiresAt?: number;
   invalidatedAt?: number;
 }
 
@@ -48,7 +50,12 @@ export async function hasValidSession(request: NextRequest): Promise<boolean> {
     const data = await unsealData<MinimalSession>(cookie.value, { password });
     if (!data || typeof data !== "object") return false;
     if (data.invalidatedAt) return false;
-    return typeof data.accessToken === "string" && data.accessToken.length > 0;
+    if (typeof data.accessToken !== "string" || data.accessToken.length === 0) return false;
+    if (typeof data.expiresAt !== "number" || !Number.isFinite(data.expiresAt)) return false;
+    // Mirror lib/session.ts behavior so middleware and app layout do not disagree.
+    const fiveMinBufferMs = 5 * 60 * 1000;
+    if (data.expiresAt > Date.now() + fiveMinBufferMs) return true;
+    return typeof data.refreshToken === "string" && data.refreshToken.length > 0;
   } catch {
     return false;
   }

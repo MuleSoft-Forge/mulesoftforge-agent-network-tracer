@@ -11,7 +11,7 @@ export const EXCHANGE_JSON = `{
   "classifier": "agentic-network",
   "organizationId": "{ENTER YOUR ORG ID HERE}",
   "descriptorVersion": "1.0.0",
-  "apiVersion": "v1",
+  "apiVersion": "v1.0",
   "tags": [
     "agentscript",
     "vogue-premiere"
@@ -56,7 +56,7 @@ export const EXCHANGE_JSON = `{
       "openai": {
         "url": {
           "description": "OpenAI (or proxy) base URL",
-          "default": "https://llm-proxy.workshops.mulesoft.com/openai/v1/",
+          "default": "https://api.openai.com/v1",
           "secret": false
         },
         "apiKey": {
@@ -70,14 +70,14 @@ export const EXCHANGE_JSON = `{
   "dependencies": [],
   "groupId": "{ENTER YOUR ORG ID HERE}",
   "assetId": "vogue-premiere-broker-v2-template",
-  "version": "0.0.0"
+  "version": "1.0.0"
 }
 `;
 
 export const AGENT_YAML = `agentNetwork: 2.0.0
 info:
   label: Vogue Premiere Agent Network
-  version: v1
+  version: 1.0.0
 registry:
   agents:
     stylingAgent:

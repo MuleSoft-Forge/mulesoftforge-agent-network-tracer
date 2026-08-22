@@ -108,7 +108,7 @@ function NodeAdvicePanel({ coach }: { coach: NodeCoachData }) {
     >
       {coach.items.length === 0 ? (
         <p className="mt-2 rounded border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-[11px] leading-snug text-emerald-700">
-          This play is clean. No blockers on this node.
+          No blockers on this node.
         </p>
       ) : (
         <div className="mt-2 space-y-1">

@@ -707,19 +707,27 @@ export function ComposerPanelContent({
       bindingName?: string;
       groupId: string;
       assetId: string;
-      version: string;
+      version: string | null;
       classifier: string;
       packaging: string;
       source: "binding" | "imported";
     }> = [];
+    const importedPolicyDeps = (project.unmatchedDependencies ?? []).filter((dep) =>
+      isPolicyClassifier(dep.classifier)
+    );
     for (const bindingName of referencedPolicyBindingNames(project)) {
       const binding = project.policyBindings[bindingName];
       if (!binding) continue;
-      const version = binding.templateVersion?.trim();
-      if (!version) continue;
+      const groupId = binding.ref.namespace ?? project.identity.organizationId;
+      const version =
+        binding.templateVersion?.trim() ??
+        importedPolicyDeps.find(
+          (dep) => dep.groupId === groupId && dep.assetId === binding.ref.name
+        )?.version ??
+        null;
       rows.push({
         bindingName,
-        groupId: binding.ref.namespace ?? project.identity.organizationId,
+        groupId,
         assetId: binding.ref.name,
         version,
         classifier: POLICY_CLASSIFIER,
@@ -727,8 +735,7 @@ export function ComposerPanelContent({
         source: "binding",
       });
     }
-    for (const dep of project.unmatchedDependencies ?? []) {
-      if (!isPolicyClassifier(dep.classifier)) continue;
+    for (const dep of importedPolicyDeps) {
       rows.push({
         groupId: dep.groupId,
         assetId: dep.assetId,
@@ -1330,7 +1337,7 @@ export function ComposerPanelContent({
                               {dep.bindingName ?? dep.assetId}
                             </span>
                             <span className="block truncate font-mono text-[11px] text-gray-400">
-                              {dep.groupId} / {dep.assetId} / {dep.version}
+                              {dep.groupId} / {dep.assetId} / {dep.version ?? "(version not set)"}
                             </span>
                           </div>
                           {dep.source === "imported" ? (
@@ -1343,7 +1350,7 @@ export function ComposerPanelContent({
                                   dependency: {
                                     groupId: dep.groupId,
                                     assetId: dep.assetId,
-                                    version: dep.version,
+                                    version: dep.version ?? "",
                                     classifier: dep.classifier,
                                     packaging: dep.packaging,
                                   },
