@@ -23,6 +23,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   Loader2,
   RefreshCw,
   Search,
@@ -189,6 +191,9 @@ export default function StubbornTeardownPanel() {
 
   const [outcomes, setOutcomes] = useState<Record<string, TargetOutcome>>({});
   const [confirming, setConfirming] = useState<DeleteTarget | null>(null);
+  // Collapsed by default — it sits alongside the CLI teardown and is only
+  // needed for the orphan-cleanup case, so it stays out of the way until opened.
+  const [collapsed, setCollapsed] = useState(true);
 
   // Manual "delete by coordinates" fallback for a known orphan the scan misses.
   const [manualAssetId, setManualAssetId] = useState("");
@@ -378,11 +383,24 @@ export default function StubbornTeardownPanel() {
         />
       )}
 
-      <h3 className="flex items-center gap-1.5 text-sm font-semibold text-red-900">
-        <ShieldAlert className="h-4 w-4 text-red-600" aria-hidden />
-        Stubborn teardown (API)
-      </h3>
-      <p className="mt-1 text-xs text-gray-600">
+      <button
+        type="button"
+        onClick={() => setCollapsed((c) => !c)}
+        aria-expanded={!collapsed}
+        className="flex w-full items-center gap-1.5 text-left"
+      >
+        <ShieldAlert className="h-4 w-4 shrink-0 text-red-600" aria-hidden />
+        <span className="text-sm font-semibold text-red-900">Teardown via API</span>
+        {collapsed ? (
+          <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-gray-400" aria-hidden />
+        ) : (
+          <ChevronDown className="ml-auto h-4 w-4 shrink-0 text-gray-400" aria-hidden />
+        )}
+      </button>
+
+      {!collapsed && (
+        <>
+      <p className="mt-3 text-xs text-gray-600">
         Deletes Exchange assets directly through the API when the CLI cannot — the case that leaves
         orphaned agent, MCP and LLM assets behind after a network is gone. Lists the whole business
         group so those orphans are visible, and removes every published version. Irreversible.
@@ -598,6 +616,8 @@ export default function StubbornTeardownPanel() {
           <RefreshCw className="h-3 w-3" aria-hidden />
           Rescan after deleting to confirm the group is clear.
         </p>
+      )}
+        </>
       )}
     </div>
   );

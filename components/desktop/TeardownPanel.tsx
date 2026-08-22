@@ -16,7 +16,16 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { List, Loader2, ServerCrash, ShieldAlert, Trash2, TriangleAlert } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  List,
+  Loader2,
+  ServerCrash,
+  ShieldAlert,
+  Trash2,
+  TriangleAlert,
+} from "lucide-react";
 import GavPickerDialog, { type GavSelection } from "@/components/desktop/GavPickerDialog";
 import ActiveContractsDialog, {
   type ActiveContractSummary,
@@ -157,6 +166,9 @@ export default function TeardownPanel({ busy, runningCommand, onRun }: TeardownP
   const [deleteMode, setDeleteMode] = useState<DeleteMode>("hard");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  // Collapsed by default: teardown is a deliberate, occasional action, so it
+  // stays out of the way until the operator opens it.
+  const [collapsed, setCollapsed] = useState(true);
 
   // Pre-flight check for active API-instance contracts, run right before an
   // undeploy job is submitted. Anypoint refuses to remove an instance that
@@ -314,11 +326,24 @@ export default function TeardownPanel({ busy, runningCommand, onRun }: TeardownP
           }}
         />
       )}
-      <h3 className="flex items-center gap-1.5 text-sm font-semibold text-red-900">
-        <TriangleAlert className="h-4 w-4 text-red-600" aria-hidden />
-        Teardown
-      </h3>
-      <p className="mt-1 text-xs text-gray-600">
+      <button
+        type="button"
+        onClick={() => setCollapsed((c) => !c)}
+        aria-expanded={!collapsed}
+        className="flex w-full items-center gap-1.5 text-left"
+      >
+        <TriangleAlert className="h-4 w-4 shrink-0 text-red-600" aria-hidden />
+        <span className="text-sm font-semibold text-red-900">Teardown via CLI</span>
+        {collapsed ? (
+          <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-gray-400" aria-hidden />
+        ) : (
+          <ChevronDown className="ml-auto h-4 w-4 shrink-0 text-gray-400" aria-hidden />
+        )}
+      </button>
+
+      {!collapsed && (
+        <>
+      <p className="mt-3 text-xs text-gray-600">
         Undeploy stops a running network, which you can deploy again afterwards. Unpublish erases
         its Exchange asset and cannot be undone. Deploy variables do not apply here — teardown only
         needs to know what to remove.
@@ -468,6 +493,8 @@ export default function TeardownPanel({ busy, runningCommand, onRun }: TeardownP
 
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 }

@@ -752,22 +752,22 @@ export default function RemoteLifecyclePanel() {
           </div>
         </div>
 
-        <TeardownPanel
-          busy={cli.busy}
-          runningCommand={
-            cli.running === "unpublish" || cli.running === "undeploy" ? cli.running : null
-          }
-          onRun={runTeardown}
-        />
+        {/*
+          All teardown lives in this right column: the CLI-based teardown and
+          the API-based "stubborn" teardown that removes orphans the CLI leaves
+          behind (403 on MAF/agent types). Both cards are collapsed by default.
+        */}
+        <div className="flex flex-col gap-4">
+          <TeardownPanel
+            busy={cli.busy}
+            runningCommand={
+              cli.running === "unpublish" || cli.running === "undeploy" ? cli.running : null
+            }
+            onRun={runTeardown}
+          />
+          <StubbornTeardownPanel />
+        </div>
       </div>
-
-      {/*
-        Stubborn teardown sits below the CLI teardown, full width: it is the
-        escape hatch for when the CLI-based Unpublish above cannot remove an
-        asset (403 on MAF/agent types), leaving orphans in Exchange. It talks to
-        the Exchange API directly rather than the hosted worker/CLI.
-      */}
-      <StubbornTeardownPanel />
 
       {/* Activity */}
       {(cli.busy || cli.log.length > 0) && (
