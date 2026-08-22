@@ -79,12 +79,14 @@ export default function LifecycleContextSidebar() {
   const handleEnvironmentSelect = (_envId: string, env: AnypointEnvironment | null) => {
     const nextEnvId = env?.id ?? "";
     setEnvId(nextEnvId);
-    if (orgId && nextEnvId) {
-      writeAnypointUiContext({ orgId, envId: nextEnvId });
-      return;
-    }
-    // Clearing environment must keep the selected business group context.
-    writeAnypointUiContext(orgId ? { orgId } : null);
+    // Never write the shared context when no business group is selected. The
+    // environment selector fires a mount-time onSelect(ENV_NONE) during the
+    // orgId="" transient (before this sidebar restores orgId); without this
+    // guard that would writeAnypointUiContext(null) and wipe the org+env the
+    // Tracer had persisted, right before our restore effect reads it. Clearing
+    // the whole context on business-group deselect is handled by handleOrgSelect.
+    if (!orgId) return;
+    writeAnypointUiContext(nextEnvId ? { orgId, envId: nextEnvId } : { orgId });
   };
 
   const handleToggle = () => {
