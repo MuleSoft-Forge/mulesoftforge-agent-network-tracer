@@ -30,6 +30,7 @@ import DeployDiagnosisDialog, {
   type RuntimeManagerLogGroup,
 } from "@/components/desktop/DeployDiagnosisDialog";
 import TeardownPanel from "@/components/desktop/TeardownPanel";
+import StubbornTeardownPanel from "@/components/desktop/StubbornTeardownPanel";
 import { formatRawCliLog } from "@/lib/desktop/cli-output-parser";
 import { diagnoseDeployOutput } from "@/lib/lifecycle/deploy-diagnostics";
 import type { LogLine } from "@/lib/lifecycle/log-lines";
@@ -759,6 +760,14 @@ export default function RemoteLifecyclePanel() {
           onRun={runTeardown}
         />
       </div>
+
+      {/*
+        Stubborn teardown sits below the CLI teardown, full width: it is the
+        escape hatch for when the CLI-based Unpublish above cannot remove an
+        asset (403 on MAF/agent types), leaving orphans in Exchange. It talks to
+        the Exchange API directly rather than the hosted worker/CLI.
+      */}
+      <StubbornTeardownPanel />
 
       {/* Activity */}
       {(cli.busy || cli.log.length > 0) && (

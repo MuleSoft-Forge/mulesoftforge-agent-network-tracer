@@ -259,6 +259,56 @@ export async function searchExchangeAssets(
   return { hits: [], attempt: "none" };
 }
 
+/**
+ * Lists every asset owned by `organizationId`, across all types, with NO search
+ * term. This is the "stubborn teardown" listing: a normal teardown searches by
+ * network name and misses orphaned agent/mcp/llm assets a failed CLI delete left
+ * behind, so here we enumerate the whole business group instead.
+ *
+ * We omit `search` entirely (rather than sending `""`) so pseas treats the query
+ * as "everything this org owns" instead of a keyword match, and omit `types` so
+ * every asset type comes back. Results are deduped to one row per asset (latest
+ * version); the caller resolves every version before deleting.
+ */
+export async function listAllExchangeAssetsInOrg(
+  baseUrl: string,
+  organizationId: string,
+  authHeader: Record<string, string>,
+  fetchFn: FetchFn = fetch,
+  size = 250
+): Promise<ExchangeSearchHit[]> {
+  const body: Record<string, unknown> = {
+    size,
+    organizationId: [organizationId],
+  };
+
+  let hits: PseasHit[] = [];
+  try {
+    const res = await fetchFn(`${baseUrl}/exchange/api/v2/pseas/_search`, {
+      method: "POST",
+      headers: { ...authHeader, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { hits?: PseasHit[] };
+    hits = data.hits ?? [];
+  } catch {
+    return [];
+  }
+
+  const byKey = new Map<string, ExchangeSearchHit>();
+  for (const raw of hits) {
+    const hit = mapPseasHit(raw);
+    if (!hit) continue;
+    // Only assets actually owned by this business group — an unscoped index can
+    // leak provider/shared rows, and we must never offer to delete those.
+    if (hit.organizationId && hit.organizationId !== organizationId) continue;
+    const key = `${hit.groupId}:${hit.assetId}`;
+    if (!byKey.has(key)) byKey.set(key, hit);
+  }
+  return Array.from(byKey.values());
+}
+
 /** Exchange v2 REST responses sometimes wrap payloads as `{ value: T }`. */
 export function normalizeExchangeDetail(body: unknown): Record<string, unknown> | null {
   if (!body || typeof body !== "object") return null;
