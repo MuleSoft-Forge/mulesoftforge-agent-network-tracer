@@ -24,14 +24,14 @@ export default function RootLayout({
             {children}
           </div>
           <footer className="shrink-0 border-t border-gray-200/70 bg-white/80 px-3 py-1 text-center text-[11px] text-gray-500 backdrop-blur">
-            Hosted on{" "}
+            Open sourced at{" "}
             <a
-              href="https://fly.io/"
+              href="https://github.com/MuleSoft-Forge/mulesoftforge-agent-network-tracer"
               target="_blank"
               rel="noopener noreferrer"
               className="font-medium text-primary hover:underline"
             >
-              Fly.io
+              MuleSoft Forge
             </a>
           </footer>
         </DebugViewerProvider>

@@ -71,7 +71,32 @@ export default function PrivacyPolicyContent({
       </section>
 
       <section>
-        <h2 className="mb-2 text-lg font-semibold text-gray-900">5. Third-party platforms</h2>
+        <h2 className="mb-2 text-lg font-semibold text-gray-900">5. Usage logging</h2>
+        <p>
+          To keep the App running and to help the people using it, the maintainer keeps basic logs of
+          activity. This is done to understand usage, diagnose problems, and provide support —{" "}
+          <strong>not</strong> to market to you, profile you, or sell your data to anyone.
+        </p>
+        <ul className="mt-2 list-disc space-y-2 pl-6">
+          <li>
+            <strong>Sign-in records:</strong> When you sign in, we record who signed in — your Anypoint
+            identity (such as username or email and organization) and when — so we can gauge how the App
+            is used and assist you if you ask for help.
+          </li>
+          <li>
+            <strong>Build server activity:</strong> Lifecycle jobs that run on the build/worker server
+            are logged — what ran, when, and whether it succeeded or failed — so runs can be traced and
+            issues fixed.
+          </li>
+        </ul>
+        <p className="mt-2">
+          These logs are used only to operate and improve the App and to help you. They are never used
+          for advertising, marketing, or sale to third parties.
+        </p>
+      </section>
+
+      <section>
+        <h2 className="mb-2 text-lg font-semibold text-gray-900">6. Third-party platforms</h2>
         <p>
           This app depends on third-party infrastructure including MuleSoft Anypoint Platform and is
           hosted on{" "}
@@ -89,7 +114,7 @@ export default function PrivacyPolicyContent({
 
       <section>
         <h2 className="mb-2 text-lg font-semibold text-gray-900">
-          6. Personal project disclaimer and user responsibility
+          7. Personal project disclaimer and user responsibility
         </h2>
         <ul className="list-disc space-y-2 pl-6">
           <li>
@@ -103,7 +128,7 @@ export default function PrivacyPolicyContent({
       </section>
 
       <section>
-        <h2 className="mb-2 text-lg font-semibold text-gray-900">7. Contact</h2>
+        <h2 className="mb-2 text-lg font-semibold text-gray-900">8. Contact</h2>
         <p>
           For bug reports or privacy questions about this app, contact the project maintainer
           directly. Do not use official MuleSoft/Salesforce support channels for this unofficial

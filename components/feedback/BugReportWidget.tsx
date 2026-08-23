@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Bug, Camera, ClipboardPaste, Copy, Loader2, X } from "lucide-react";
+import { Camera, ClipboardPaste, Copy, Loader2, X } from "lucide-react";
 import { useBugReport } from "@/components/feedback/BugReportProvider";
 import {
   captureTabScreenshot,
@@ -17,20 +17,6 @@ type SubmitState =
   | { kind: "submitting" }
   | { kind: "success"; issueUrl: string; issueNumber: number }
   | { kind: "error"; message: string };
-
-function BugReportFabButton({ onClick }: { onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title="Report a bug"
-      aria-label="Report a bug"
-      className="group fixed right-3 top-[3.75rem] z-[60] flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border border-red-400/35 bg-gradient-to-br from-red-600 via-red-800 to-[#450a0a] text-white shadow-[0_4px_16px_rgba(127,29,29,0.65),inset_0_1px_1px_rgba(255,255,255,0.45)] transition-all duration-200 hover:scale-105 hover:border-red-300/50 hover:shadow-[0_6px_22px_rgba(153,27,27,0.8),inset_0_1px_2px_rgba(255,255,255,0.55)] focus:outline-none focus:ring-2 focus:ring-red-700 focus:ring-offset-2 before:pointer-events-none before:absolute before:inset-0 before:rounded-full before:bg-gradient-to-br before:from-white/40 before:via-white/10 before:to-transparent"
-    >
-      <Bug className="relative z-10 h-5 w-5 drop-shadow-sm" aria-hidden />
-    </button>
-  );
-}
 
 function BugReportModal() {
   const { open, prefill, closeBugReport } = useBugReport();
@@ -425,12 +411,9 @@ function BugReportModal() {
 }
 
 export default function BugReportWidget() {
-  const { open, openBugReport } = useBugReport();
+  const { open } = useBugReport();
 
-  return (
-    <>
-      <BugReportFabButton onClick={() => openBugReport()} />
-      {open ? <BugReportModal /> : null}
-    </>
-  );
+  // The trigger now lives in the header (dispatches the open-bug-report event);
+  // this widget just renders the modal when the provider flips `open`.
+  return open ? <BugReportModal /> : null;
 }

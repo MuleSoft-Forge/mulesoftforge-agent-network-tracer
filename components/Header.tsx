@@ -4,7 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
-import { ChevronDown, LogOut, RefreshCw } from "lucide-react";
+import { Bug, ChevronDown, LogOut, RefreshCw } from "lucide-react";
 import BetaBadge from "@/components/ui/BetaBadge";
 import { REGIONS } from "@/lib/regions";
 import type { RegionOption } from "@/lib/regions";
@@ -21,7 +21,7 @@ type NavItem = {
 };
 
 const NAV_ITEMS: NavItem[] = [
-  { href: "/agent-network", label: "Tracer", requiresAuth: true },
+  { href: "/agent-network", label: "Tracer", requiresAuth: true, beta: true },
   { href: "/builder", label: "Builder", requiresAuth: true, beta: true },
   { href: "/lifecycle", label: "Build & Publish", requiresAuth: true, beta: true },
   { href: "/ops", label: "Ops", requiresAuth: true, requiresOps: true },
@@ -172,6 +172,17 @@ export default function Header() {
         <div className="flex shrink-0 items-center gap-3">
           {authenticated && (
             <>
+              <button
+                type="button"
+                onClick={() =>
+                  window.dispatchEvent(new CustomEvent("agent-network:open-bug-report"))
+                }
+                title="Report a bug"
+                aria-label="Report a bug"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-red-200/70 bg-red-50/70 text-red-600 shadow-sm transition-colors hover:bg-red-100 hover:text-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
+              >
+                <Bug className="h-4 w-4" aria-hidden="true" />
+              </button>
               {regionLabel && anypointBaseUrl && (
                 <>
                   <a

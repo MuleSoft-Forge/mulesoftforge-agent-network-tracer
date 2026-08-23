@@ -30,6 +30,7 @@ export const SUITE_PRODUCTS: SuiteProduct[] = [
     redirectPath: "/agent-network",
     accent: "from-blue-500 to-indigo-600",
     image: { kind: "path", src: "/ant-logo-landing.png", alt: "Tracer ant mascot" },
+    beta: true,
   },
   {
     id: "builder",
