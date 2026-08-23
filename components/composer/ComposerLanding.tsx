@@ -20,6 +20,7 @@ import { clearComposerSession, hasComposerDraft } from "@/lib/composer/session-p
 import {
   deleteSavedProject,
   listSavedProjects,
+  savedProjectId,
   PROJECT_LIBRARY_CHANGED_EVENT,
   type SavedProjectEntry,
 } from "@/lib/composer/project-library";
@@ -77,6 +78,14 @@ export default function ComposerLanding({
     () => networks.find((n) => networkKey(n) === selectedKey),
     [networks, selectedKey]
   );
+
+  // The current draft and its browser-saved copy share one savedProjectId, so a
+  // saved project that IS the current draft would otherwise show twice. Drop it
+  // from the saved list and let the draft card stand in for it.
+  const savedToShow = useMemo(() => {
+    const currentId = showDraftResume ? savedProjectId(project) : null;
+    return currentId ? savedProjects.filter((e) => e.id !== currentId) : savedProjects;
+  }, [savedProjects, showDraftResume, project]);
 
   useEffect(() => {
     setExpanded(getStoredExpanded());
@@ -305,53 +314,59 @@ export default function ComposerLanding({
       {/* Main content — project picker, not a marketing hero */}
       <div className="flex min-h-0 flex-1 flex-col overflow-auto bg-composer-surface-muted px-6 py-8 md:py-10">
         <div className="mx-auto w-full max-w-4xl">
-          {showDraftResume ? (
-            <section className="mb-8 border-l-4 border-primary bg-white px-5 py-4">
-              <p className="text-[11px] font-semibold uppercase tracking-widest text-primary">Saved draft</p>
-              <h2 className="mt-1 text-xl font-semibold tracking-tight text-gray-900">
-                {project.identity.name}
-              </h2>
-              {project.identity.assetId ? (
-                <p className="mt-0.5 font-mono text-xs text-gray-500">{project.identity.assetId}</p>
-              ) : null}
-              {project.identity.organizationId?.trim() ? (
-                <p className="mt-0.5 font-mono text-xs text-gray-500">
-                  {project.identity.organizationId.trim()}
-                </p>
-              ) : (
-                <p className="mt-2 text-xs text-amber-700">
-                  Organization id missing — select your business group in the sidebar, then continue.
-                </p>
-              )}
-              <div className="mt-4 flex flex-wrap gap-2">
-                <Button
-                  variant="primary"
-                  disabled={!project.identity.organizationId?.trim() && !orgId}
-                  onClick={handleContinueEditing}
-                >
-                  Continue editing <ArrowRight className="h-4 w-4" />
-                </Button>
-                <Button variant="secondary" onClick={handleDiscardDraft}>
-                  Discard draft
-                </Button>
-              </div>
-            </section>
-          ) : null}
-
-          {savedProjects.length > 0 ? (
+          {showDraftResume || savedToShow.length > 0 ? (
             <section className="mb-8 rounded-anypoint border border-composer-border bg-white p-5">
               <div className="mb-1 flex items-center gap-2">
                 <MuleIcon name="agentNetwork" size={18} />
-                <h2 className="text-sm font-semibold text-gray-900">
-                  Saved projects ({savedProjects.length})
-                </h2>
+                <h2 className="text-sm font-semibold text-gray-900">Projects in this browser</h2>
               </div>
               <p className="text-xs leading-relaxed text-composer-label-muted">
-                Kept in this browser with <strong>Save in browser</strong>. Opening one replaces the project
-                currently in the Builder, so save that first if you still need it.
+                Your current draft plus anything you kept with <strong>Save in browser</strong>. Opening one
+                replaces the project currently in the Builder, so save that first if you still need it.
               </p>
               <ul className="mt-4 space-y-2">
-                {savedProjects.map((entry) => (
+                {showDraftResume ? (
+                  <li className="rounded-anypoint border border-l-4 border-composer-border border-l-primary bg-composer-surface-muted/20 px-4 py-3">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+                            Current
+                          </span>
+                          <p className="truncate text-sm font-semibold text-gray-900">
+                            {project.identity.name || "Untitled network"}
+                          </p>
+                        </div>
+                        <p className="mt-0.5 truncate font-mono text-[11px] text-gray-500">
+                          {project.identity.assetId || "no-asset-id"}
+                          {project.identity.version ? ` · ${project.identity.version}` : ""}
+                        </p>
+                        {project.identity.organizationId?.trim() ? (
+                          <p className="mt-0.5 truncate font-mono text-[11px] text-gray-500">
+                            {project.identity.organizationId.trim()}
+                          </p>
+                        ) : (
+                          <p className="mt-1 text-[11px] text-amber-700">
+                            Organization id missing — select your business group in the sidebar, then continue.
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex shrink-0 gap-2">
+                        <Button
+                          variant="primary"
+                          disabled={!project.identity.organizationId?.trim() && !orgId}
+                          onClick={handleContinueEditing}
+                        >
+                          Continue editing <ArrowRight className="h-4 w-4" />
+                        </Button>
+                        <Button variant="danger" onClick={handleDiscardDraft}>
+                          <Trash2 className="h-3.5 w-3.5" /> Discard
+                        </Button>
+                      </div>
+                    </div>
+                  </li>
+                ) : null}
+                {savedToShow.map((entry) => (
                   <li
                     key={entry.id}
                     className="flex flex-wrap items-center gap-3 rounded-anypoint border border-composer-border bg-composer-surface-muted/20 px-4 py-3"
@@ -431,12 +446,12 @@ export default function ComposerLanding({
                 onChange={(e) => void handleLocalZipChange(e)}
               />
 
-              <section className="mb-6 grid gap-4 sm:grid-cols-2">
-                {/* 1) Exchange */}
+              <section className="mb-6 grid gap-4 sm:grid-cols-3">
+                {/* Exchange */}
                 <article className="flex h-full flex-col rounded-anypoint border border-composer-border bg-white p-5">
                   <div className="mb-3 flex items-center gap-2">
                     <MuleIcon name="exchange" size={18} />
-                    <h2 className="text-sm font-semibold text-gray-900">1) Open from Exchange</h2>
+                    <h2 className="text-sm font-semibold text-gray-900">Open from Exchange</h2>
                   </div>
                   <div className="flex-1 space-y-3">
                     {loading ? (
@@ -509,11 +524,11 @@ export default function ComposerLanding({
                   </Button>
                 </article>
 
-                {/* 2) Local */}
+                {/* Local */}
                 <article className="flex h-full flex-col rounded-anypoint border border-composer-border bg-white p-5">
                   <div className="mb-3 flex items-center gap-2">
                     <MuleIcon name="agentNetwork" size={18} />
-                    <h2 className="text-sm font-semibold text-gray-900">2) Open local project</h2>
+                    <h2 className="text-sm font-semibold text-gray-900">Open local project</h2>
                   </div>
                   <p className="text-xs leading-relaxed text-composer-label-muted">
                     Folder or zip with <span className="font-mono">exchange.json</span>,{" "}
@@ -556,44 +571,17 @@ export default function ComposerLanding({
                   ) : null}
                 </article>
 
-                {/* 3) Blank */}
+                {/* Blank */}
                 <article className="flex h-full flex-col rounded-anypoint border border-composer-border bg-white p-5">
                   <div className="mb-3 flex items-center gap-2">
                     <MuleIcon name="agentNetwork" size={18} />
-                    <h2 className="text-sm font-semibold text-gray-900">3) Start blank</h2>
+                    <h2 className="text-sm font-semibold text-gray-900">Start blank</h2>
                   </div>
                   <p className="flex-1 text-xs leading-relaxed text-composer-label-muted">
                     Empty identity, broker shell, and graph — build from scratch.
                   </p>
                   <Button variant="primary" className="mt-4 w-full" onClick={handleCreateNew}>
                     Create blank network <ArrowRight className="h-4 w-4" />
-                  </Button>
-                </article>
-
-                {/* 4) Prebuilt */}
-                <article className="flex h-full flex-col rounded-anypoint border border-composer-border bg-white p-5">
-                  <p className="text-[11px] font-semibold uppercase tracking-widest text-primary">
-                    {COMPOSER_WORKSHOP_TEMPLATE.eyebrow}
-                  </p>
-                  <h2 className="mt-1 text-sm font-semibold text-gray-900">4) Open prebuilt template</h2>
-                  <p className="mt-2 flex-1 text-xs leading-relaxed text-composer-label-muted">
-                    {COMPOSER_WORKSHOP_TEMPLATE.summary}
-                  </p>
-                  <a
-                    href={COMPOSER_WORKSHOP_TEMPLATE.workshopUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-primary hover:text-primary/80"
-                  >
-                    {COMPOSER_WORKSHOP_TEMPLATE.workshopLabel}{" "}
-                    <ExternalLink className="h-3 w-3" aria-hidden />
-                  </a>
-                  <Button
-                    variant="primary"
-                    className="mt-4 w-full"
-                    onClick={() => handleLoadExample(COMPOSER_WORKSHOP_TEMPLATE.id)}
-                  >
-                    Open in Builder <ArrowRight className="h-4 w-4" />
                   </Button>
                 </article>
               </section>
@@ -610,13 +598,70 @@ export default function ComposerLanding({
             <section className="mb-6 rounded-anypoint border border-composer-border bg-white p-5">
               <div className="mb-3 flex items-center gap-2">
                 <MuleIcon name="agentNetwork" size={18} />
-                <h2 className="text-sm font-semibold text-gray-900">More prebuilt examples</h2>
+                <h2 className="text-sm font-semibold text-gray-900">Examples</h2>
               </div>
               <p className="text-xs leading-relaxed text-composer-label-muted">
                 Open an official Agent Network 2.0 sample in Builder — explore a full broker graph, registry, and
                 connections without starting from scratch.
               </p>
               <ul className="mt-4 space-y-3">
+                {/* Featured workshop template — full picture and write-up */}
+                <li className="overflow-hidden rounded-anypoint border border-composer-border bg-composer-surface-muted/20">
+                  <div className="p-4">
+                    <p className="text-[11px] font-semibold uppercase tracking-widest text-primary">
+                      {COMPOSER_WORKSHOP_TEMPLATE.eyebrow}
+                    </p>
+                    <p className="mt-1 text-sm font-semibold text-gray-900">
+                      {COMPOSER_WORKSHOP_TEMPLATE.title}
+                    </p>
+                    <p className="mt-1 text-xs leading-relaxed text-composer-label-muted">
+                      {COMPOSER_WORKSHOP_TEMPLATE.summary}
+                    </p>
+                    <a
+                      href={COMPOSER_WORKSHOP_TEMPLATE.workshopUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-primary hover:text-primary/80"
+                    >
+                      {COMPOSER_WORKSHOP_TEMPLATE.workshopLabel}{" "}
+                      <ExternalLink className="h-3 w-3" aria-hidden />
+                    </a>
+
+                    <Image
+                      src={COMPOSER_WORKSHOP_TEMPLATE.imageSrc}
+                      alt={COMPOSER_WORKSHOP_TEMPLATE.imageAlt}
+                      width={COMPOSER_WORKSHOP_TEMPLATE.imageWidth}
+                      height={COMPOSER_WORKSHOP_TEMPLATE.imageHeight}
+                      className="mt-4 h-auto w-full rounded-anypoint border border-composer-border bg-white"
+                      sizes="(min-width: 896px) 896px, 100vw"
+                    />
+
+                    <ul className="mt-4 space-y-1.5 text-xs leading-relaxed text-composer-label-muted">
+                      {COMPOSER_WORKSHOP_TEMPLATE.highlights.map((highlight, i) => (
+                        <li key={i} className="flex gap-2">
+                          <span
+                            className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-primary"
+                            aria-hidden
+                          />
+                          <span>{highlight}</span>
+                        </li>
+                      ))}
+                    </ul>
+
+                    <p className="mt-3 rounded-anypoint border border-composer-border bg-white px-3 py-2 text-[11px] leading-relaxed text-composer-label-muted">
+                      {COMPOSER_WORKSHOP_TEMPLATE.note}
+                    </p>
+
+                    <Button
+                      variant="primary"
+                      className="mt-4 self-start"
+                      onClick={() => handleLoadExample(COMPOSER_WORKSHOP_TEMPLATE.id)}
+                    >
+                      Open in Builder <ArrowRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </li>
+
                 {COMPOSER_EXAMPLES.map((example) => (
                   <li
                     key={example.id}
