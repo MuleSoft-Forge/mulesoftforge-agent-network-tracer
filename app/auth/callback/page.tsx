@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { consumePostAuthRedirect } from "@/lib/post-auth-redirect";
 
@@ -8,8 +8,16 @@ function CallbackContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [error, setError] = useState<string | null>(null);
+  // State validation and code exchange are both one-time-use server side, so a
+  // second invocation (React Strict Mode's dev double-invoke, or any other
+  // re-run of this effect) must not repeat them — it would either see the
+  // state already consumed or redeem an already-redeemed code.
+  const ranRef = useRef(false);
 
   useEffect(() => {
+    if (ranRef.current) return;
+    ranRef.current = true;
+
     // Check for OAuth errors in URL hash (Anypoint uses hash fragments for errors)
     const hash = window.location.hash.substring(1);
     const hashParams = new URLSearchParams(hash);
