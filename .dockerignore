@@ -31,3 +31,7 @@ hidefromgit
 # Not needed at build/runtime
 docs
 examples
+
+# Local-only archive of superseded code — huge (~475 MB), untracked, and never
+# part of the image. Leaving it out of the context keeps deploy uploads small.
+deprecated
