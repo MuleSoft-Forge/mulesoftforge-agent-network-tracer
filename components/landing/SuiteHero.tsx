@@ -1,5 +1,6 @@
 import Image from "next/image";
 import ControlPlaneSignIn from "@/components/ControlPlaneSignIn";
+import TrialCallout from "@/components/landing/TrialCallout";
 import type { RegionId } from "@/lib/regions";
 
 export default function SuiteHero({
@@ -47,7 +48,10 @@ export default function SuiteHero({
         Tracing since February 17, 2026 · Building since August 4, 2026
       </p>
 
-      <div id="suite-sign-in" className="flex scroll-mt-24 justify-center">
+      <div
+        id="suite-sign-in"
+        className="flex scroll-mt-24 flex-col items-center justify-center gap-6 lg:flex-row lg:items-center"
+      >
         <div className="transform transition-all duration-300 hover:scale-105">
           <ControlPlaneSignIn
             defaultRegion={defaultRegion}
@@ -56,6 +60,7 @@ export default function SuiteHero({
             redirectPath={redirectPath}
           />
         </div>
+        <TrialCallout />
       </div>
     </div>
   );
