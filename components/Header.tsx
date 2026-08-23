@@ -25,7 +25,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/builder", label: "Builder", requiresAuth: true, beta: true },
   { href: "/lifecycle", label: "Build & Publish", requiresAuth: true, beta: true },
   { href: "/ops", label: "Ops", requiresAuth: true, requiresOps: true },
-  { href: "/about", label: "About", requiresAuth: false },
+  { href: "/help", label: "Help", requiresAuth: false },
   { href: "/privacy", label: "Privacy", requiresAuth: false },
 ];
 
@@ -149,7 +149,8 @@ export default function Header() {
                 (!item.requiresAuth || authenticated) && (!item.requiresOps || opsAccess)
             ).map((item: NavItem) => {
               const { href, label, beta } = item;
-              const isActive = pathname === href;
+              // Help spans several sub-pages; keep its tab lit across all of them.
+              const isActive = href === "/help" ? pathname.startsWith("/help") : pathname === href;
               return (
                 <Link
                   key={href}

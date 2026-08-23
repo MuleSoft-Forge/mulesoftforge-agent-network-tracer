@@ -27,8 +27,16 @@ import LineNumberedBlock from "@/components/LineNumberedBlock";
 import ExchangeMetadataView from "@/components/ExchangeMetadataView";
 import { parseExchangeMetadataFile } from "@/lib/mulesoft/exchange-asset-metadata";
 import { writeAnypointUiContext } from "@/lib/anypoint/ui-context";
+import HelpButton from "@/components/help/HelpButton";
 
 const DEFAULT_CANVAS_HEIGHT = 60; // 60% of height by default
+
+// Deep-link the "?" to the Tracer help section matching the current view mode.
+const HELP_ANCHOR_BY_VIEW: Record<ViewMode, string | undefined> = {
+  brokerActivity: undefined,
+  exchange: "exchange-versions",
+  llmProxy: "llm-proxy",
+};
 
 function parseViewModeParam(value: string | null): ViewMode | null {
   if (value === "brokerActivity" || value === "exchange" || value === "llmProxy") return value;
@@ -297,6 +305,7 @@ export default function MainContent() {
               LLM Proxy
             </button>
           </div>
+          <HelpButton page="tracer" anchor={HELP_ANCHOR_BY_VIEW[viewMode]} label="Tracer help" />
         </div>
 
         {viewMode === "brokerActivity" && activityError ? (

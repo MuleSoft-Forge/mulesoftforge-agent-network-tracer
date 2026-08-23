@@ -10,6 +10,9 @@
 # --- deps: full dependency tree (incl dev deps for the build + tsx worker) ---
 FROM node:22-bookworm-slim AS deps
 WORKDIR /app
+# `playwright` is a dev-only screenshot tool (help-docs capture); never let its
+# postinstall pull ~95MB of Chromium into the image.
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 COPY package.json package-lock.json ./
 RUN npm ci
 

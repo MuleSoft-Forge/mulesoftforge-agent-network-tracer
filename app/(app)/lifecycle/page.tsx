@@ -1,5 +1,6 @@
 import AgentNetworkLifecyclePanel from "@/components/desktop/AgentNetworkLifecyclePanel";
 import LifecycleContextSidebar from "@/components/desktop/LifecycleContextSidebar";
+import HelpButton from "@/components/help/HelpButton";
 
 export const metadata = {
   title: "Build & Publish",
@@ -12,7 +13,10 @@ export default function LifecyclePage() {
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="mx-auto max-w-6xl px-6 py-8">
           <header className="mb-8">
-            <h1 className="text-2xl font-semibold text-gray-900">Build &amp; Publish</h1>
+            <div className="flex items-start justify-between gap-4">
+              <h1 className="text-2xl font-semibold text-gray-900">Build &amp; Publish</h1>
+              <HelpButton page="build-publish" variant="pill" label="Help" />
+            </div>
             <p className="mt-1 max-w-3xl text-sm text-gray-600">
               Run publish and deploy through your configured lifecycle worker backend. This page loads project
               files and streams CLI execution from the worker.

@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   ChevronDown,
   HelpCircle,
+  BookOpen,
   ArrowLeft,
   Redo2,
   Search,
@@ -15,6 +16,7 @@ import {
 import { MuleIcon } from "@/components/composer/MuleIcon";
 import SegmentedControl from "@/components/composer/SegmentedControl";
 import BetaBadge from "@/components/ui/BetaBadge";
+import HelpButton from "@/components/help/HelpButton";
 import { ComposerProvider, useComposer } from "@/lib/composer/store";
 import { type ValidationIssue } from "@/lib/composer/validate";
 import { resolveIssueNavigation } from "@/lib/composer/issue-navigation";
@@ -575,6 +577,7 @@ function Inner({
             <HelpCircle className="h-3.5 w-3.5" />
             Help
           </button>
+          <HelpButton page="builder" variant="pill" icon={BookOpen} label="Docs" className="!px-2 !py-1 !text-xs" />
         </div>
       </div>
 
