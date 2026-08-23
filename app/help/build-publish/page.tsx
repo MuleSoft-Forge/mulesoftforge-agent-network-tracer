@@ -23,6 +23,7 @@ export default function BuildPublishPage() {
       </Callout>
 
       <Shot
+        src="/images/help/build-publish-panel.png"
         alt="Build & Publish panel with a loaded project and lifecycle actions"
         route="/lifecycle"
         state="Remote lifecycle enabled: Project card loaded, Deploy options, and the Publish/Deploy tiles"

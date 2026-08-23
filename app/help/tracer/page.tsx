@@ -25,6 +25,7 @@ export default function TracerPage() {
       </P>
 
       <Shot
+        src="/images/help/tracer-broker-activity.png"
         alt="Tracer with the network graph and a selected task"
         route="/agent-network"
         state="Broker Activity view: sidebar scope pickers, network canvas on top, task details below"

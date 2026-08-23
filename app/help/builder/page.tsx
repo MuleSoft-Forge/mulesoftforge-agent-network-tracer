@@ -51,6 +51,7 @@ export default function BuilderPage() {
       </Callout>
 
       <Shot
+        src="/images/help/builder-canvas-vogue.png"
         alt="Builder graph canvas with the Vogue Premiere example loaded"
         route="/builder"
         state="Editing phase, Vogue Premiere template open, AS Graph tab showing the node graph"
