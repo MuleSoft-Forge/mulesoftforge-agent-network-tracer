@@ -306,7 +306,6 @@ export default function BrokerActivityView({
               url={invokeState.brokerUrl}
               loaded={invokeState.brokerLoaded}
               processing={invokeState.isProcessing}
-              currentStep={invokeState.currentStep}
               agentCard={invokeState.agentCard}
               auth={invokeState.auth}
               suggestedUrl={suggestedUrl}

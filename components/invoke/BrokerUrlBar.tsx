@@ -13,7 +13,6 @@ interface BrokerUrlBarProps {
   url: string;
   loaded: boolean;
   processing: boolean;
-  currentStep: string;
   agentCard: AgentCard | null;
   /** URL resolved from Exchange when a broker is selected in the sidebar. */
   suggestedUrl?: string | null;
@@ -29,7 +28,6 @@ export default function BrokerUrlBar({
   url,
   loaded,
   processing,
-  currentStep,
   agentCard,
   suggestedUrl,
   suggestedA2aVersion,
@@ -278,12 +276,6 @@ export default function BrokerUrlBar({
           </p>
         )}
 
-        {processing && currentStep && (
-          <div className="flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-primary animate-ping shrink-0" />
-            <span className="text-[11px] text-gray-500">{currentStep}</span>
-          </div>
-        )}
         {error && (
           <p className="text-[11px] text-red-500">{error}</p>
         )}

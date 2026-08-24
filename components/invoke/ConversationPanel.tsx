@@ -97,13 +97,16 @@ function MessageBubble({
           type="button"
           onClick={hasPayload ? () => onInspect(msg) : undefined}
           title={hasPayload ? inspectTitle : undefined}
-          className={`group relative max-w-[88%] rounded-2xl rounded-br-sm px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap text-left bg-primary text-white ${
+          className={`flex max-w-[88%] flex-col items-end gap-1 rounded-2xl rounded-br-sm px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap text-left bg-primary text-white ${
             hasPayload ? "cursor-pointer hover:brightness-110" : "cursor-default"
           }`}
         >
           {msg.content}
           {hasPayload && (
-            <Braces className="absolute -top-1.5 -left-1.5 h-4 w-4 rounded-full bg-white p-0.5 text-primary opacity-0 shadow group-hover:opacity-100" />
+            <span className="flex items-center gap-1 text-[10px] font-medium text-white/75">
+              <Braces className="h-3 w-3" />
+              View sent JSON
+            </span>
           )}
         </button>
       </div>
@@ -122,13 +125,16 @@ function MessageBubble({
           type="button"
           onClick={hasPayload ? () => onInspect(msg) : undefined}
           title={hasPayload ? inspectTitle : undefined}
-          className={`group relative max-w-[84%] rounded-2xl rounded-tl-sm px-4 py-3 bg-red-50 text-red-700 border border-red-200 text-left ${
+          className={`flex max-w-[84%] flex-col items-start gap-1 rounded-2xl rounded-tl-sm px-4 py-3 bg-red-50 text-red-700 border border-red-200 text-left ${
             hasPayload ? "cursor-pointer hover:bg-red-100" : "cursor-default"
           }`}
         >
           <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
           {hasPayload && (
-            <Braces className="absolute -top-1.5 -right-1.5 h-4 w-4 rounded-full bg-white p-0.5 text-red-600 opacity-0 shadow group-hover:opacity-100" />
+            <span className="flex items-center gap-1 text-[10px] font-medium text-red-500">
+              <Braces className="h-3 w-3" />
+              View raw response
+            </span>
           )}
         </button>
       </div>
@@ -146,13 +152,16 @@ function MessageBubble({
         type="button"
         onClick={hasPayload ? () => onInspect(msg) : undefined}
         title={hasPayload ? inspectTitle : undefined}
-        className={`group relative max-w-[84%] rounded-2xl rounded-tl-sm px-4 py-3 bg-gray-50 text-gray-900 border border-gray-200 text-left ${
+        className={`flex max-w-[84%] flex-col items-start gap-1 rounded-2xl rounded-tl-sm px-4 py-3 bg-gray-50 text-gray-900 border border-gray-200 text-left ${
           hasPayload ? "cursor-pointer hover:bg-gray-100" : "cursor-default"
         }`}
       >
         <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
         {hasPayload && (
-          <Braces className="absolute -top-1.5 -right-1.5 h-4 w-4 rounded-full bg-white p-0.5 text-gray-500 opacity-0 shadow group-hover:opacity-100" />
+          <span className="flex items-center gap-1 text-[10px] font-medium text-gray-500">
+            <Braces className="h-3 w-3" />
+            View raw response
+          </span>
         )}
       </button>
     </div>
