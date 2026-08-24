@@ -498,8 +498,7 @@ export default function TeardownPanel({ busy, runningCommand, onRun }: TeardownP
             Unpublish
           </button>
           <p className="mt-2 text-[11px] text-gray-600">
-            Erases the asset version from Exchange. Undeploy the network first if it is still
-            running. Neither mode below can be undone.
+            Erases the asset version from Exchange. Neither mode below can be undone.
           </p>
 
           <fieldset className="mt-3" disabled={busy}>

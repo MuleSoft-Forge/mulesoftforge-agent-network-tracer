@@ -101,9 +101,10 @@ export default function TroubleshootingPage() {
         connections, an API Manager instance, an AMC deployment — that still reference the asset.
       </P>
       <Callout tone="tip" title="Fix">
-        <strong>Undeploy first, then unpublish.</strong> Unpublish never undeploys for you — Anypoint won&apos;t
-        erase an Exchange version while deployed resources still reference it. Expect to revoke any active API
-        contracts during undeploy.
+        <strong>Undeploy first.</strong> Unpublish never undeploys for you — Anypoint won&apos;t erase an
+        Exchange version while deployed resources still reference it. Undeploying once is not always enough: if
+        the network is deployed to more than one environment, undeploy each one, and retry unpublish if it still
+        lists resources. Expect to revoke any active API contracts during undeploy.
       </Callout>
 
       <H2 id="unpublish-hard-delete-window">Hard-delete window</H2>

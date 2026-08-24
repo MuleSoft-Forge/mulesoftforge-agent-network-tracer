@@ -148,7 +148,9 @@ export default function BuildPublishPage() {
         <LI>
           <strong>Undeploy &amp; Unpublish</strong> — a convenience that chains the two in one job (undeploy,
           then unpublish with the delete mode chosen for Unpublish), for decommissioning a network entirely. Same
-          pre-flight contract check and irreversibility confirmation as running them separately.
+          pre-flight contract check and irreversibility confirmation as running them separately. Undeploying is
+          per-environment, so if this network is deployed to more than one, the unpublish step can still refuse —
+          rerun per environment.
         </LI>
       </UL>
       <Callout tone="danger" title="Hard vs soft delete is asymmetric">
@@ -159,7 +161,9 @@ export default function BuildPublishPage() {
       </Callout>
       <P>
         The right order: <strong>undeploy before unpublish</strong>, and expect to revoke contracts first — or
-        use the combined action to run them in that order automatically.
+        use the combined action to run them in that order automatically. Undeploying does not guarantee the
+        follow-on unpublish succeeds: it only clears the environment you undeployed, so a network deployed to
+        more than one still needs each undeployed before unpublish will stop refusing.
       </P>
 
       <H2 id="diagnosis">Reading a failure</H2>
