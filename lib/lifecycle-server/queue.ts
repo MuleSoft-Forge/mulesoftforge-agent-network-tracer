@@ -11,16 +11,16 @@ import { Queue } from "bullmq";
 import { config } from "./config";
 import { createRedis } from "./redis";
 import type {
-  CliCommand,
   DeployOptions,
   JobActor,
+  JobCommand,
   ProjectFileEntry,
   RemovalOptions,
 } from "./contracts";
 
 export interface LifecycleJobData {
   jobId: string;
-  command: CliCommand;
+  command: JobCommand;
   orgId: string;
   connectionRef: string;
   actor: JobActor;

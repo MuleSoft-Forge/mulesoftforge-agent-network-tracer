@@ -56,6 +56,7 @@ interface AnypointEnvironment {
  * here is removing the wrong thing, not clicking too fast.
  */
 function UnpublishConfirmDialog({
+  mode,
   target,
   assetId,
   deleteMode,
@@ -63,6 +64,8 @@ function UnpublishConfirmDialog({
   onCancel,
   onConfirm,
 }: {
+  /** "teardown" also undeploys first, in the same job, before the unpublish. */
+  mode: "unpublish" | "teardown";
   target: string;
   assetId: string;
   deleteMode: DeleteMode;
@@ -97,11 +100,17 @@ function UnpublishConfirmDialog({
         <div className="flex items-start gap-2 border-b border-gray-200 px-4 py-3">
           <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-red-600" aria-hidden />
           <h2 id="unpublish-confirm-title" className="text-sm font-semibold text-red-900">
-            Unpublish {assetId || "this asset"}?
+            {mode === "teardown"
+              ? `Undeploy and unpublish ${assetId || "this asset"}?`
+              : `Unpublish ${assetId || "this asset"}?`}
           </h2>
         </div>
         <div className="px-4 py-3">
-          <p className="text-xs text-gray-600">This removes from Exchange:</p>
+          <p className="text-xs text-gray-600">
+            {mode === "teardown"
+              ? "This undeploys the running network, then removes from Exchange:"
+              : "This removes from Exchange:"}
+          </p>
           <p className="mt-1 break-all rounded-lg bg-gray-50 px-2.5 py-2 font-mono text-xs text-gray-900">
             {target || "the loaded project"}
           </p>
@@ -119,7 +128,7 @@ function UnpublishConfirmDialog({
               </>
             )}
           </p>
-          {environment && (
+          {environment && mode === "unpublish" && (
             <p className="mt-2 text-[11px] text-gray-500">
               Anypoint will refuse this if the network still has active instances in {environment}.
             </p>
@@ -140,7 +149,11 @@ function UnpublishConfirmDialog({
             className="flex items-center gap-1.5 rounded-xl bg-red-600 px-3.5 py-2 text-xs font-medium text-white transition-colors hover:bg-red-700"
           >
             <Trash2 className="h-3.5 w-3.5" />
-            {deleteMode === "hard" ? "Hard delete" : "Soft delete"}
+            {mode === "teardown"
+              ? `Undeploy & ${deleteMode === "hard" ? "hard" : "soft"} delete`
+              : deleteMode === "hard"
+                ? "Hard delete"
+                : "Soft delete"}
           </button>
         </div>
       </div>
@@ -150,8 +163,8 @@ function UnpublishConfirmDialog({
 
 interface TeardownPanelProps {
   busy: boolean;
-  runningCommand: "unpublish" | "undeploy" | null;
-  onRun: (command: "unpublish" | "undeploy", removal: RemovalOptions) => void;
+  runningCommand: "unpublish" | "undeploy" | "teardown" | null;
+  onRun: (command: "unpublish" | "undeploy" | "teardown", removal: RemovalOptions) => void;
 }
 
 export default function TeardownPanel({ busy, runningCommand, onRun }: TeardownPanelProps) {
@@ -165,7 +178,8 @@ export default function TeardownPanel({ busy, runningCommand, onRun }: TeardownP
   // refuses costs one retry; a soft delete that succeeds costs the version.
   const [deleteMode, setDeleteMode] = useState<DeleteMode>("hard");
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [confirming, setConfirming] = useState(false);
+  // "teardown" also undeploys first (same job), before the confirmed unpublish.
+  const [confirming, setConfirming] = useState<false | "unpublish" | "teardown">(false);
   // Collapsed by default: teardown is a deliberate, occasional action, so it
   // stays out of the way until the operator opens it.
   const [collapsed, setCollapsed] = useState(true);
@@ -173,12 +187,14 @@ export default function TeardownPanel({ busy, runningCommand, onRun }: TeardownP
   // Pre-flight check for active API-instance contracts, run right before an
   // undeploy job is submitted. Anypoint refuses to remove an instance that
   // still has an approved contract, so this surfaces them up front instead of
-  // letting the CLI fail mid-run.
+  // letting the CLI fail mid-run. `intent` tracks which button started the
+  // check, since standalone undeploy and the combined teardown share this
+  // same check but resolve differently once it clears.
   const [contractsCheck, setContractsCheck] = useState<
     | { status: "idle" }
-    | { status: "checking" }
-    | { status: "found"; contracts: ActiveContractSummary[] }
-    | { status: "warning"; message: string }
+    | { status: "checking"; intent: "undeploy" | "teardown" }
+    | { status: "found"; contracts: ActiveContractSummary[]; intent: "undeploy" | "teardown" }
+    | { status: "warning"; message: string; intent: "undeploy" | "teardown" }
   >({ status: "idle" });
 
   useEffect(() => {
@@ -240,11 +256,11 @@ export default function TeardownPanel({ busy, runningCommand, onRun }: TeardownP
   const targetProblem = target ? null : "Choose a published network to remove.";
 
   const removal = useCallback(
-    (command: "unpublish" | "undeploy"): RemovalOptions => ({
+    (command: "unpublish" | "undeploy" | "teardown"): RemovalOptions => ({
       ...(orgId ? { organizationId: orgId } : {}),
       ...(environment ? { environment } : {}),
       ...(target ? { gav: target.gav } : {}),
-      ...(command === "unpublish" && deleteMode === "hard" ? { hardDelete: true } : {}),
+      ...(command !== "undeploy" && deleteMode === "hard" ? { hardDelete: true } : {}),
     }),
     [orgId, environment, target, deleteMode]
   );
@@ -262,9 +278,20 @@ export default function TeardownPanel({ busy, runningCommand, onRun }: TeardownP
     onRun("undeploy", removal("undeploy"));
   }
 
-  async function startUndeploy() {
+  /** Skip straight to the irreversible-unpublish confirm step for teardown. */
+  function proceedToTeardownConfirm() {
+    setContractsCheck({ status: "idle" });
+    setConfirming("teardown");
+  }
+
+  /**
+   * Shared pre-flight: check for active API contracts before either
+   * submitting undeploy directly, or (for the combined action) moving on to
+   * the same deliberate confirm step unpublish alone requires.
+   */
+  async function startTeardownFlow(intent: "undeploy" | "teardown") {
     if (undeployProblem || !orgId || !contextEnvId || !target) return;
-    setContractsCheck({ status: "checking" });
+    setContractsCheck({ status: "checking", intent });
     try {
       const params = new URLSearchParams({
         organizationId: orgId,
@@ -276,18 +303,29 @@ export default function TeardownPanel({ busy, runningCommand, onRun }: TeardownP
       const body = (await res.json()) as { contracts?: ActiveContractSummary[] };
       const contracts = body.contracts ?? [];
       if (contracts.length > 0) {
-        setContractsCheck({ status: "found", contracts });
-      } else {
+        setContractsCheck({ status: "found", contracts, intent });
+      } else if (intent === "undeploy") {
         submitUndeploy();
+      } else {
+        proceedToTeardownConfirm();
       }
     } catch (err) {
       setContractsCheck({
         status: "warning",
+        intent,
         message:
           (err instanceof Error ? err.message : "Could not check for active contracts") +
           " — Anypoint will refuse the undeploy if any exist.",
       });
     }
+  }
+
+  function startUndeploy() {
+    return startTeardownFlow("undeploy");
+  }
+
+  function startCombinedTeardown() {
+    return startTeardownFlow("teardown");
   }
 
   return (
@@ -310,19 +348,21 @@ export default function TeardownPanel({ busy, runningCommand, onRun }: TeardownP
           environmentId={contextEnvId}
           contracts={contractsCheck.contracts}
           onCancel={() => setContractsCheck({ status: "idle" })}
-          onProceed={submitUndeploy}
+          onProceed={contractsCheck.intent === "teardown" ? proceedToTeardownConfirm : submitUndeploy}
         />
       )}
       {confirming && target && (
         <UnpublishConfirmDialog
+          mode={confirming}
           target={target.gav}
           assetId={target.assetId}
           deleteMode={deleteMode}
           environment={environment}
           onCancel={() => setConfirming(false)}
           onConfirm={() => {
+            const command = confirming;
             setConfirming(false);
-            onRun("unpublish", removal("unpublish"));
+            if (command) onRun(command, removal(command));
           }}
         />
       )}
@@ -411,18 +451,21 @@ export default function TeardownPanel({ busy, runningCommand, onRun }: TeardownP
             disabled={busy || undeployProblem !== null || contractsCheck.status === "checking"}
             className="flex items-center gap-1.5 rounded-xl bg-red-600 px-3.5 py-2 text-xs font-medium text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {runningCommand === "undeploy" || contractsCheck.status === "checking" ? (
+            {runningCommand === "undeploy" ||
+            (contractsCheck.status === "checking" && contractsCheck.intent === "undeploy") ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
             ) : (
               <ServerCrash className="h-3.5 w-3.5" />
             )}
-            {contractsCheck.status === "checking" ? "Checking contracts…" : "Undeploy"}
+            {contractsCheck.status === "checking" && contractsCheck.intent === "undeploy"
+              ? "Checking contracts…"
+              : "Undeploy"}
           </button>
           <p className="mt-2 text-[11px] text-gray-600">
             Stops the running network. The Exchange asset stays, so you can deploy it again. Checks
             for active API contracts first and offers to revoke them.
           </p>
-          {contractsCheck.status === "warning" && (
+          {contractsCheck.status === "warning" && contractsCheck.intent === "undeploy" && (
             <div className="mt-2 flex items-start gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2">
               <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" aria-hidden />
               <div className="min-w-0">
@@ -443,7 +486,7 @@ export default function TeardownPanel({ busy, runningCommand, onRun }: TeardownP
           <button
             type="button"
             title={unpublishProblem ?? "Removes the published asset from Exchange"}
-            onClick={() => setConfirming(true)}
+            onClick={() => setConfirming("unpublish")}
             disabled={busy || unpublishProblem !== null}
             className="flex items-center gap-1.5 rounded-xl bg-red-600 px-3.5 py-2 text-xs font-medium text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-40"
           >
@@ -491,6 +534,49 @@ export default function TeardownPanel({ busy, runningCommand, onRun }: TeardownP
             </label>
           </fieldset>
 
+        </div>
+
+        <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+          <button
+            type="button"
+            title={
+              undeployProblem ??
+              "Checks for active API contracts, then undeploys and unpublishes in one job"
+            }
+            onClick={() => void startCombinedTeardown()}
+            disabled={busy || undeployProblem !== null || contractsCheck.status === "checking"}
+            className="flex items-center gap-1.5 rounded-xl bg-red-600 px-3.5 py-2 text-xs font-medium text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {runningCommand === "teardown" ||
+            (contractsCheck.status === "checking" && contractsCheck.intent === "teardown") ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Trash2 className="h-3.5 w-3.5" />
+            )}
+            {contractsCheck.status === "checking" && contractsCheck.intent === "teardown"
+              ? "Checking contracts…"
+              : "Undeploy & Unpublish"}
+          </button>
+          <p className="mt-2 text-[11px] text-gray-600">
+            Runs both in one job: undeploy, then unpublish with the delete mode chosen above. A
+            convenience for decommissioning a network entirely — checks for active API contracts
+            first, same as standalone undeploy. Neither step can be undone.
+          </p>
+          {contractsCheck.status === "warning" && contractsCheck.intent === "teardown" && (
+            <div className="mt-2 flex items-start gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2">
+              <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" aria-hidden />
+              <div className="min-w-0">
+                <p className="text-[11px] text-amber-800">{contractsCheck.message}</p>
+                <button
+                  type="button"
+                  onClick={proceedToTeardownConfirm}
+                  className="mt-1.5 rounded-lg border border-amber-300 bg-white px-2.5 py-1 text-[11px] text-amber-800 transition-colors hover:bg-amber-100"
+                >
+                  Continue anyway
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
         </>

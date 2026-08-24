@@ -146,8 +146,21 @@ function decodeJsonString(raw: string): string {
   }
 }
 
+/**
+ * Drop echoed `$ anypoint-cli-v4 ...` command lines before pattern-matching.
+ * They reflect flags *we* chose to pass (e.g. `--hard-delete`), not anything
+ * the CLI said back — a bare substring match against them misattributes the
+ * flag name itself as an error signal.
+ */
+function stripCommandEchoes(text: string): string {
+  return text
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("$ "))
+    .join("\n");
+}
+
 function buildFacts(input: DeployDiagnosisInput): DiagnosisFacts {
-  const text = stripAnsi(`${flattenText(input.resultJson)}\n${input.output}`);
+  const text = stripAnsi(stripCommandEchoes(`${flattenText(input.resultJson)}\n${input.output}`));
   return {
     command: input.command,
     orgId: input.orgId?.trim() || null,
@@ -339,25 +352,39 @@ const KNOWN_DEPLOY_ISSUES: KnownDeployIssue[] = [
     },
   },
   {
+    // errorCode 2007 is thrown client-side by the plugin's own preflight guard
+    // (guardAgainstDeployedResources) before it ever calls Exchange, so it is
+    // an exact, unambiguous signal — prefer it over text sniffing. The legacy
+    // regex matched an older "active API instances" wording the CLI no longer
+    // emits; keep it only as a fallback for output without a JSON payload.
     id: "unpublish-active-instances",
     priority: 30,
     detect(facts) {
       if (facts.command !== "unpublish") return null;
-      if (!/active.*(api|instance)/i.test(facts.text)) return null;
+      const hasCode = facts.errorCodes.has(2007);
+      const hasNewText = /deployed resource\(s\) still reference|still reference these assets/i.test(
+        facts.text
+      );
+      const hasLegacyText = /active.*(api|instance)/i.test(facts.text);
+      if (!hasCode && !hasNewText && !hasLegacyText) return null;
+      // The 2007 message already lists every blocking resource by kind/name —
+      // surface it verbatim instead of a generic sentence.
+      const detail = facts.errors.find((e) => e.code === 2007)?.message;
       return {
         id: "unpublish-active-instances",
-        title: "Asset still has active API instances",
+        title: "Deployed resources still reference this asset",
         severity: "error",
-        summary: "Unpublish was refused because the asset still has active API instances.",
+        summary: "Unpublish was refused because deployed resources still reference this asset (errorCode 2007).",
         explanation:
-          "You can't remove an Exchange asset while it still backs active API instances / deployments.",
+          detail ??
+          "You can't remove an Exchange asset while deployed resources (connections, API Manager instances, or AMC deployments) still reference it.",
         fixes: [
           {
             title: "Undeploy first",
-            detail: "Undeploy the network, then unpublish the asset.",
+            detail: "Run 'agent-network project undeploy', then retry the unpublish.",
           },
         ],
-        errorCodes: [],
+        errorCodes: hasCode ? [2007] : [],
         cascade: false,
       };
     },
@@ -367,6 +394,12 @@ const KNOWN_DEPLOY_ISSUES: KnownDeployIssue[] = [
     priority: 30,
     detect(facts) {
       if (facts.command !== "unpublish") return null;
+      // errorCode 2007 (deployed resources still reference the asset) and the
+      // "could not verify deployed resources" guard failure both legitimately
+      // mention "hard-delete" in their own message text — neither is the
+      // 7-day-window rejection this rule is for.
+      if (facts.errorCodes.has(2007)) return null;
+      if (/verify deployed resources before a hard.?delete/i.test(facts.text)) return null;
       if (!/hard.?delete/i.test(facts.text)) return null;
       return {
         id: "unpublish-hard-delete-window",

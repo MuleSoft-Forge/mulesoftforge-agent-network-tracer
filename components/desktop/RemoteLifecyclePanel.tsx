@@ -49,7 +49,7 @@ import {
   type LoadedBundle,
 } from "@/lib/lifecycle/read-project-bundle";
 import { useRemoteAgentNetworkCli } from "@/lib/lifecycle/useRemoteAgentNetworkCli";
-import { type CliCommand, type RemovalOptions } from "@/lib/lifecycle/types";
+import { type CliCommand, type JobCommand, type RemovalOptions } from "@/lib/lifecycle/types";
 import { loadComposerProjectFromSession } from "@/lib/composer/session-persistence";
 import { serializeProject } from "@/lib/composer/serialize";
 import { validateProject } from "@/lib/composer/validate";
@@ -308,7 +308,7 @@ function extractRuntimeManagerLogs(log: LogLine[]): RuntimeManagerLogGroup[] {
 
 export default function RemoteLifecyclePanel() {
   const cli = useRemoteAgentNetworkCli();
-  const [activeAction, setActiveAction] = useState<CliCommand | "publishAndDeploy" | null>(null);
+  const [activeAction, setActiveAction] = useState<JobCommand | "publishAndDeploy" | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [runtimeCli, setRuntimeCli] = useState<LifecycleConfigCli | null>(null);
   const [runtimeCliLoading, setRuntimeCliLoading] = useState(true);
@@ -331,9 +331,14 @@ export default function RemoteLifecyclePanel() {
   const parsedSummary = useMemo(() => parseCliSummary(cli.log), [cli.log]);
 
   // After a failed publish/deploy, scan the CLI output for known error
-  // signatures so we can offer a real fix instead of the raw cascade.
+  // signatures so we can offer a real fix instead of the raw cascade. The
+  // worker always resolves a composite command (teardown) to the real step
+  // that failed before reporting it, so "teardown" itself should never reach
+  // here — treat it as undiagnosable rather than mis-typing it through.
   const failedCommand =
-    cli.lastResult && !cli.lastResult.ok ? cli.lastResult.command : null;
+    cli.lastResult && !cli.lastResult.ok && cli.lastResult.command !== "teardown"
+      ? cli.lastResult.command
+      : null;
   const diagnoses = useMemo(
     () =>
       failedCommand
@@ -531,7 +536,7 @@ export default function RemoteLifecyclePanel() {
     });
   }
 
-  function runTeardown(command: "unpublish" | "undeploy", removal: RemovalOptions) {
+  function runTeardown(command: "unpublish" | "undeploy" | "teardown", removal: RemovalOptions) {
     setActiveAction(command);
     // Teardown always names a published asset by GAV, so the worker acts on
     // Exchange directly and needs no bundle — whatever is loaded here is
@@ -761,7 +766,9 @@ export default function RemoteLifecyclePanel() {
           <TeardownPanel
             busy={cli.busy}
             runningCommand={
-              cli.running === "unpublish" || cli.running === "undeploy" ? cli.running : null
+              cli.running === "unpublish" || cli.running === "undeploy" || cli.running === "teardown"
+                ? cli.running
+                : null
             }
             onRun={runTeardown}
           />

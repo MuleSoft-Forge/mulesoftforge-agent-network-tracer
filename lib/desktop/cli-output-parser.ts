@@ -1,10 +1,10 @@
-import type { CliCommand } from "@/lib/lifecycle/types";
+import type { JobCommand } from "@/lib/lifecycle/types";
 import type { LogLine } from "@/lib/lifecycle/log-lines";
 
 export type ActivityTone = "info" | "muted" | "success" | "warning" | "error";
 
 export type CliActivityItem =
-  | { kind: "run-start"; command: CliCommand | "install-plugin"; summary: string }
+  | { kind: "run-start"; command: JobCommand | "install-plugin"; summary: string }
   | { kind: "derived-space"; space: string; gateway: string }
   | { kind: "message"; text: string; tone: ActivityTone }
   | { kind: "deployment"; phase: "starting" | "waiting" | "finished"; label: string }
@@ -166,7 +166,7 @@ function collectOutputLines(log: LogLine[]): string[] {
   return lines;
 }
 
-function parseMetaLine(text: string, command?: CliCommand | "install-plugin"): CliActivityItem | null {
+function parseMetaLine(text: string, command?: JobCommand | "install-plugin"): CliActivityItem | null {
   if (text.startsWith("$ ")) {
     return {
       kind: "run-start",
@@ -207,7 +207,7 @@ export function formatRawCliLog(log: LogLine[]): string {
 /** Turn raw streamed CLI log lines into structured activity items for the UI. */
 export function parseCliActivityLog(
   log: LogLine[],
-  command?: CliCommand | "install-plugin"
+  command?: JobCommand | "install-plugin"
 ): CliActivityItem[] {
   const items: CliActivityItem[] = [];
   const seenErrors = new Set<string>();

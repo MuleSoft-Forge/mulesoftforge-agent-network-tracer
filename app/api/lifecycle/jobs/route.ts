@@ -6,9 +6,9 @@ import { resolveActorAndOrg } from "@/lib/lifecycle/actor";
 import { getStore, getQueue, isLifecycleConfigured } from "@/lib/lifecycle-server/runtime";
 import { config } from "@/lib/lifecycle-server/config";
 import {
-  CLI_COMMANDS,
+  JOB_COMMANDS,
   GAV_PATTERN,
-  isRemovalCommand,
+  isRemovalJobCommand,
   type JobRecord,
 } from "@/lib/lifecycle-server/contracts";
 import type { LifecycleJobData } from "@/lib/lifecycle-server/queue";
@@ -55,21 +55,27 @@ const removalSchema = z.object({
 
 const submitSchema = z
   .object({
-    command: z.enum(CLI_COMMANDS),
+    command: z.enum(JOB_COMMANDS),
     project: z.array(projectFileSchema).max(2000).default([]),
     deploy: deploySchema.optional(),
     removal: removalSchema.optional(),
     connectionRef: z.string().min(1).max(256).optional(),
     idempotencyKey: z.string().min(1).max(256).optional(),
   })
-  .refine((body) => !isRemovalCommand(body.command) || body.removal !== undefined, {
-    message: "removal options are required for unpublish and undeploy",
+  .refine((body) => !isRemovalJobCommand(body.command) || body.removal !== undefined, {
+    message: "removal options are required for unpublish, undeploy, and teardown",
     path: ["removal"],
   })
-  .refine((body) => body.command !== "undeploy" || Boolean(body.removal?.environment?.trim()), {
-    message: "an environment is required to undeploy",
-    path: ["removal", "environment"],
-  })
+  // teardown's first step is undeploy, so it needs the same environment.
+  .refine(
+    (body) =>
+      (body.command !== "undeploy" && body.command !== "teardown") ||
+      Boolean(body.removal?.environment?.trim()),
+    {
+      message: "an environment is required to undeploy",
+      path: ["removal", "environment"],
+    }
+  )
   // Every other command needs files; a removal by GAV deliberately has none.
   .refine((body) => Boolean(body.removal?.gav) || body.project.length > 0, {
     message: "a project bundle is required unless a gav is supplied",
@@ -113,7 +119,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  if (!isRemovalCommand(parsed.data.command)) {
+  if (!isRemovalJobCommand(parsed.data.command)) {
     try {
       const conformanceErrors = await validateAgentScriptEntries(parsed.data.project);
       if (conformanceErrors.length > 0) {

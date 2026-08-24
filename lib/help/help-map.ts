@@ -139,7 +139,7 @@ export const HELP_PAGES: HelpPage[] = [
       { id: "deploy-timed-out", label: "Deploy timed out" },
       { id: "permission-denied", label: "Permission denied" },
       { id: "deploy-needs-local-build", label: "No build artifacts" },
-      { id: "unpublish-active-instances", label: "Can't unpublish (active instances)" },
+      { id: "unpublish-active-instances", label: "Can't unpublish (deployed resources)" },
       { id: "unpublish-hard-delete-window", label: "Hard-delete window" },
       { id: "cli-flag-rejected", label: "Circular structure to JSON" },
       { id: "empty-tracer", label: "Tracer shows nothing" },

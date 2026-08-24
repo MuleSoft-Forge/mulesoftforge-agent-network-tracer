@@ -7,6 +7,12 @@ import type { DeployOptions } from "@/lib/desktop/deploy-options";
 
 export type { DeployOptions } from "@/lib/desktop/deploy-options";
 export type CliCommand = "build" | "publish" | "deploy" | "unpublish" | "undeploy";
+/**
+ * A client-requested job command. "teardown" is a composite the worker
+ * expands into undeploy then unpublish — it is never itself a CLI step, so
+ * job results report back one of the real `CliCommand` values.
+ */
+export type JobCommand = CliCommand | "teardown";
 
 export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 
@@ -29,7 +35,7 @@ export interface ProjectFileEntry {
 
 export interface JobRecord {
   id: string;
-  command: CliCommand;
+  command: JobCommand;
   status: JobStatus;
   orgId: string;
   connectionRef: string;
@@ -47,10 +53,18 @@ export interface JobRecord {
 export type JobEvent =
   | { type: "status"; status: JobStatus; at: string }
   | { type: "log"; channel: "stdout" | "stderr" | "meta"; chunk: string; at: string }
-  | { type: "result"; ok: boolean; exitCode: number | null; json: unknown; at: string };
+  | {
+      type: "result";
+      ok: boolean;
+      exitCode: number | null;
+      json: unknown;
+      at: string;
+      /** The real step (undeploy/unpublish/...) this result belongs to. */
+      command?: CliCommand;
+    };
 
-export function isRemovalCommand(command: CliCommand): boolean {
-  return command === "unpublish" || command === "undeploy";
+export function isRemovalCommand(command: JobCommand): boolean {
+  return command === "unpublish" || command === "undeploy" || command === "teardown";
 }
 
 /**
@@ -71,7 +85,7 @@ export interface RemovalOptions {
 
 /** Body the client sends to POST /api/lifecycle/jobs. */
 export interface RemoteJobSubmit {
-  command: CliCommand;
+  command: JobCommand;
   project: ProjectFileEntry[];
   deploy?: DeployOptions;
   removal?: RemovalOptions;

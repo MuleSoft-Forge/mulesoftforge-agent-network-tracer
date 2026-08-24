@@ -95,13 +95,15 @@ export default function TroubleshootingPage() {
         earlier build output in the log.
       </Callout>
 
-      <H2 id="unpublish-active-instances">Can&apos;t unpublish (active instances)</H2>
+      <H2 id="unpublish-active-instances">Can&apos;t unpublish (deployed resources)</H2>
       <P>
-        <strong>Symptom:</strong> unpublish is refused because active API instances exist.
+        <strong>Symptom:</strong> unpublish is refused (errorCode 2007) listing deployed resources — egress
+        connections, an API Manager instance, an AMC deployment — that still reference the asset.
       </P>
       <Callout tone="tip" title="Fix">
-        <strong>Undeploy first, then unpublish.</strong> Anypoint won&apos;t erase an Exchange version that still
-        has live instances. Expect to revoke any active API contracts during undeploy.
+        <strong>Undeploy first, then unpublish.</strong> Unpublish never undeploys for you — Anypoint won&apos;t
+        erase an Exchange version while deployed resources still reference it. Expect to revoke any active API
+        contracts during undeploy.
       </Callout>
 
       <H2 id="unpublish-hard-delete-window">Hard-delete window</H2>

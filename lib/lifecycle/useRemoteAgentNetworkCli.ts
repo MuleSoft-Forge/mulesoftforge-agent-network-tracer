@@ -13,8 +13,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { LogLine } from "@/lib/lifecycle/log-lines";
 import { deployOptionsReady } from "@/lib/desktop/deploy-options";
 import type {
-  CliCommand,
   DeployOptions,
+  JobCommand,
   JobEvent,
   JobStatus,
   ProjectFileEntry,
@@ -25,14 +25,14 @@ import { isRemovalCommand, isTerminalStatus } from "@/lib/lifecycle/types";
 import type { ProjectDeployVariable } from "@/lib/desktop/deploy-options";
 
 export interface RemoteRunResult {
-  command: CliCommand;
+  command: JobCommand;
   ok: boolean;
   error?: string;
   jobId?: string;
 }
 
 interface SubmitArgs {
-  command: CliCommand;
+  command: JobCommand;
   project: ProjectFileEntry[];
   deploy?: DeployOptions;
   /** Required for unpublish / undeploy. */
@@ -48,14 +48,14 @@ const STATUS_POLL_MS = 10_000;
 
 export function useRemoteAgentNetworkCli() {
   const [log, setLog] = useState<LogLine[]>([]);
-  const [running, setRunning] = useState<CliCommand | null>(null);
+  const [running, setRunning] = useState<JobCommand | null>(null);
   const [status, setStatus] = useState<JobStatus | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const [lastResult, setLastResult] = useState<RemoteRunResult | null>(null);
 
   const sourceRef = useRef<EventSource | null>(null);
   const watchdogRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const runningRef = useRef<CliCommand | null>(null);
+  const runningRef = useRef<JobCommand | null>(null);
 
   const append = useCallback((line: LogLine) => {
     setLog((prev) => [...prev, line]);
@@ -80,7 +80,7 @@ export function useRemoteAgentNetworkCli() {
   useEffect(() => closeStream, [closeStream]);
 
   const handleEvent = useCallback(
-    (event: JobEvent, command: CliCommand) => {
+    (event: JobEvent, command: JobCommand) => {
       switch (event.type) {
         case "log":
           append({ channel: event.channel, text: event.chunk });
@@ -94,14 +94,19 @@ export function useRemoteAgentNetworkCli() {
             finishRun();
           }
           break;
-        case "result":
+        case "result": {
+          // For a composite command (teardown) the event names the specific
+          // step that produced this result, so diagnosis keys off the step
+          // that actually ran/failed rather than the umbrella job command.
+          const resolvedCommand = event.command ?? command;
           append({
             channel: event.ok ? "meta" : "stderr",
-            text: event.ok ? "✅ Completed successfully." : `❌ The ${command} run failed.`,
+            text: event.ok ? "✅ Completed successfully." : `❌ The ${resolvedCommand} run failed.`,
           });
-          setLastResult({ command, ok: event.ok });
+          setLastResult({ command: resolvedCommand, ok: event.ok });
           finishRun();
           break;
+        }
         default: {
           const _exhaustive: never = event;
           void _exhaustive;
@@ -118,7 +123,7 @@ export function useRemoteAgentNetworkCli() {
    * server restart mid-stream, or a job reaped by the worker.
    */
   const pollJobStatus = useCallback(
-    async (id: string, command: CliCommand) => {
+    async (id: string, command: JobCommand) => {
       if (!runningRef.current) return;
       let res: Response;
       try {
@@ -152,7 +157,7 @@ export function useRemoteAgentNetworkCli() {
   );
 
   const openStream = useCallback(
-    (id: string, command: CliCommand) => {
+    (id: string, command: JobCommand) => {
       closeStream();
       const source = new EventSource(`/api/lifecycle/jobs/${encodeURIComponent(id)}/stream`);
       sourceRef.current = source;
@@ -201,7 +206,8 @@ export function useRemoteAgentNetworkCli() {
       // Mirror the server's refinements so a mistargeted teardown fails here
       // rather than as an opaque 400.
       if (isRemovalCommand(command)) {
-        if (command === "undeploy" && !removal?.environment?.trim()) {
+        // "teardown" runs undeploy first, so it needs the environment too.
+        if ((command === "undeploy" || command === "teardown") && !removal?.environment?.trim()) {
           return reject("Choose the environment the network is deployed to.");
         }
         if (!removal?.gav?.trim() && project.length === 0) {

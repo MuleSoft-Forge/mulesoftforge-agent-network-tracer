@@ -23,6 +23,22 @@ export function isRemovalCommand(command: CliCommand): command is RemovalCommand
   return (REMOVAL_COMMANDS as readonly CliCommand[]).includes(command);
 }
 
+/**
+ * Commands a client may request. Every `CliCommand` is individually runnable;
+ * `teardown` is a composite the worker expands into `["undeploy", "unpublish"]`
+ * (see `commandsFor` in lifecycle-worker.ts) — it never reaches `runCli`
+ * directly, so it stays out of `CliCommand` and the allowlist it indexes.
+ */
+export const JOB_COMMANDS = [...CLI_COMMANDS, "teardown"] as const;
+export type JobCommand = (typeof JOB_COMMANDS)[number];
+
+/** Job-level commands that are removal-shaped: need `removal`, never a project bundle. */
+export const REMOVAL_JOB_COMMANDS = [...REMOVAL_COMMANDS, "teardown"] as const;
+
+export function isRemovalJobCommand(command: JobCommand): boolean {
+  return (REMOVAL_JOB_COMMANDS as readonly string[]).includes(command);
+}
+
 export type DeployTargetKind = "shared" | "private";
 
 export interface DeployProperty {
@@ -95,7 +111,7 @@ export interface JobActor {
 /** Persisted job record. Never contains secrets. */
 export interface JobRecord {
   id: string;
-  command: CliCommand;
+  command: JobCommand;
   status: JobStatus;
   /** Anypoint org this job targets. */
   orgId: string;
@@ -155,7 +171,7 @@ const actorSchema = z.object({
 /** Body accepted by the enqueue route after server-side enrichment. */
 export const jobRequestSchema = z
   .object({
-    command: z.enum(CLI_COMMANDS),
+    command: z.enum(JOB_COMMANDS),
     orgId: z.string().min(1).max(256),
     connectionRef: z.string().min(1).max(256),
     actor: actorSchema,
@@ -179,8 +195,8 @@ export const jobRequestSchema = z
     message: "deploy options are required for the deploy command",
     path: ["deploy"],
   })
-  .refine((body) => !isRemovalCommand(body.command) || body.removal !== undefined, {
-    message: "removal options are required for unpublish and undeploy",
+  .refine((body) => !isRemovalJobCommand(body.command) || body.removal !== undefined, {
+    message: "removal options are required for unpublish, undeploy, and teardown",
     path: ["removal"],
   })
   .refine((body) => body.removal?.gav !== undefined || body.project.length > 0, {
@@ -194,4 +210,17 @@ export type JobRequest = z.infer<typeof jobRequestSchema>;
 export type JobEvent =
   | { type: "status"; status: JobStatus; at: string }
   | { type: "log"; channel: "stdout" | "stderr" | "meta"; chunk: string; at: string }
-  | { type: "result"; ok: boolean; exitCode: number | null; json: unknown; at: string };
+  | {
+      type: "result";
+      ok: boolean;
+      exitCode: number | null;
+      json: unknown;
+      at: string;
+      /**
+       * The specific step this result belongs to — the failed step, or the
+       * last step run on success. Always a real `CliCommand`, never the
+       * composite job command (e.g. a "teardown" job reports "undeploy" or
+       * "unpublish" here), so diagnosis can key off the step that actually ran.
+       */
+      command?: CliCommand;
+    };

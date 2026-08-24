@@ -10,12 +10,12 @@ import {
   XCircle,
 } from "lucide-react";
 import { parseCliActivityLog, type CliActivityItem } from "@/lib/desktop/cli-output-parser";
-import type { CliCommand } from "@/lib/lifecycle/types";
+import type { JobCommand } from "@/lib/lifecycle/types";
 import type { LogLine } from "@/lib/lifecycle/log-lines";
 
 interface CliActivityViewProps {
   log: LogLine[];
-  command?: CliCommand | "install-plugin";
+  command?: JobCommand | "install-plugin";
   busy?: boolean;
 }
 

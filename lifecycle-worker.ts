@@ -27,6 +27,7 @@ import {
   isRemovalCommand,
   isTerminal,
   type CliCommand,
+  type JobCommand,
   type JobEvent,
 } from "./lib/lifecycle-server/contracts";
 import { diagnoseDeployOutput, primaryDiagnosis } from "./lib/lifecycle/deploy-diagnostics";
@@ -38,7 +39,7 @@ import { diagnoseDeployOutput, primaryDiagnosis } from "./lib/lifecycle/deploy-d
  * is deleted afterwards — so publish/deploy must be preceded by a build within
  * the same job, mirroring the desktop flow where all commands hit one folder.
  */
-function commandsFor(command: CliCommand): CliCommand[] {
+function commandsFor(command: JobCommand): CliCommand[] {
   switch (command) {
     case "build":
       return ["build"];
@@ -53,6 +54,12 @@ function commandsFor(command: CliCommand): CliCommand[] {
       return ["unpublish"];
     case "undeploy":
       return ["undeploy"];
+    // Composite: undeploy first (unpublish refuses while resources are still
+    // deployed — errorCode 2007), then unpublish. Same shared `removal`
+    // payload serves both; undeploy already requires `environment`, and
+    // unpublish picks it up too for its own active-instance safety check.
+    case "teardown":
+      return ["undeploy", "unpublish"];
     default: {
       const _exhaustive: never = command;
       return _exhaustive;
@@ -274,6 +281,10 @@ async function processJob(data: LifecycleJobData): Promise<void> {
       ok: result.ok,
       exitCode: result.exitCode,
       json: result.json,
+      // The failed step, or the last step run on success — a composite
+      // command like "teardown" never appears here, only the real CLI step
+      // that produced this result, so the client can diagnose against it.
+      command: failedStep ?? steps[steps.length - 1],
       at: new Date().toISOString(),
     });
     await store.setStatus(jobId, result.ok ? "succeeded" : "failed");

@@ -142,7 +142,13 @@ export default function BuildPublishPage() {
           them (Anypoint refuses to remove an instance with an approved contract).
         </LI>
         <LI>
-          <strong>Unpublish</strong> — erases the asset version from Exchange. Irreversible.
+          <strong>Unpublish</strong> — erases the asset version from Exchange. Irreversible. Refuses to run
+          (errorCode 2007) while deployed resources still reference the asset — it never undeploys for you.
+        </LI>
+        <LI>
+          <strong>Undeploy &amp; Unpublish</strong> — a convenience that chains the two in one job (undeploy,
+          then unpublish with the delete mode chosen for Unpublish), for decommissioning a network entirely. Same
+          pre-flight contract check and irreversibility confirmation as running them separately.
         </LI>
       </UL>
       <Callout tone="danger" title="Hard vs soft delete is asymmetric">
@@ -152,7 +158,8 @@ export default function BuildPublishPage() {
         republished. Soft is the more dangerous default, which is why it isn&apos;t the default here.
       </Callout>
       <P>
-        The right order: <strong>undeploy before unpublish</strong>, and expect to revoke contracts first.
+        The right order: <strong>undeploy before unpublish</strong>, and expect to revoke contracts first — or
+        use the combined action to run them in that order automatically.
       </P>
 
       <H2 id="diagnosis">Reading a failure</H2>
