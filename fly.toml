@@ -31,7 +31,13 @@ kill_timeout = "30s"
 [http_service]
   internal_port = 3000
   force_https = true
-  auto_stop_machines = "stop"
+  # "stop" + min_machines_running=1 was not enough: the proxy still stopped the
+  # sole web machine to zero after ~9min idle ("excess capacity... 0 out of 1
+  # machines left running"), and the next visitor ate a ~6s Firecracker cold
+  # boot. "suspend" keeps the same effective floor but resumes from a memory
+  # snapshot instead of a cold boot, so idle periods stay cheap without the
+  # visible stall.
+  auto_stop_machines = "suspend"
   auto_start_machines = true
   # Keep one web machine up. Scaling to zero stalls an active session: reading a
   # finished build log sends no requests, the proxy autostops the only machine,
