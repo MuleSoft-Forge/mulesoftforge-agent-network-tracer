@@ -5,6 +5,7 @@ import {
   buildBrokerSendMessageRequest,
   extractJsonRpcErrorMessage,
   normalizeA2AVersion,
+  type BrokerSendMessageRequest,
 } from "@/lib/invoke/a2a-version";
 import type { InvokeAuthConfig } from "@/lib/invoke/types";
 import { isAuthenticated } from "@/lib/session";
@@ -95,12 +96,14 @@ export async function POST(req: NextRequest) {
   }
 
   const brokerTimeoutMs = resolveBrokerTimeoutMs();
+  let upstreamBody: BrokerSendMessageRequest | undefined;
   try {
     const body = (await req.json()) as {
       brokerUrl?: string;
       message?: string;
       a2aVersion?: string;
       auth?: InvokeAuthConfig;
+      contextId?: string | null;
     };
     const brokerUrl = body.brokerUrl?.trim();
     const message = body.message?.trim();
@@ -122,7 +125,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const upstreamBody = buildBrokerSendMessageRequest(a2aVersion, message);
+    upstreamBody = buildBrokerSendMessageRequest(a2aVersion, message, body.contextId ?? null);
 
     // Defensive normalization: user-provided URLs sometimes include accidental
     // double slashes in the path (e.g. https://host//broker), which some
@@ -160,6 +163,7 @@ export async function POST(req: NextRequest) {
           error: extractErrorSummary(parsed, `Broker returned ${upstream.status}`),
           upstreamStatus: upstream.status,
           detail: truncate(raw),
+          request: upstreamBody,
         },
         { status: upstream.status }
       );
@@ -167,7 +171,7 @@ export async function POST(req: NextRequest) {
 
     if (parsed === null) {
       return NextResponse.json(
-        { error: "Broker returned non-JSON response", detail: truncate(raw) },
+        { error: "Broker returned non-JSON response", detail: truncate(raw), request: upstreamBody },
         { status: 502 }
       );
     }
@@ -175,16 +179,16 @@ export async function POST(req: NextRequest) {
     const jsonRpcError = extractJsonRpcErrorMessage(parsed);
     if (jsonRpcError) {
       return NextResponse.json(
-        { error: jsonRpcError, detail: truncate(raw) },
+        { error: jsonRpcError, detail: truncate(raw), request: upstreamBody },
         { status: 502 }
       );
     }
 
-    return NextResponse.json(parsed);
+    return NextResponse.json({ request: upstreamBody, response: parsed });
   } catch (error) {
     if (error instanceof SsrfBlockedError) {
       return NextResponse.json(
-        { error: "Broker URL resolves to a disallowed address" },
+        { error: "Broker URL resolves to a disallowed address", request: upstreamBody },
         { status: 400 }
       );
     }
@@ -198,6 +202,7 @@ export async function POST(req: NextRequest) {
           ? `Broker did not respond within ${Math.round(brokerTimeoutMs / 1000)}s`
           : "Failed to reach broker",
         detail,
+        request: upstreamBody,
       },
       { status: isTimeout ? 504 : 502 }
     );

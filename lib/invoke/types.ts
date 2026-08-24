@@ -34,6 +34,10 @@ export interface InvokeMessage {
   role: "user" | "agent" | "error";
   content: string;
   timestamp: Date;
+  /** Raw JSON-RPC body sent to the broker for this turn (user messages). */
+  requestPayload?: unknown;
+  /** Raw JSON-RPC (or error) body the broker returned for this turn (agent/error messages). */
+  responsePayload?: unknown;
 }
 
 export type InvokeAuthType = "none" | "apiKey" | "basic" | "mulesoftClientIdSecret";
@@ -59,13 +63,21 @@ export interface InvokeState {
   a2aVersion: string;
   brokerLoaded: boolean;
   auth: InvokeAuthConfig;
+  contextId: string | null;
 }
 
 export type InvokeAction =
   | { type: "SET_BROKER"; url: string; card: AgentCard | null; a2aVersion?: string }
   | { type: "SET_AUTH"; auth: Partial<InvokeAuthConfig> }
   | { type: "RESET_BROKER" }
+  | { type: "SET_CONTEXT_ID"; contextId: string }
   | { type: "ADD_MESSAGE"; message: InvokeMessage }
+  | {
+      type: "SET_MESSAGE_PAYLOAD";
+      messageId: string;
+      requestPayload?: unknown;
+      responsePayload?: unknown;
+    }
   | { type: "SET_NODE_STATUS"; nodeId: string; status: NodeStatus }
   | { type: "SET_ACTIVE_NODE"; nodeId: string | null }
   | { type: "RESET_NODE_STATUSES" }
@@ -82,6 +94,7 @@ export const INITIAL_INVOKE_STATE: InvokeState = {
   brokerUrl: "",
   a2aVersion: "0.3",
   brokerLoaded: false,
+  contextId: null,
   auth: {
     type: "none",
     apiKeyHeaderName: "x-api-key",
@@ -107,13 +120,29 @@ export function invokeReducer(state: InvokeState, action: InvokeAction): InvokeS
         activeNodeId: null,
         currentStep: "",
         isProcessing: false,
+        contextId: null,
       };
     case "RESET_BROKER":
       return { ...INITIAL_INVOKE_STATE };
     case "SET_AUTH":
       return { ...state, auth: { ...state.auth, ...action.auth } };
+    case "SET_CONTEXT_ID":
+      return { ...state, contextId: action.contextId };
     case "ADD_MESSAGE":
       return { ...state, messages: [...state.messages, action.message] };
+    case "SET_MESSAGE_PAYLOAD":
+      return {
+        ...state,
+        messages: state.messages.map((m) =>
+          m.id === action.messageId
+            ? {
+                ...m,
+                requestPayload: action.requestPayload ?? m.requestPayload,
+                responsePayload: action.responsePayload ?? m.responsePayload,
+              }
+            : m
+        ),
+      };
     case "SET_NODE_STATUS":
       return {
         ...state,

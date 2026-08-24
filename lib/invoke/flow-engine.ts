@@ -1,6 +1,7 @@
 import type { Dispatch } from "react";
 import type { CanonicalGraph } from "@/lib/agent-network-types";
 import {
+  extractContextIdFromA2AResponse,
   extractJsonRpcErrorMessage,
   normalizeA2AVersion,
 } from "./a2a-version";
@@ -24,8 +25,19 @@ const ANT_THINKING_STEPS = [
   "🐜 ANT orchestra is synchronizing tiny footsteps and tool calls…",
 ] as const;
 
-function newMsg(role: InvokeMessage["role"], content: string): InvokeMessage {
-  return { id: crypto.randomUUID(), role, content, timestamp: new Date() };
+function newMsg(
+  role: InvokeMessage["role"],
+  content: string,
+  payload?: { requestPayload?: unknown; responsePayload?: unknown }
+): InvokeMessage {
+  return {
+    id: crypto.randomUUID(),
+    role,
+    content,
+    timestamp: new Date(),
+    requestPayload: payload?.requestPayload,
+    responsePayload: payload?.responsePayload,
+  };
 }
 
 // ── A2A response extraction ───────────────────────────────────────────────────
@@ -165,7 +177,9 @@ export async function callRealBroker(
   graph: CanonicalGraph,
   dispatch: Dispatch<InvokeAction>,
   auth: InvokeAuthConfig,
-  a2aVersion = "0.3"
+  a2aVersion = "0.3",
+  contextId: string | null = null,
+  userMessageId?: string
 ): Promise<void> {
   const brokerId = findBrokerNodeId(graph);
 
@@ -179,6 +193,8 @@ export async function callRealBroker(
 
   let responseText = "";
   let callError = "";
+  let requestPayload: unknown = null;
+  let responsePayload: unknown = null;
   let thinkingTimer: ReturnType<typeof setInterval> | null = null;
 
   try {
@@ -196,32 +212,49 @@ export async function callRealBroker(
         message: userMessage,
         a2aVersion: normalizeA2AVersion(a2aVersion) ?? "0.3",
         auth,
+        contextId,
       }),
     });
 
     if (!res.ok) {
       const errBody = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-      throw new Error(
-        (errBody as Record<string, unknown>).error as string ?? `HTTP ${res.status}`
-      );
+      const errObj = errBody as Record<string, unknown>;
+      requestPayload = errObj.request ?? null;
+      responsePayload = errBody;
+      throw new Error((errObj.error as string) ?? `HTTP ${res.status}`);
     }
-    const data = await res.json();
-    const jsonRpcError = extractJsonRpcErrorMessage(data);
+    const data = (await res.json()) as Record<string, unknown>;
+    requestPayload = data.request ?? null;
+    responsePayload = data.response ?? data;
+
+    const jsonRpcError = extractJsonRpcErrorMessage(responsePayload);
     if (jsonRpcError) {
       throw new Error(jsonRpcError);
     }
-    responseText = extractTextFromA2AResponse(data);
+    responseText = extractTextFromA2AResponse(responsePayload);
+    const newContextId = extractContextIdFromA2AResponse(responsePayload);
+    if (newContextId) {
+      dispatch({ type: "SET_CONTEXT_ID", contextId: newContextId });
+    }
   } catch (err) {
     callError = err instanceof Error ? err.message : "Unknown error";
   } finally {
     if (thinkingTimer) clearInterval(thinkingTimer);
   }
 
+  if (userMessageId && requestPayload) {
+    dispatch({ type: "SET_MESSAGE_PAYLOAD", messageId: userMessageId, requestPayload });
+  }
+
   if (callError) {
     if (brokerId) dispatch({ type: "SET_NODE_STATUS", nodeId: brokerId, status: "error" });
     dispatch({
       type: "ADD_MESSAGE",
-      message: newMsg("error", `🐜 Oops, ANT hit a pebble in the tunnel.\nBroker call failed: ${callError}`),
+      message: newMsg(
+        "error",
+        `🐜 Oops, ANT hit a pebble in the tunnel.\nBroker call failed: ${callError}`,
+        { responsePayload }
+      ),
     });
     dispatch({ type: "SET_PROCESSING", value: false });
     dispatch({ type: "SET_ACTIVE_NODE", nodeId: null });
@@ -234,7 +267,7 @@ export async function callRealBroker(
 
   dispatch({
     type: "ADD_MESSAGE",
-    message: newMsg("agent", responseText),
+    message: newMsg("agent", responseText, { responsePayload }),
   });
 
   dispatch({ type: "SET_PROCESSING", value: false });
@@ -312,12 +345,14 @@ export async function handleSend(
   graph: CanonicalGraph,
   dispatch: Dispatch<InvokeAction>,
   auth: InvokeAuthConfig,
-  a2aVersion = "0.3"
+  a2aVersion = "0.3",
+  contextId: string | null = null
 ): Promise<void> {
-  dispatch({ type: "ADD_MESSAGE", message: newMsg("user", userMessage) });
+  const userMsg = newMsg("user", userMessage);
+  dispatch({ type: "ADD_MESSAGE", message: userMsg });
 
   if (brokerUrl.trim()) {
-    return callRealBroker(userMessage, brokerUrl, graph, dispatch, auth, a2aVersion);
+    return callRealBroker(userMessage, brokerUrl, graph, dispatch, auth, a2aVersion, contextId, userMsg.id);
   }
   return runSimulation(userMessage, graph, dispatch);
 }

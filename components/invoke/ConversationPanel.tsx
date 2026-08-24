@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useEffect, useMemo, useState, KeyboardEvent, Dispatch } from "react";
+import { Braces, Copy, X } from "lucide-react";
 import type { InvokeMessage, InvokeAction, AgentSkill, InvokeState } from "@/lib/invoke/types";
 import type { CanonicalGraph } from "@/lib/agent-network-types";
 import { handleSend } from "@/lib/invoke/flow-engine";
@@ -14,16 +15,97 @@ interface ConversationPanelProps {
   dispatch: Dispatch<InvokeAction>;
 }
 
-function MessageBubble({ msg }: { msg: InvokeMessage }) {
+function PayloadModal({
+  title,
+  subtitle,
+  payload,
+  onClose,
+}: {
+  title: string;
+  subtitle: string;
+  payload: unknown;
+  onClose: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const formatted = useMemo(() => JSON.stringify(payload, null, 2), [payload]);
+
+  async function copyPayload() {
+    await navigator.clipboard.writeText(formatted);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-4 py-3">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-900">{title}</h2>
+            <p className="mt-0.5 text-xs text-gray-500">{subtitle}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="shrink-0 rounded p-1 text-gray-500 hover:bg-gray-100"
+            aria-label="Close"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <pre className="min-h-0 flex-1 overflow-auto bg-white p-3 text-[11px] leading-relaxed text-gray-800">
+          <code>{formatted}</code>
+        </pre>
+        <div className="flex justify-end border-t border-gray-200 px-4 py-2.5">
+          <button
+            type="button"
+            onClick={() => void copyPayload()}
+            className="flex items-center gap-1.5 rounded-md border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+          >
+            <Copy className="h-3.5 w-3.5" />
+            {copied ? "Copied" : "Copy JSON"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MessageBubble({
+  msg,
+  onInspect,
+}: {
+  msg: InvokeMessage;
+  onInspect: (msg: InvokeMessage) => void;
+}) {
   const isUser = msg.role === "user";
   const isError = msg.role === "error";
+  const hasPayload = msg.requestPayload != null || msg.responsePayload != null;
+  const inspectTitle = isUser ? "View sent payload" : "View raw response payload";
 
   if (isUser) {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[88%] rounded-2xl rounded-br-sm px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap bg-primary text-white">
+        <button
+          type="button"
+          onClick={hasPayload ? () => onInspect(msg) : undefined}
+          title={hasPayload ? inspectTitle : undefined}
+          className={`group relative max-w-[88%] rounded-2xl rounded-br-sm px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap text-left bg-primary text-white ${
+            hasPayload ? "cursor-pointer hover:brightness-110" : "cursor-default"
+          }`}
+        >
           {msg.content}
-        </div>
+          {hasPayload && (
+            <Braces className="absolute -top-1.5 -left-1.5 h-4 w-4 rounded-full bg-white p-0.5 text-primary opacity-0 shadow group-hover:opacity-100" />
+          )}
+        </button>
       </div>
     );
   }
@@ -36,9 +118,19 @@ function MessageBubble({ msg }: { msg: InvokeMessage }) {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
         </div>
-        <div className="max-w-[84%] rounded-2xl rounded-tl-sm px-4 py-3 bg-red-50 text-red-700 border border-red-200">
+        <button
+          type="button"
+          onClick={hasPayload ? () => onInspect(msg) : undefined}
+          title={hasPayload ? inspectTitle : undefined}
+          className={`group relative max-w-[84%] rounded-2xl rounded-tl-sm px-4 py-3 bg-red-50 text-red-700 border border-red-200 text-left ${
+            hasPayload ? "cursor-pointer hover:bg-red-100" : "cursor-default"
+          }`}
+        >
           <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
-        </div>
+          {hasPayload && (
+            <Braces className="absolute -top-1.5 -right-1.5 h-4 w-4 rounded-full bg-white p-0.5 text-red-600 opacity-0 shadow group-hover:opacity-100" />
+          )}
+        </button>
       </div>
     );
   }
@@ -50,9 +142,19 @@ function MessageBubble({ msg }: { msg: InvokeMessage }) {
           🐜
         </span>
       </div>
-      <div className="max-w-[84%] rounded-2xl rounded-tl-sm px-4 py-3 bg-gray-50 text-gray-900 border border-gray-200">
+      <button
+        type="button"
+        onClick={hasPayload ? () => onInspect(msg) : undefined}
+        title={hasPayload ? inspectTitle : undefined}
+        className={`group relative max-w-[84%] rounded-2xl rounded-tl-sm px-4 py-3 bg-gray-50 text-gray-900 border border-gray-200 text-left ${
+          hasPayload ? "cursor-pointer hover:bg-gray-100" : "cursor-default"
+        }`}
+      >
         <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
-      </div>
+        {hasPayload && (
+          <Braces className="absolute -top-1.5 -right-1.5 h-4 w-4 rounded-full bg-white p-0.5 text-gray-500 opacity-0 shadow group-hover:opacity-100" />
+        )}
+      </button>
     </div>
   );
 }
@@ -63,9 +165,10 @@ export default function ConversationPanel({
   displayGraph,
   dispatch,
 }: ConversationPanelProps) {
-  const { messages, isProcessing, currentStep, brokerUrl, a2aVersion, auth } = state;
+  const { messages, isProcessing, currentStep, brokerUrl, a2aVersion, auth, contextId } = state;
   const [input, setInput] = useState("");
   const [showSkills, setShowSkills] = useState(false);
+  const [inspecting, setInspecting] = useState<InvokeMessage | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { compositionProps, isComposing } = useImeComposition();
@@ -109,7 +212,7 @@ export default function ConversationPanel({
     const msg = (text ?? input).trim();
     if (!msg || isProcessing) return;
     setInput("");
-    await handleSend(msg, brokerUrl, displayGraph, dispatch, auth, a2aVersion);
+    await handleSend(msg, brokerUrl, displayGraph, dispatch, auth, a2aVersion, contextId);
   }
 
   function applySkillPrompt(skill: AgentSkill) {
@@ -205,7 +308,7 @@ export default function ConversationPanel({
         )}
 
         {messages.map((msg) => (
-          <MessageBubble key={msg.id} msg={msg} />
+          <MessageBubble key={msg.id} msg={msg} onInspect={setInspecting} />
         ))}
 
         {isProcessing && currentStep && (
@@ -301,6 +404,19 @@ export default function ConversationPanel({
         </div>
         <p className="text-[10px] text-gray-400 mt-1 text-center">Shift+Enter for new line · A2A calls are proxied server-side</p>
       </div>
+
+      {inspecting && (
+        <PayloadModal
+          title={inspecting.role === "user" ? "Sent payload" : "Raw response payload"}
+          subtitle={
+            inspecting.role === "user"
+              ? "JSON-RPC body sent to the broker for this turn"
+              : "Raw body the broker returned for this turn"
+          }
+          payload={inspecting.role === "user" ? inspecting.requestPayload : inspecting.responsePayload}
+          onClose={() => setInspecting(null)}
+        />
+      )}
     </div>
   );
 }
