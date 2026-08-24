@@ -45,7 +45,7 @@ RUN apt-get update \
 # Anypoint CLI + Agent Fabric plugin — the worker shells out to these for
 # build/publish/deploy. Pin the plugin so image builds are reproducible.
 RUN npm i -g "anypoint-cli-v4@${ANYPOINT_CLI_VERSION}" \
- && anypoint-cli-v4 plugins:install mulesoft-anypoint-cli-agent-fabric-plugin@1.2.11 \
+ && anypoint-cli-v4 plugins:install mulesoft-anypoint-cli-agent-fabric-plugin@1.3.0 \
  && anypoint-cli-v4 --version
 
 # Full dependency tree: `next start` needs next; the worker needs tsx + bullmq +
