@@ -22,6 +22,7 @@ import { agentFabricNodeTypes } from "@/components/composer/graph/nodes";
 import type { ExecutionOverlay } from "@/lib/task-timeline/execution-overlay";
 import { canonicalNodeKey, edgeKey } from "@/lib/task-timeline/execution-overlay";
 import type { NodeVisit } from "@/lib/task-timeline/build-v2-node-timeline";
+import LoggingDetailNotice from "@/components/task-details/LoggingDetailNotice";
 
 /** Un-traversed nodes stay legible but recede, so the path reads at a glance. */
 const UNTRAVERSED_OPACITY = 0.34;
@@ -178,6 +179,8 @@ export interface GraphExecutionViewProps {
   driftedNodes: string[];
   selectedNodeKey: string | null;
   onSelectVisit: (visit: NodeVisit) => void;
+  /** Per-task INSECURE-LOGGING status from Runtime Manager, when known. */
+  insecureLoggingEnabled?: boolean;
 }
 
 /**
@@ -194,6 +197,7 @@ export default function GraphExecutionView({
   driftedNodes,
   selectedNodeKey,
   onSelectVisit,
+  insecureLoggingEnabled,
 }: GraphExecutionViewProps) {
   return (
     <div className="flex h-full flex-col">
@@ -215,6 +219,10 @@ export default function GraphExecutionView({
             ran, no logged detail
           </span>
         )}
+        <LoggingDetailNotice
+          hasUndetailedNodes={overlay.reachedWithoutDetail.size > 0}
+          insecureLoggingEnabled={insecureLoggingEnabled}
+        />
         <span className="truncate text-gray-400" title={source.agentFileName}>
           {source.agentFileName} @ {source.version}
           {!source.versionPinned && " (version inferred from when this task ran)"}

@@ -770,6 +770,7 @@ function TaskDetailsContent({ orgId, taskId, envId, data }: TaskDetailsProps & {
                 onSelectVisit={(visit) =>
                   setSelectedItem({ type: "node", id: visit.id, data: visit })
                 }
+                insecureLoggingEnabled={jobCard?.apiStatus?.monitoringSuggestions?.insecureLogging}
               />
             ) : agentGraphError != null ? (
               <div className="flex h-full items-center justify-center px-6">
