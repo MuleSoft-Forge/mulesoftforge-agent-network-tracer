@@ -195,6 +195,7 @@ function TaskDetailsContent({ orgId, taskId, envId, data }: TaskDetailsProps & {
     () => agentGraph?.graph.nodes.map((node) => node.id) ?? [],
     [agentGraph]
   );
+  const graphEdges = useMemo(() => agentGraph?.graph.edges ?? [], [agentGraph]);
 
   // Resolves names the graph runtime logs onto the drawn graph's nodes, so a
   // runtime alias such as "node 1" lands on the trigger it means.
@@ -205,9 +206,9 @@ function TaskDetailsContent({ orgId, taskId, envId, data }: TaskDetailsProps & {
   const executionOverlay = useMemo(
     () =>
       v2Timeline
-        ? buildExecutionOverlay(v2Timeline.visits, graphNodeIds, v2Timeline.reachedFromState)
+        ? buildExecutionOverlay(v2Timeline.visits, graphNodeIds, v2Timeline.reachedFromState, graphEdges)
         : null,
-    [v2Timeline, graphNodeIds]
+    [v2Timeline, graphNodeIds, graphEdges]
   );
 
   // The canvas keys nodes by name while selection is keyed by visit id, so

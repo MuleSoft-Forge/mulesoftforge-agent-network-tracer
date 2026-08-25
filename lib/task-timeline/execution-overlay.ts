@@ -123,17 +123,73 @@ function observedHops(
   return hops;
 }
 
+/** Adjacency over the graph's own declared edges, keyed by canonical node key. */
+function buildAdjacency(edges: Array<{ from: string; to: string }>): Map<string, string[]> {
+  const adjacency = new Map<string, string[]>();
+  for (const edge of edges) {
+    const from = canonicalNodeKey(edge.from);
+    const to = canonicalNodeKey(edge.to);
+    const targets = adjacency.get(from);
+    if (targets) targets.push(to);
+    else adjacency.set(from, [to]);
+  }
+  return adjacency;
+}
+
+/**
+ * Shortest run of declared edges from `from` to `to`, returned as the
+ * intermediate node keys only (both endpoints excluded). `null` when no such
+ * path exists in the published graph, so a hop between two nodes that are not
+ * actually connected is left alone rather than bridged with an invented route.
+ */
+function shortestIntermediatePath(
+  adjacency: Map<string, string[]>,
+  from: string,
+  to: string
+): string[] | null {
+  if (from === to) return [];
+  const queue: string[] = [from];
+  const prev = new Map<string, string>();
+  const visited = new Set([from]);
+  while (queue.length > 0) {
+    const current = queue.shift() as string;
+    for (const next of adjacency.get(current) ?? []) {
+      if (visited.has(next)) continue;
+      visited.add(next);
+      prev.set(next, current);
+      if (next === to) {
+        const path: string[] = [];
+        let node = to;
+        while (node !== from) {
+          path.unshift(node);
+          node = prev.get(node) as string;
+        }
+        return path.slice(0, -1);
+      }
+      queue.push(next);
+    }
+  }
+  return null;
+}
+
 /**
  * @param graphNodeIds Node ids of the published graph being drawn, so runtime
  *   aliases resolve onto it. Omit when no graph is loaded yet; the overlay is
  *   then keyed on logged names alone.
  * @param reachedFromState Nodes the Object Store records as executed. Used only
  *   for nodes the logs say nothing about, so logged detail always wins.
+ * @param graphEdges The published graph's own declared edges. Some node kinds
+ *   (routers, subagent dispatch) leave no log trace at all — not even a
+ *   transition line — so an observed hop can skip straight from one logged
+ *   node to a much later one. When that happens this walks the graph's own
+ *   edges to find what must have run in between, so the diagram shows an
+ *   honest (if undetailed) path instead of drawing real hops as "not taken."
  */
 export function buildExecutionOverlay(
   visits: NodeVisit[],
   graphNodeIds: string[] = [],
-  reachedFromState: string[] = []
+  reachedFromState: string[] = [],
+  graphEdges: Array<{ from: string; to: string }> = []
 ): ExecutionOverlay {
   const byNode = new Map<string, NodeExecution>();
   const observedNames: string[] = [];
@@ -166,18 +222,35 @@ export function buildExecutionOverlay(
     if (last !== undefined) last.isFinal = true;
   }
 
-  const traversedEdges = new Map<string, number>();
-  const hops = observedHops(visits, resolveKey);
-  hops.forEach((hop, index) => {
-    const key = `${hop.from}->${hop.to}`;
-    if (!traversedEdges.has(key)) traversedEdges.set(key, index + 1);
-  });
-
   const reachedWithoutDetail = new Set<string>();
   for (const name of reachedFromState) {
     const key = resolveKey(name);
     if (key !== "" && !byNode.has(key)) reachedWithoutDetail.add(key);
   }
+
+  const declaredEdgeKeys = new Set(graphEdges.map((edge) => edgeKey(edge.from, edge.to)));
+  const adjacency = buildAdjacency(graphEdges);
+
+  const traversedEdges = new Map<string, number>();
+  const hops = observedHops(visits, resolveKey);
+  hops.forEach((hop, index) => {
+    const order = index + 1;
+    const key = `${hop.from}->${hop.to}`;
+    if (!traversedEdges.has(key)) traversedEdges.set(key, order);
+    if (declaredEdgeKeys.has(key)) return;
+
+    const intermediates = shortestIntermediatePath(adjacency, hop.from, hop.to);
+    if (intermediates == null) return;
+    let cursor = hop.from;
+    for (const node of intermediates) {
+      if (!byNode.has(node)) reachedWithoutDetail.add(node);
+      const bridgeKey = `${cursor}->${node}`;
+      if (!traversedEdges.has(bridgeKey)) traversedEdges.set(bridgeKey, order);
+      cursor = node;
+    }
+    const lastBridgeKey = `${cursor}->${hop.to}`;
+    if (!traversedEdges.has(lastBridgeKey)) traversedEdges.set(lastBridgeKey, order);
+  });
 
   return {
     byNode,
