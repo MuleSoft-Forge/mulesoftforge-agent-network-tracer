@@ -1,5 +1,20 @@
-import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { isSafePublicUrl, safeFetch } from "../lib/url-safety";
+
+/**
+ * Minimal shape of what this handler actually uses from Vercel's Node
+ * serverless request/response — avoids depending on @vercel/node purely for
+ * types (its transitive deps pull in flagged tar/undici/esbuild versions,
+ * and Vercel's own build pipeline doesn't need this package to deploy a
+ * plain (req, res) function).
+ */
+interface MinimalRequest {
+  method?: string;
+  headers: Record<string, string | string[] | undefined>;
+  body?: unknown;
+}
+interface MinimalResponse {
+  status(code: number): { json(body: unknown): void };
+}
 
 /**
  * Generic authenticated egress relay for the main app's Invoke feature.
@@ -27,7 +42,7 @@ interface ProxyRequestBody {
 const MAX_TIMEOUT_MS = 280_000; // stay under this function's 300s maxDuration (see vercel.json)
 const DEFAULT_TIMEOUT_MS = 15_000;
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(req: MinimalRequest, res: MinimalResponse) {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Method not allowed" });
     return;
