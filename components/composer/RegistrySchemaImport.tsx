@@ -55,10 +55,6 @@ export function RegistrySchemaImport({
     try {
       if (kind === "agent") {
         const card = await fetchAgentCard(trimmed);
-        if (!card) {
-          setError("Could not fetch agent card from URL");
-          return;
-        }
         await applyAgentCard(card as Record<string, unknown>, trimmed);
       } else {
         const params = new URLSearchParams({ kind: "mcp", url: trimmed });
@@ -74,8 +70,8 @@ export function RegistrySchemaImport({
         }
         await applyMcpMetadata(data.metadata, data.sourceUrl ?? trimmed);
       }
-    } catch {
-      setError(`Failed to fetch ${label}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `Failed to fetch ${label}`);
     } finally {
       setLoading(false);
     }

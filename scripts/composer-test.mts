@@ -7166,6 +7166,31 @@ console.log("\n[invoke] A2A protocol version bucketing");
     "returns null (letting the caller fall back to its own discovery URL) when the card has neither",
     resolveBrokerEndpointFromCard({ name: "No endpoint declared" }) === null
   );
+
+  const { describeDiscoveryFailure } = await import("@/lib/invoke/discovery");
+  check(
+    "discovery failure message names the last URL tried and why (e.g. a CloudFront/WAF block)",
+    describeDiscoveryFailure(
+      {
+        error: "Agent card not discoverable",
+        tried: 18,
+        attempts: [
+          { url: "https://broker.example.com/.well-known/agent-card.json", status: 403, reason: "Forbidden" },
+        ],
+      },
+      404
+    ) ===
+      'Agent card not discoverable (tried 18). Last: 403 Forbidden — https://broker.example.com/.well-known/agent-card.json'
+  );
+  check(
+    "discovery failure message degrades gracefully with no attempts array",
+    describeDiscoveryFailure({ error: "Agent card not discoverable", tried: 5 }, 404) ===
+      "Agent card not discoverable (tried 5 URLs)."
+  );
+  check(
+    "discovery failure message degrades gracefully with no body at all",
+    describeDiscoveryFailure(null, 502) === "Broker returned 502"
+  );
 }
 
 console.log(`\n==== ${passed} passed, ${failed} failed ====`);

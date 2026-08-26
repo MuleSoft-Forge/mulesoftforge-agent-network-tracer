@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isSafePublicUrl, safeFetch, SsrfBlockedError } from "@/lib/api/url-safety";
+import { isSafePublicUrl, SsrfBlockedError } from "@/lib/api/url-safety";
 import {
   a2aVersionRequestHeaders,
   buildBrokerSendMessageRequest,
@@ -7,8 +7,44 @@ import {
   normalizeA2AVersion,
   type BrokerSendMessageRequest,
 } from "@/lib/invoke/a2a-version";
+import { egressProxyConfigured, fetchDirect, fetchViaEgressProxy, type NormalizedResponse } from "@/lib/invoke/egress-proxy";
 import type { InvokeAuthConfig } from "@/lib/invoke/types";
 import { isAuthenticated } from "@/lib/session";
+
+/**
+ * Send to the broker directly first (the common case — full timeout budget,
+ * no extra hop). Only fall back to the egress proxy when that path looks
+ * network-blocked: it threw outright, or it came back with a response but a
+ * non-2xx status (a CDN/WAF block often *is* a clean HTTP response, e.g.
+ * CloudFront's own 403 page, not a thrown error). A genuine application-level
+ * rejection from the broker would fail the proxy attempt too, so this never
+ * masks a real error — it just costs one extra round trip in that case.
+ */
+async function sendToBroker(
+  url: string,
+  init: { method: string; headers: Record<string, string>; body: string; timeoutMs: number }
+): Promise<NormalizedResponse> {
+  let direct: NormalizedResponse | null = null;
+  let directError: unknown = null;
+  try {
+    direct = await fetchDirect(url, init);
+    if (direct.ok || !egressProxyConfigured()) return direct;
+  } catch (err) {
+    directError = err;
+    // Preserve the original error (name/message intact, e.g. a TimeoutError)
+    // so the caller's timeout detection still works when there is no proxy to fall back to.
+    if (!egressProxyConfigured()) throw err;
+  }
+  try {
+    return await fetchViaEgressProxy(url, init);
+  } catch {
+    // Proxy attempt failed too — prefer the direct response (a real answer
+    // from the broker) or its original error over the proxy's own connection error.
+    if (direct) return direct;
+    if (directError) throw directError;
+    throw new Error("Failed to reach broker (direct and via egress proxy)");
+  }
+}
 
 /** Cap how much upstream broker error text we echo back to the client. */
 function truncate(text: string, max = 500): string {
@@ -133,23 +169,19 @@ export async function POST(req: NextRequest) {
     const normalizedUrl = new URL(safety.url.toString());
     normalizedUrl.pathname = normalizedUrl.pathname.replace(/\/{2,}/g, "/");
 
-    const upstream = await safeFetch(
-      normalizedUrl.toString(),
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-          ...a2aVersionRequestHeaders(a2aVersion),
-          ...authHeaders,
-        },
-        body: JSON.stringify(upstreamBody),
-        signal: AbortSignal.timeout(brokerTimeoutMs),
+    const upstream = await sendToBroker(normalizedUrl.toString(), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        ...a2aVersionRequestHeaders(a2aVersion),
+        ...authHeaders,
       },
-      { allowHttp: false }
-    );
+      body: JSON.stringify(upstreamBody),
+      timeoutMs: brokerTimeoutMs,
+    });
 
-    const raw = await upstream.text();
+    const raw = upstream.text;
     let parsed: unknown = null;
     try {
       parsed = JSON.parse(raw);

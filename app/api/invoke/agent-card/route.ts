@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isSafePublicUrl, safeFetch } from "@/lib/api/url-safety";
+import { isSafePublicUrl } from "@/lib/api/url-safety";
 import { a2aVersionRequestHeaders, normalizeA2AVersion } from "@/lib/invoke/a2a-version";
+import { egressProxyConfigured, fetchDirect, fetchViaEgressProxy, type NormalizedResponse } from "@/lib/invoke/egress-proxy";
 import type { InvokeAuthConfig } from "@/lib/invoke/types";
 import { isAuthenticated } from "@/lib/session";
 
@@ -146,78 +147,101 @@ function buildGetCandidates(brokerUrl: string): string[] {
   return [...new Set(paths)];
 }
 
+interface DiscoveryAttempt {
+  url: string;
+  status?: number;
+  reason: string;
+}
+
+/** Reason string for a thrown fetch error — distinguishes a timeout from a hard network failure. */
+function fetchErrorReason(err: unknown): string {
+  if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
+    return "timed out";
+  }
+  return err instanceof Error ? err.message : "network error";
+}
+
 async function tryGet(
   endpoint: string,
   a2aVersion?: string,
-  authHeaders?: Record<string, string>
-): Promise<AgentCard | null> {
+  authHeaders?: Record<string, string>,
+  useProxy = false
+): Promise<{ card: AgentCard | null; attempt: DiscoveryAttempt }> {
+  const label = useProxy ? `${endpoint} (via egress proxy)` : endpoint;
   try {
-    const res = await safeFetch(
-      endpoint,
-      {
-        method: "GET",
-        headers: {
-          Accept: "application/json",
-          ...(a2aVersion ? a2aVersionRequestHeaders(a2aVersion) : {}),
-          ...(authHeaders ?? {}),
-        },
-        signal: AbortSignal.timeout(5000),
-      },
-      { allowHttp: false }
-    );
-    if (!res.ok) return null;
-    const ct = res.headers.get("content-type") ?? "";
-    if (!ct.includes("application/json") && !ct.includes("text/")) return null;
+    const headers = {
+      Accept: "application/json",
+      ...(a2aVersion ? a2aVersionRequestHeaders(a2aVersion) : {}),
+      ...(authHeaders ?? {}),
+    };
+    const res: NormalizedResponse = useProxy
+      ? await fetchViaEgressProxy(endpoint, { method: "GET", headers, timeoutMs: 5000 })
+      : await fetchDirect(endpoint, { method: "GET", headers, timeoutMs: 5000 });
+    if (!res.ok) {
+      return { card: null, attempt: { url: label, status: res.status, reason: res.statusText || `HTTP ${res.status}` } };
+    }
+    const ct = res.headers["content-type"] ?? "";
+    if (!ct.includes("application/json") && !ct.includes("text/")) {
+      return { card: null, attempt: { url: label, status: res.status, reason: `unexpected content-type "${ct}"` } };
+    }
     let parsed: unknown;
     try {
-      parsed = JSON.parse(await res.text());
+      parsed = JSON.parse(res.text);
     } catch {
-      return null;
+      return { card: null, attempt: { url: label, status: res.status, reason: "response was not valid JSON" } };
     }
-    return extractCard(parsed);
-  } catch {
-    return null;
+    const card = extractCard(parsed);
+    if (!card) {
+      return { card: null, attempt: { url: label, status: res.status, reason: "response did not look like an agent card" } };
+    }
+    return { card, attempt: { url: label, status: res.status, reason: "ok" } };
+  } catch (err) {
+    return { card: null, attempt: { url: label, reason: fetchErrorReason(err) } };
   }
 }
 
 async function tryPost(
   brokerUrl: string,
   a2aVersion?: string,
-  authHeaders?: Record<string, string>
-): Promise<AgentCard | null> {
-  const bodies = [
-    JSON.stringify({ jsonrpc: "2.0", method: "agent/info", id: crypto.randomUUID(), params: {} }),
-    JSON.stringify({ jsonrpc: "2.0", method: "tasks/send", id: crypto.randomUUID(), params: {} }),
+  authHeaders?: Record<string, string>,
+  useProxy = false
+): Promise<{ card: AgentCard | null; attempts: DiscoveryAttempt[] }> {
+  const bodies: Array<{ method: string; body: string }> = [
+    { method: "agent/info", body: JSON.stringify({ jsonrpc: "2.0", method: "agent/info", id: crypto.randomUUID(), params: {} }) },
+    { method: "tasks/send", body: JSON.stringify({ jsonrpc: "2.0", method: "tasks/send", id: crypto.randomUUID(), params: {} }) },
   ];
-  for (const body of bodies) {
+  const attempts: DiscoveryAttempt[] = [];
+  for (const { method, body } of bodies) {
+    const label = `${brokerUrl} (POST ${method}${useProxy ? ", via egress proxy" : ""})`;
     try {
-      const res = await safeFetch(
-        brokerUrl,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-            ...(a2aVersion ? a2aVersionRequestHeaders(a2aVersion) : {}),
-            ...(authHeaders ?? {}),
-          },
-          body,
-          signal: AbortSignal.timeout(8000),
-        },
-        { allowHttp: false }
-      );
-      if (!res.ok) continue;
+      const headers = {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        ...(a2aVersion ? a2aVersionRequestHeaders(a2aVersion) : {}),
+        ...(authHeaders ?? {}),
+      };
+      const res: NormalizedResponse = useProxy
+        ? await fetchViaEgressProxy(brokerUrl, { method: "POST", headers, body, timeoutMs: 8000 })
+        : await fetchDirect(brokerUrl, { method: "POST", headers, body, timeoutMs: 8000 });
+      if (!res.ok) {
+        attempts.push({ url: label, status: res.status, reason: res.statusText || `HTTP ${res.status}` });
+        continue;
+      }
       let parsed: unknown;
       try {
-        parsed = JSON.parse(await res.text());
+        parsed = JSON.parse(res.text);
       } catch {
+        attempts.push({ url: label, status: res.status, reason: "response was not valid JSON" });
         continue;
       }
       const card = extractCard(parsed);
-      if (card) return card;
-    } catch { /* timeout / network */ }
+      if (card) return { card, attempts: [...attempts, { url: label, status: res.status, reason: "ok" }] };
+      attempts.push({ url: label, status: res.status, reason: "response did not look like an agent card" });
+    } catch (err) {
+      attempts.push({ url: label, reason: fetchErrorReason(err) });
+    }
   }
-  return null;
+  return { card: null, attempts };
 }
 
 async function resolveCardFetch(params: {
@@ -239,25 +263,35 @@ async function resolveCardFetch(params: {
     if (cached) return NextResponse.json(cached);
   }
 
+  const attempts: DiscoveryAttempt[] = [];
   const candidates = buildGetCandidates(safety.url.toString());
-  for (const endpoint of candidates) {
-    const card = await tryGet(endpoint, a2aVersion, authHeaders);
-    if (card) {
-      logCardDiagnostics(card, endpoint);
-      if (!hasAuth) cacheSet(safety.url.toString(), card);
-      return NextResponse.json(card);
+
+  // Direct pass, then (only if that fully failed and a proxy is configured) a
+  // second pass relayed through the egress proxy — some brokers block this
+  // server's IP range outright while accepting the proxy's AWS-hosted one.
+  // The direct pass stays first so the common case pays no extra latency.
+  for (const useProxy of egressProxyConfigured() ? [false, true] : [false]) {
+    for (const endpoint of candidates) {
+      const { card, attempt } = await tryGet(endpoint, a2aVersion, authHeaders, useProxy);
+      attempts.push(attempt);
+      if (card) {
+        logCardDiagnostics(card, attempt.url);
+        if (!hasAuth) cacheSet(safety.url.toString(), card);
+        return NextResponse.json(card);
+      }
+    }
+
+    const postOutcome = await tryPost(safety.url.toString(), a2aVersion, authHeaders, useProxy);
+    attempts.push(...postOutcome.attempts);
+    if (postOutcome.card) {
+      logCardDiagnostics(postOutcome.card, useProxy ? "jsonrpc-post (via egress proxy)" : "jsonrpc-post");
+      if (!hasAuth) cacheSet(safety.url.toString(), postOutcome.card);
+      return NextResponse.json(postOutcome.card);
     }
   }
 
-  const card = await tryPost(safety.url.toString(), a2aVersion, authHeaders);
-  if (card) {
-    logCardDiagnostics(card, "jsonrpc-post");
-    if (!hasAuth) cacheSet(safety.url.toString(), card);
-    return NextResponse.json(card);
-  }
-
   return NextResponse.json(
-    { error: "Agent card not discoverable", tried: candidates.length + 2 },
+    { error: "Agent card not discoverable", tried: attempts.length, attempts },
     { status: 404 }
   );
 }

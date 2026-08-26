@@ -1,40 +1,59 @@
 import type { AgentCard, AgentSkill, InvokeAuthConfig } from "./types";
 import { normalizeStringArray } from "@/lib/composer/a2a-card";
 
+interface DiscoveryFailure {
+  error?: string;
+  tried?: number;
+  attempts?: Array<{ url: string; status?: number; reason: string }>;
+}
+
+/** Turn a discovery failure body into a message that names what was actually tried. */
+export function describeDiscoveryFailure(body: DiscoveryFailure | null, status: number): string {
+  const base = body?.error ?? `Broker returned ${status}`;
+  const attempts = body?.attempts;
+  if (!attempts || attempts.length === 0) {
+    return typeof body?.tried === "number" ? `${base} (tried ${body.tried} URLs).` : base;
+  }
+  const last = attempts[attempts.length - 1];
+  const detail = last.status != null ? `${last.status} ${last.reason}`.trim() : last.reason;
+  return `${base} (tried ${body?.tried ?? attempts.length}). Last: ${detail} — ${last.url}`;
+}
+
 /**
  * Fetch the agent card for a given broker URL via the server-side proxy
- * (handles CORS, tries 14+ well-known paths, caches the result).
+ * (handles CORS, tries 14+ well-known paths, caches the result). Throws with
+ * a message naming which URLs were tried and why the last one failed, rather
+ * than resolving to null and leaving the caller to guess.
  */
 export async function fetchAgentCard(
   brokerUrl: string,
   opts: { bustCache?: boolean; a2aVersion?: string; auth?: InvokeAuthConfig } = {}
-): Promise<AgentCard | null> {
+): Promise<AgentCard> {
   const auth = opts.auth;
   const shouldUsePost = auth && auth.type !== "none";
-  try {
-    const res = shouldUsePost
-      ? await fetch("/api/invoke/agent-card", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            url: brokerUrl,
-            refresh: Boolean(opts.bustCache),
-            a2aVersion: opts.a2aVersion,
-            auth,
-          }),
-        })
-      : await fetch(
-          `/api/invoke/agent-card?${new URLSearchParams({
-            url: brokerUrl,
-            ...(opts.bustCache ? { refresh: "1" } : {}),
-            ...(opts.a2aVersion ? { a2aVersion: opts.a2aVersion } : {}),
-          }).toString()}`
-        );
-    if (!res.ok) return null;
-    return (await res.json()) as AgentCard;
-  } catch {
-    return null;
+  const res = shouldUsePost
+    ? await fetch("/api/invoke/agent-card", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: brokerUrl,
+          refresh: Boolean(opts.bustCache),
+          a2aVersion: opts.a2aVersion,
+          auth,
+        }),
+      })
+    : await fetch(
+        `/api/invoke/agent-card?${new URLSearchParams({
+          url: brokerUrl,
+          ...(opts.bustCache ? { refresh: "1" } : {}),
+          ...(opts.a2aVersion ? { a2aVersion: opts.a2aVersion } : {}),
+        }).toString()}`
+      );
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error(describeDiscoveryFailure(data as DiscoveryFailure | null, res.status));
   }
+  return data as AgentCard;
 }
 
 export function getSkills(agentCard: AgentCard | null): AgentSkill[] {

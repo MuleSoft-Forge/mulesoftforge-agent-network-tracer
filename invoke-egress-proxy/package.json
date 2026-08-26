@@ -1,0 +1,10 @@
+{
+  "name": "invoke-egress-proxy",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Authenticated egress relay for the Agent Network Tracer's Invoke feature, deployed on Vercel so outbound broker calls have an AWS-IP-space fallback path.",
+  "devDependencies": {
+    "@vercel/node": "^3.2.0",
+    "typescript": "^5.6.0"
+  }
+}
