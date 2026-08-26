@@ -148,19 +148,19 @@ export default function TroubleshootingPage() {
         <LI><strong>Just deployed</strong> — no one has invoked the broker yet, so there are no tasks. Use Tracer&apos;s <XLink to="tracer" anchor="invoke">Invoke</XLink> rail to create one.</LI>
       </UL>
 
-      <H2 id="export-blocked">Builder won&apos;t export</H2>
+      <H2 id="export-blocked">Builder won&apos;t save to folder</H2>
       <P>
-        <strong>Symptom:</strong> &quot;Save to folder&quot; or &quot;Download .zip&quot; throws
-        <em>&quot;Project validation failed&quot;</em> or <em>&quot;AgentScript conformance failed&quot;</em>.
+        <strong>Symptom:</strong> &quot;Save to folder&quot; throws instead of opening a folder picker.
       </P>
       <P>
-        <strong>Cause:</strong> file exports are hard-gated on zero validation errors <em>and</em> clean
-        AgentScript conformance.
+        <strong>Cause:</strong> that action needs the File System Access API, which is Chromium-only
+        (Chrome/Edge). Validation is <strong>not</strong> a gate on any save, export, or deploy path in this
+        app — the validation strip is advisory everywhere, since Builder&apos;s own checks can be stale
+        relative to what the real build server accepts.
       </P>
       <Callout tone="tip" title="Fix">
-        Open the <strong>validation strip</strong> and click each blocking issue — it jumps to the exact field.
-        Clear them all (the green &quot;Valid&quot; chip), then export. To park a work-in-progress, use
-        <strong> Save in browser</strong>, which has no gate. See <XLink to="builder" anchor="save-export">saving &amp; exporting</XLink>.
+        Use <strong>Download .zip</strong> instead, which works in any browser, or switch to Chrome/Edge for
+        &quot;Save to folder&quot;. See <XLink to="builder" anchor="save-export">saving &amp; exporting</XLink>.
       </Callout>
 
       <Callout tone="info">

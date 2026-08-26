@@ -208,11 +208,13 @@ export default function BuilderPage() {
         <LI><strong>Save to folder…</strong> — writes real files. Chromium only (Chrome/Edge).</LI>
         <LI><strong>Download .zip</strong> — the bundle as <Code>&lt;assetId&gt;.zip</Code>.</LI>
       </UL>
-      <Callout tone="warn" title="File exports are hard-gated">
-        Both file exports require <strong>zero validation errors</strong> and <strong>clean AgentScript
-        conformance</strong>. If either fails, the export throws with the first few messages. &quot;Save in
-        browser&quot; is the escape hatch for work-in-progress. There is <strong>no publish or deploy from
-        Builder</strong> — hand the bundle to <XLink to="build-publish">Build &amp; Publish</XLink>.
+      <Callout tone="info" title="No export is validation-gated">
+        Save to folder and Download .zip write whatever is in Builder, validation errors and all — the
+        validation strip is advisory everywhere, not a gate on any save/export/deploy path. This is
+        intentional: Builder&apos;s checks can be stale relative to what the real build server accepts, so
+        the build step in <XLink to="build-publish">Build &amp; Publish</XLink> is the actual gate. There is
+        <strong> no publish or deploy from Builder itself</strong> — hand the bundle to Build &amp; Publish
+        for that.
       </Callout>
 
       <H2 id="gotchas">Gotchas</H2>
@@ -224,12 +226,11 @@ export default function BuilderPage() {
         <LI><strong>An edit can re-lock the tab you&apos;re on</strong> — e.g. clearing the project name kicks you back to the Project stage.</LI>
         <LI><strong>Editing files or AgentScript while the model changed underneath</strong> blocks Apply until you reset. Semantic warnings need a second &quot;Apply with migrations&quot; click.</LI>
         <LI><strong>v1 projects are rejected on import</strong>, and multiple ambiguous <Code>.agent</Code> files throw.</LI>
-        <LI><strong>&quot;Save in browser&quot; doesn&apos;t validate</strong>, so a parked project can later fail to export — and it overwrites in place at the same GAV.</LI>
+        <LI><strong>&quot;Save in browser&quot; doesn&apos;t validate</strong>, and it overwrites in place at the same GAV.</LI>
       </UL>
       <P>
         Node and field references live in MuleSoft&apos;s{" "}
         <Ext href="https://docs.mulesoft.com/agent-network/latest/af-agent-script-reference">AgentScript reference</Ext>.
-        When something won&apos;t export, check <XLink to="troubleshooting" anchor="export-blocked">Builder won&apos;t export</XLink>.
       </P>
     </HelpFrame>
   );

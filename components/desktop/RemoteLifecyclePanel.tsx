@@ -440,28 +440,21 @@ export default function RemoteLifecyclePanel() {
       return;
     }
 
-    // Gate on the same validation Builder uses for export, so an empty or
-    // incomplete draft (e.g. missing trigger) can't be sent to the CLI only to
-    // fail there.
+    // Builder's own checks can be stale relative to what the CLI actually
+    // accepts, so a failure here is a warning, not a gate — the build step
+    // this gets sent to next is the real check.
     const validation = validateProject(project);
-    if (!validation.ok) {
-      setLoadError(
-        `Builder project isn't ready to publish: ${summarizeValidationErrors(
-          validation.errors
-        )}. Fix the errors in Builder, then try again.`
-      );
-      return;
-    }
-    try {
-      await assertProjectAgentScriptsConform(project);
-    } catch (error) {
-      setLoadError(
-        error instanceof Error
-          ? error.message
-          : "Builder project failed AgentScript conformance validation."
-      );
-      return;
-    }
+    const conformanceError = await assertProjectAgentScriptsConform(project).then(
+      () => null,
+      (error) => (error instanceof Error ? error.message : "AgentScript conformance check failed.")
+    );
+    const readyWarnings: string[] = [];
+    if (!validation.ok) readyWarnings.push(summarizeValidationErrors(validation.errors));
+    if (conformanceError) readyWarnings.push(conformanceError);
+    const readyWarning =
+      readyWarnings.length > 0
+        ? `Builder flags this project: ${readyWarnings.join("; ")}. Sending it to build anyway — the build step is the real check.`
+        : null;
 
     const files = serializeProject(project);
     const entries = files.map((file) => ({
@@ -482,6 +475,7 @@ export default function RemoteLifecyclePanel() {
         (typeof parsed.assetId === "string" && parsed.assetId.trim()) ||
         "Agent Network";
       applyBundle({ entries, projectName, variables });
+      if (readyWarning) setLoadError(readyWarning);
     } catch {
       setLoadError("Builder project exchange.json is invalid JSON.");
     }

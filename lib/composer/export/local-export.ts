@@ -2,8 +2,6 @@ import JSZip from "jszip";
 import type { ComposerProject } from "@/lib/composer/model";
 import { serializeProject, type SerializedFile } from "@/lib/composer/serialize";
 import type { ProjectZipEntry } from "@/lib/composer/import/select-project-files";
-import { assertProjectAgentScriptsConform } from "@/lib/composer/agentscript-conformance";
-import { validateProject } from "@/lib/composer/validate";
 
 export type ProjectSaveMethod = "directory" | "zip";
 
@@ -26,21 +24,7 @@ export function defaultProjectZipName(project: ComposerProject): string {
   return assetId ? `${assetId}.zip` : "agent-network.zip";
 }
 
-function assertProjectModelValid(project: ComposerProject): void {
-  const validation = validateProject(project);
-  if (validation.ok) return;
-  const details = validation.errors
-    .slice(0, 5)
-    .map((issue) => issue.message)
-    .join("; ");
-  const remainder =
-    validation.errors.length > 5 ? `; plus ${validation.errors.length - 5} more` : "";
-  throw new Error(`Project validation failed: ${details}${remainder}`);
-}
-
 export async function buildProjectZipBlob(project: ComposerProject): Promise<Blob> {
-  assertProjectModelValid(project);
-  await assertProjectAgentScriptsConform(project);
   const zip = new JSZip();
   for (const f of projectSerializedFiles(project)) {
     zip.file(f.path, f.content);
@@ -120,8 +104,6 @@ export async function saveProjectToDirectory(project: ComposerProject): Promise<
     );
   }
 
-  assertProjectModelValid(project);
-  await assertProjectAgentScriptsConform(project);
   const dirHandle = await pickProjectDirectory();
 
   const files = projectSerializedFiles(project);
