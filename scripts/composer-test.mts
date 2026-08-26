@@ -7127,9 +7127,8 @@ console.log("\n[ordered tabs] stages unlock one at a time from real project data
 
 console.log("\n[invoke] A2A protocol version bucketing");
 {
-  const { normalizeA2AVersion, jsonRpcSendMethod, isA2AVersion1 } = await import(
-    "@/lib/invoke/a2a-version"
-  );
+  const { normalizeA2AVersion, jsonRpcSendMethod, isA2AVersion1, resolveBrokerEndpointFromCard } =
+    await import("@/lib/invoke/a2a-version");
   check("normalizes 1.x to 1.0", normalizeA2AVersion("1.2") === "1.0");
   check("normalizes 0.3.x to 0.3", normalizeA2AVersion("0.3.1") === "0.3");
   check(
@@ -7139,6 +7138,34 @@ console.log("\n[invoke] A2A protocol version bucketing");
   check("leaves unparseable versions alone", normalizeA2AVersion("banana") === "banana");
   check("SendMessage is used for any major version >= 1, not just exactly 1.x", jsonRpcSendMethod("2.0") === "SendMessage");
   check("isA2AVersion1 agrees", isA2AVersion1("2.0") && isA2AVersion1("1.0") && !isA2AVersion1("0.3"));
+
+  check("no card resolves to no endpoint", resolveBrokerEndpointFromCard(null) === null);
+  check(
+    "a flat card.url wins over supportedInterfaces",
+    resolveBrokerEndpointFromCard({
+      url: "https://broker.example.com/preferred",
+      supportedInterfaces: [{ url: "https://broker.example.com/other", protocolBinding: "JSONRPC" }],
+    }) === "https://broker.example.com/preferred"
+  );
+  check(
+    "falls back to the JSONRPC interface when card.url is empty — the exact shape a real broker sent (transport mislabeled HTTP+JSON but a JSONRPC interface also declared)",
+    resolveBrokerEndpointFromCard({
+      supportedInterfaces: [
+        { url: "https://broker.example.com/http-json", protocolBinding: "HTTP+JSON" },
+        { url: "https://broker.example.com/rpc", protocolBinding: "JSONRPC" },
+      ],
+    }) === "https://broker.example.com/rpc"
+  );
+  check(
+    "falls back to any interface url when none is JSONRPC-labelled",
+    resolveBrokerEndpointFromCard({
+      supportedInterfaces: [{ url: "https://broker.example.com/only", protocolBinding: "GRPC" }],
+    }) === "https://broker.example.com/only"
+  );
+  check(
+    "returns null (letting the caller fall back to its own discovery URL) when the card has neither",
+    resolveBrokerEndpointFromCard({ name: "No endpoint declared" }) === null
+  );
 }
 
 console.log(`\n==== ${passed} passed, ${failed} failed ====`);

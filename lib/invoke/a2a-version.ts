@@ -26,6 +26,27 @@ export function inferA2AVersionFromCardClassifier(
   return null;
 }
 
+/**
+ * The endpoint to actually send messages to. A card's flat `url` is the
+ * agent's preferred endpoint when present; some cards only declare it per
+ * transport under `supportedInterfaces[]` instead, and leave `url` empty.
+ * Falling back to the caller's discovery URL (typically the
+ * `.well-known/agent-card.json` document) in that case sends every message
+ * to a GET-only document endpoint — a 405 on the very first send. Prefers a
+ * JSONRPC-bound interface since that's the only transport this client speaks.
+ */
+export function resolveBrokerEndpointFromCard(card: AgentCard | null | undefined): string | null {
+  if (!card) return null;
+  if (card.url?.trim()) return card.url.trim();
+  const interfaces = card.supportedInterfaces ?? [];
+  const jsonRpc = interfaces.find(
+    (iface) => iface.url?.trim() && iface.protocolBinding?.toUpperCase() === "JSONRPC"
+  );
+  if (jsonRpc?.url) return jsonRpc.url.trim();
+  const anyInterface = interfaces.find((iface) => iface.url?.trim());
+  return anyInterface?.url?.trim() ?? null;
+}
+
 export function inferA2AVersionFromCard(card: AgentCard | null | undefined): string {
   if (!card) return "0.3";
 

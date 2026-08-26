@@ -7,7 +7,7 @@ import type { InvokeAction } from "@/lib/invoke/types";
 import type { Dispatch } from "react";
 import { urlContainsIngressPlaceholder } from "@/lib/invoke/ingress-gateway-url";
 import { useImeComposition } from "@/lib/ime-composition";
-import { inferA2AVersionFromCard } from "@/lib/invoke/a2a-version";
+import { inferA2AVersionFromCard, resolveBrokerEndpointFromCard } from "@/lib/invoke/a2a-version";
 
 interface BrokerUrlBarProps {
   url: string;
@@ -86,7 +86,7 @@ export default function BrokerUrlBar({
         a2aVersion: suggestedA2aVersion ?? undefined,
         auth,
       });
-      let resolvedUrl = card?.url?.trim() || trimmed;
+      let resolvedUrl = resolveBrokerEndpointFromCard(card) ?? trimmed;
       if (urlContainsIngressPlaceholder(resolvedUrl) && resolveContext) {
         resolvedUrl = await resolveIngressUrlIfNeeded(resolvedUrl);
       }
@@ -117,7 +117,7 @@ export default function BrokerUrlBar({
         a2aVersion: suggestedA2aVersion ?? undefined,
         auth,
       });
-      let resolvedUrl = card?.url?.trim() || fetchUrl;
+      let resolvedUrl = resolveBrokerEndpointFromCard(card) ?? fetchUrl;
       if (urlContainsIngressPlaceholder(resolvedUrl) && resolveContext) {
         resolvedUrl = await resolveIngressUrlIfNeeded(resolvedUrl);
       }
