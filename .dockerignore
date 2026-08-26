@@ -32,6 +32,10 @@ hidefromgit
 docs
 examples
 
+# Separate deployable (deploys to Vercel, not part of this image) — its own
+# node_modules alone is >100MB and was bloating the Fly build context.
+invoke-egress-proxy
+
 # Local-only archive of superseded code — huge (~475 MB), untracked, and never
 # part of the image. Leaving it out of the context keeps deploy uploads small.
 deprecated
