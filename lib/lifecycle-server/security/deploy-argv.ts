@@ -121,6 +121,22 @@ export function validateDeployOptions(deploy: DeployOptions | undefined): Valida
   return out;
 }
 
+/**
+ * ANYPOINT_ORG / ANYPOINT_ENV env vars for every CLI step, not just `deploy`.
+ * `build` and `publish` accept no --organization/--environment flags at all,
+ * so without this they fall back to the CLI's own account-level defaults (root
+ * org, "default environment") — which may not exist, and even when they do,
+ * may not match the business group the user actually selected. Setting these
+ * env vars seeds the same flags' defaults for every command uniformly.
+ */
+export function deployContextEnv(deploy: DeployOptions | undefined): Record<string, string> {
+  if (!deploy) return {};
+  return {
+    ANYPOINT_ORG: assertOrganization(deploy.organization),
+    ANYPOINT_ENV: assertEnvironment(deploy.environment),
+  };
+}
+
 /** Append validated deploy flags to argv. */
 export function appendDeployArgv(argv: string[], deploy: DeployOptions | undefined): void {
   const options = validateDeployOptions(deploy);

@@ -3,6 +3,7 @@ import { flattenExchangeDeployVariables } from "@/lib/desktop/exchange-deploy-va
 import {
   defaultDeployOptions,
   deployOptionsReady,
+  publishOptionsReady,
   propertiesFromVariables,
 } from "@/lib/desktop/deploy-options";
 import {
@@ -3149,6 +3150,19 @@ console.log("\n[deploy options]");
   const incomplete = deployOptionsReady(defaultDeployOptions(), variables);
   check("deploy blocked without environment", !incomplete.ok);
 
+  // Publish chains a build, and build resolves API instances against the
+  // selected environment — so publish is blocked the same way deploy is,
+  // even though it never asks for a gateway or secrets.
+  check("publish blocked without environment", !publishOptionsReady(defaultDeployOptions()).ok);
+  check(
+    "publish ready once org and environment are set, with no gateway",
+    publishOptionsReady({
+      ...defaultDeployOptions(),
+      organizationId: "a1b2c3d4-0000-0000-0000-000000000000",
+      environment: "PRD",
+    }).ok === true
+  );
+
   const sharedReady = deployOptionsReady(
     {
       ...defaultDeployOptions(),
@@ -3222,6 +3236,38 @@ console.log("\n[deploy options]");
     corrupted = true;
   }
   check("appendDeployArgv rejects corrupted api key", corrupted);
+
+  const { deployContextEnv } = await import("../lib/lifecycle-server/security/deploy-argv");
+  check(
+    "deployContextEnv sets ANYPOINT_ORG/ANYPOINT_ENV from deploy options",
+    deployContextEnv({
+      organization: "Acme Business Group",
+      environment: "PRD",
+      targetKind: "shared",
+      gateway: "omni-ai-gateway",
+      properties: [],
+    }).ANYPOINT_ORG === "Acme Business Group" &&
+      deployContextEnv({
+        organization: "Acme Business Group",
+        environment: "PRD",
+        targetKind: "shared",
+        gateway: "omni-ai-gateway",
+        properties: [],
+      }).ANYPOINT_ENV === "PRD"
+  );
+  check("deployContextEnv is empty when no deploy options are given", Object.keys(deployContextEnv(undefined)).length === 0);
+  let rejectedBadContext = false;
+  try {
+    deployContextEnv({
+      organization: "",
+      environment: "PRD",
+      targetKind: "shared",
+      properties: [],
+    });
+  } catch {
+    rejectedBadContext = true;
+  }
+  check("deployContextEnv rejects a missing organization", rejectedBadContext);
 }
 
 console.log("\n[removal argv]");

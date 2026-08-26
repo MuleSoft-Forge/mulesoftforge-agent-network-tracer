@@ -99,6 +99,23 @@ export function missingRequiredSecrets(
   });
 }
 
+/**
+ * Publish chains a build, and build resolves API instances against the
+ * selected environment — so publish needs organization + environment even
+ * though it has no gateway/space/secrets of its own to configure.
+ */
+export function publishOptionsReady(
+  options: DeployOptions
+): { ok: true } | { ok: false; reason: string } {
+  if (!(options.organizationId ?? "").trim()) {
+    return { ok: false, reason: "Select a business group in the left menu." };
+  }
+  if (!options.environment.trim()) {
+    return { ok: false, reason: "Select an environment in the left menu." };
+  }
+  return { ok: true };
+}
+
 export function deployOptionsReady(
   options: DeployOptions,
   variables: ProjectDeployVariable[]

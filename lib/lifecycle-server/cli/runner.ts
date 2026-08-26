@@ -13,7 +13,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { COMMANDS, DESCRIPTOR_FILE } from "../security/command-allowlist";
-import { appendDeployArgv } from "../security/deploy-argv";
+import { appendDeployArgv, deployContextEnv } from "../security/deploy-argv";
 import { appendRemovalArgv } from "../security/removal-argv";
 import { redactSecrets, redactValues } from "../redaction";
 import { isRemovalCommand, type CliCommand, type DeployOptions, type RemovalOptions } from "../contracts";
@@ -184,7 +184,7 @@ export function runCli(options: RunCliOptions): Promise<RunCliResult> {
   for (const key of unsetEnv ?? []) {
     delete childEnv[key];
   }
-  Object.assign(childEnv, extraEnv, { FORCE_COLOR: "0" });
+  Object.assign(childEnv, extraEnv, deployContextEnv(deploy), { FORCE_COLOR: "0" });
 
   const child = spawn(config.anypointCliPath, argv, {
     cwd: projectDir,

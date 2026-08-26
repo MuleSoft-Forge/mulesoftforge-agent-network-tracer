@@ -37,6 +37,7 @@ import type { LogLine } from "@/lib/lifecycle/log-lines";
 import {
   defaultDeployOptions,
   deployOptionsReady,
+  publishOptionsReady,
   propertiesFromVariables,
   type DeployOptions,
   type ProjectDeployVariable,
@@ -328,6 +329,10 @@ export default function RemoteLifecyclePanel() {
     () => deployOptionsReady(deployOptions, variables),
     [deployOptions, variables]
   );
+  const publishReadiness = useMemo(
+    () => publishOptionsReady(deployOptions),
+    [deployOptions]
+  );
   const parsedSummary = useMemo(() => parseCliSummary(cli.log), [cli.log]);
 
   // After a failed publish/deploy, scan the CLI output for known error
@@ -525,7 +530,10 @@ export default function RemoteLifecyclePanel() {
     void cli.submit({
       command,
       project: bundle.entries,
-      deploy: command === "deploy" ? deployOptions : undefined,
+      // Publish chains a build, which resolves API instances against the
+      // selected environment just like deploy does — so it needs the same
+      // org/environment context, even though it ignores gateway/space.
+      deploy: command === "deploy" || command === "publish" ? deployOptions : undefined,
       variables,
     });
   }
@@ -666,14 +674,15 @@ export default function RemoteLifecyclePanel() {
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
               {COMMANDS.map(({ key, label, hint, Icon }) => {
                 const isRunning = cli.running === key && activeAction !== "publishAndDeploy";
-                const deployBlocked = key === "deploy" && !deployReadiness.ok;
+                const readiness = key === "deploy" ? deployReadiness : key === "publish" ? publishReadiness : null;
+                const actionBlocked = readiness !== null && !readiness.ok;
                 return (
                   <div key={key} className="rounded-lg border border-gray-200 bg-gray-50 p-3">
                     <button
                       type="button"
-                      title={deployBlocked ? deployReadiness.reason : hint}
+                      title={actionBlocked ? readiness.reason : hint}
                       onClick={() => run(key)}
-                      disabled={!bundle || cli.busy || deployBlocked}
+                      disabled={!bundle || cli.busy || actionBlocked}
                       className="flex items-center gap-1.5 rounded-xl bg-primary px-3.5 py-2 text-xs font-medium text-white transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       {isRunning ? (

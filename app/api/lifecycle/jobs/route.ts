@@ -66,6 +66,16 @@ const submitSchema = z
     message: "removal options are required for unpublish, undeploy, and teardown",
     path: ["removal"],
   })
+  // `build` (run by every command as a prerequisite) resolves API instances
+  // against the selected environment, so publish needs it just as much as
+  // deploy does — even though publish itself takes no gateway/space.
+  .refine(
+    (body) => (body.command !== "deploy" && body.command !== "publish") || body.deploy !== undefined,
+    {
+      message: "deploy options are required for the publish and deploy commands",
+      path: ["deploy"],
+    }
+  )
   // teardown's first step is undeploy, so it needs the same environment.
   .refine(
     (body) =>

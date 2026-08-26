@@ -173,7 +173,10 @@ async function processJob(data: LifecycleJobData): Promise<void> {
       result = await runCli({
         command: step,
         projectDir: workspace.dir,
-        deploy: step === "deploy" ? deploy : undefined,
+        // Every step gets org/environment context, not just the "deploy" step
+        // itself — build (and publish's prerequisite build) resolves API
+        // instances against this same environment, so it needs it too.
+        deploy,
         removal: isRemovalCommand(step) ? removal : undefined,
         extraEnv: credentials.env,
         unsetEnv: credentials.unsetEnv,
