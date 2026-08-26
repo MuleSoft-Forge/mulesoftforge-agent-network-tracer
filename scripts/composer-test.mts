@@ -7125,5 +7125,21 @@ console.log("\n[ordered tabs] stages unlock one at a time from real project data
   check("an unordered project locks nothing", autoFor(p).locked.size === 0);
 }
 
+console.log("\n[invoke] A2A protocol version bucketing");
+{
+  const { normalizeA2AVersion, jsonRpcSendMethod, isA2AVersion1 } = await import(
+    "@/lib/invoke/a2a-version"
+  );
+  check("normalizes 1.x to 1.0", normalizeA2AVersion("1.2") === "1.0");
+  check("normalizes 0.3.x to 0.3", normalizeA2AVersion("0.3.1") === "0.3");
+  check(
+    "buckets an unexpected major version (e.g. a mis-set card) into the modern protocol",
+    normalizeA2AVersion("2.0") === "1.0" && normalizeA2AVersion("2") === "1.0"
+  );
+  check("leaves unparseable versions alone", normalizeA2AVersion("banana") === "banana");
+  check("SendMessage is used for any major version >= 1, not just exactly 1.x", jsonRpcSendMethod("2.0") === "SendMessage");
+  check("isA2AVersion1 agrees", isA2AVersion1("2.0") && isA2AVersion1("1.0") && !isA2AVersion1("0.3"));
+}
+
 console.log(`\n==== ${passed} passed, ${failed} failed ====`);
 process.exit(failed === 0 ? 0 : 1);

@@ -23,7 +23,11 @@ const PROTOCOL_BINDING_OPTIONS = [
   { value: "GRPC", label: "GRPC" },
 ] as const;
 
-const DEFAULT_BINDING = "HTTP+JSON";
+// AgentFabric brokers only ever serve JSON-RPC (see lib/invoke/a2a-version.ts) —
+// defaulting to HTTP+JSON here would advertise a transport the broker doesn't
+// implement, so any spec-following A2A client (ours included) picks the wrong
+// wire format and every send fails.
+const DEFAULT_BINDING = "JSONRPC";
 const DEFAULT_VERSION = "1.0";
 /** A2A v0.3 requires the card-level mode arrays, so they never go empty. */
 const DEFAULT_CARD_MODES = ["text/plain"];

@@ -277,7 +277,7 @@ brokers:
           supportedInterfaces:
             - url: https://myOmniGateway/vogue_premiere/
               protocolVersion: "1.0"
-              protocolBinding: HTTP+JSON
+              protocolBinding: JSONRPC
 `;
 
 export const BROKER_AGENT = `# @dialect: AGENTFABRIC=1.0

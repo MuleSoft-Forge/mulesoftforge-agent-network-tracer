@@ -7,6 +7,12 @@ export function normalizeA2AVersion(raw: string | null | undefined): string | nu
   const lower = value.toLowerCase();
   if (lower === "v1" || lower === "a2a_v1" || lower.startsWith("1.")) return "1.0";
   if (lower.startsWith("0.3")) return "0.3";
+  // AgentFabric brokers only ever implement one modern protocol bucket — the
+  // SendMessage/ROLE_USER JSON-RPC shape — so any other major version (a card
+  // mis-set to "2.0", "3", …) still means "the modern one", not the pre-1.0
+  // message/send shape. Falls through to the raw value for anything unparseable.
+  const majorVersion = Number.parseInt(lower, 10);
+  if (Number.isFinite(majorVersion) && majorVersion >= 1) return "1.0";
   return value;
 }
 

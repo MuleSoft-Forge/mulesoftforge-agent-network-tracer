@@ -201,4 +201,4 @@ brokers:
           supportedInterfaces:
             - url: https://myOmniGateway/vogue_premiere/
               protocolVersion: "1.0"
-              protocolBinding: HTTP+JSON
+              protocolBinding: JSONRPC
