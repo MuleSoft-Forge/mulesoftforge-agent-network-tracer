@@ -6419,6 +6419,27 @@ console.log("\n[official AgentScript conformance]");
     ).length > 0
   );
 
+  // A broker imported from a file that wrote system.instructions with the `->`
+  // procedure form, then edited in the UI to add real multi-paragraph text:
+  // the official grammar only accepts multi-line content as a plain `|` block
+  // scalar, never `-> |` — serialize must drop the arrow rather than reproduce
+  // an unparseable file.
+  const multilineProcedureProject = createScaffoldProject("ORG");
+  const multilineProcedureBroker = multilineProcedureProject.brokers[0];
+  multilineProcedureBroker.systemInstructions =
+    "You are a broker.\n\nMission:\n- Do the thing.\n- Do the other thing.";
+  multilineProcedureBroker.systemInstructionsProcedure = true;
+  const multilineProcedureAgent = serializeBrokerAgent(multilineProcedureBroker);
+  check(
+    "multi-line system.instructions from a procedure import drops the arrow on serialize",
+    !multilineProcedureAgent.includes("instructions: ->") &&
+      multilineProcedureAgent.includes("instructions: |")
+  );
+  check(
+    "official linter accepts multi-line system.instructions previously written as a procedure",
+    (await validateProjectAgentScripts(multilineProcedureProject)).length === 0
+  );
+
   const featureProject = createScaffoldProject("ORG");
   const featureBroker = featureProject.brokers[0];
   const trigger = featureBroker.nodes.find((node) => node.kind === "trigger")!;

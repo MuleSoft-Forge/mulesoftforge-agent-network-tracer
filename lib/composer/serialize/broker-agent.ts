@@ -120,30 +120,30 @@ function emitBlockScalar(key: string, value: string, indent: number): string[] {
   return lines;
 }
 
+/**
+ * The `->` arrow-prefixed template form only parses as a single line — the
+ * official parser rejects a bare `|` followed by continuation lines
+ * (`Expected a string or a template, got identifier`). Multi-line content
+ * drops the arrow and uses a plain `|` block scalar instead, which the
+ * parser treats as a template too (interpolation still works) and does
+ * support continuation lines.
+ */
 function emitProcedureInstruction(content: string, indent: number, inline = false): string[] {
   const pad = " ".repeat(indent);
   if (inline) return [`${pad}instructions: -> ${oneLineExpression(content)}`];
-  const lines = [`${pad}instructions: ->`];
   if (content.includes("\n")) {
-    lines.push(`${pad}  |`);
-    lines.push(indentBlock(content, indent + 4));
-  } else {
-    lines.push(`${pad}  | ${content}`);
+    return [`${pad}instructions: |`, indentBlock(content, indent + 2)];
   }
-  return lines;
+  return [`${pad}instructions: ->`, `${pad}  | ${content}`];
 }
 
 function emitPromptProcedure(content: string, indent: number, inline = false): string[] {
   const pad = " ".repeat(indent);
   if (inline) return [`${pad}prompt: -> ${oneLineExpression(content)}`];
-  const lines = [`${pad}prompt: ->`];
   if (content.includes("\n")) {
-    lines.push(`${pad}  |`);
-    lines.push(indentBlock(content, indent + 4));
-  } else {
-    lines.push(`${pad}  | ${content}`);
+    return [`${pad}prompt: |`, indentBlock(content, indent + 2)];
   }
-  return lines;
+  return [`${pad}prompt: ->`, `${pad}  | ${content}`];
 }
 
 function emitLlm(bindings: LlmBinding[]): string[] {
