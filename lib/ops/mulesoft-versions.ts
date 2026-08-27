@@ -79,12 +79,17 @@ export async function readMulesoftVersions(): Promise<MulesoftVersions> {
   const notes: string[] = [];
   const cliPath = config.anypointCliPath;
 
-  const [cliVersionProbe, pluginListProbe, cliLatestProbe, pluginLatestProbe] = await Promise.all([
-    probe(cliPath, ["--version"]),
-    probe(cliPath, ["plugins"]),
+  // anypoint-cli-v4 can't tolerate two of its own invocations starting at once on
+  // the same machine — verified by reproduction, two concurrent calls reliably
+  // hang until the probe timeout instead of running. Keep the two CLI probes
+  // sequential; the npm registry probes are a different binary and can overlap.
+  const npmProbes = Promise.all([
     probe("npm", ["view", NPM_PACKAGE_CLI, "version"]),
     probe("npm", ["view", NPM_PACKAGE_PLUGIN, "version"]),
   ]);
+  const cliVersionProbe = await probe(cliPath, ["--version"]);
+  const pluginListProbe = await probe(cliPath, ["plugins"]);
+  const [cliLatestProbe, pluginLatestProbe] = await npmProbes;
 
   const cliInstalledVersion = normalizeVersion(
     firstLine(cliVersionProbe.stdout) ?? firstLine(cliVersionProbe.stderr)
