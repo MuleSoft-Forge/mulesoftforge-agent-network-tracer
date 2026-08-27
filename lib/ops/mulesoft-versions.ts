@@ -10,6 +10,8 @@ interface ProbeResult {
   ok: boolean;
   stdout: string;
   stderr: string;
+  /** The spawn error itself (e.g. ENOENT, timeout) — empty stdout/stderr alone can't tell those apart. */
+  error: string | null;
 }
 
 export interface MulesoftVersions {
@@ -32,7 +34,7 @@ function probe(command: string, args: string[]): Promise<ProbeResult> {
       args,
       { timeout: PROBE_TIMEOUT_MS, shell: false, windowsHide: true, env: { ...process.env, FORCE_COLOR: "0" } },
       (error, stdout, stderr) => {
-        resolve({ ok: !error, stdout: String(stdout || ""), stderr: String(stderr || "") });
+        resolve({ ok: !error, stdout: String(stdout || ""), stderr: String(stderr || ""), error: error ? error.message : null });
       }
     );
   });
@@ -94,10 +96,18 @@ export async function readMulesoftVersions(): Promise<MulesoftVersions> {
   const pluginLatestVersion = normalizeVersion(firstLine(pluginLatestProbe.stdout));
 
   if (!cliVersionProbe.ok) {
-    notes.push(`CLI at "${cliPath}" did not run cleanly.`);
+    const reason = cliVersionProbe.error ?? firstLine(cliVersionProbe.stderr) ?? "no output";
+    notes.push(`CLI at "${cliPath}" did not run cleanly: ${reason}`);
+  } else if (cliInstalledVersion === null) {
+    notes.push(
+      `CLI ran but its --version output didn't match the expected pattern: "${firstLine(cliVersionProbe.stdout) ?? firstLine(cliVersionProbe.stderr) ?? ""}"`
+    );
   }
   if (!pluginListProbe.ok) {
-    notes.push("Could not list CLI plugins from this runtime.");
+    const reason = pluginListProbe.error ?? firstLine(pluginListProbe.stderr) ?? "no output";
+    notes.push(`Could not list CLI plugins from this runtime: ${reason}`);
+  } else if (pluginInstalledVersion === null) {
+    notes.push(`CLI plugin list ran but didn't include ${NPM_PACKAGE_PLUGIN}.`);
   }
   if (!cliLatestProbe.ok) {
     notes.push(`Could not read latest ${NPM_PACKAGE_CLI} from npm.`);

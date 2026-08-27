@@ -352,13 +352,14 @@ function mulesoftCheck(versions: {
   notes: string[];
 }): OpsCheck {
   if (!versions.cliDetected || !versions.pluginDetected) {
+    const reasons = versions.notes.length > 0 ? ` ${versions.notes.join(" ")}` : "";
     return {
       id: "mulesoft-cli",
       title: "MuleSoft CLI and plugin",
       level: "fail",
-      detail: `CLI detected: ${versions.cliDetected ? "yes" : "no"} · plugin detected: ${versions.pluginDetected ? "yes" : "no"}.`,
+      detail: `CLI detected: ${versions.cliDetected ? "yes" : "no"} · plugin detected: ${versions.pluginDetected ? "yes" : "no"}.${reasons}`,
       action:
-        "Lifecycle publish/deploy depends on both. Rebuild and deploy an image that installs the CLI and agent-fabric plugin.",
+        "Lifecycle publish/deploy depends on both. If the reason above points at a spawn/timeout error, the image is fine and this is transient; if it points at a version-parsing mismatch, the CLI/plugin output format changed and the ops detection regex needs updating. Only rebuild the image if the CLI/plugin are genuinely missing.",
     };
   }
 
