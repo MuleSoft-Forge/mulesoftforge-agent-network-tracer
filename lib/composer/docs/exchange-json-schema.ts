@@ -76,7 +76,7 @@ export const EXCHANGE_JSON_TOP_LEVEL: ExchangeJsonFieldDoc[] = [
     type: "string",
     composerUi: "Asset id",
     composerSource: "editable",
-    notes: "Exchange asset slug (GAV assetId). [lowercase letters, digits, hyphens, and underscores; start with a letter; end with a letter or digit]",
+    notes: "Exchange asset slug (GAV assetId). [letters, digits, hyphens, and underscores; start with a letter; end with a letter or digit]",
   },
   {
     field: "version",

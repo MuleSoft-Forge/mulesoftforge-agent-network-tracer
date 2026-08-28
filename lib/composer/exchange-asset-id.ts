@@ -3,14 +3,15 @@
  *
  * MuleSoft's GAV schema types assetId as string without a pattern; published
  * assets commonly use kebab-case or snake_case (e.g. my-agent-network,
- * agent_network_reasoningonly_assetid).
+ * agent_network_reasoningonly_assetid), and Exchange now also accepts uppercase
+ * letters (e.g. MyAgentNetwork), so mixed case is allowed here too.
  */
 
-/** e.g. my-agent-network, agent_network_reasoningonly_assetid, agent2 */
-export const EXCHANGE_ASSET_ID_PATTERN = /^[a-z]([a-z0-9_-]*[a-z0-9])?$/;
+/** e.g. my-agent-network, MyAgentNetwork, agent_network_reasoningonly_assetid, agent2 */
+export const EXCHANGE_ASSET_ID_PATTERN = /^[a-zA-Z]([a-zA-Z0-9_-]*[a-zA-Z0-9])?$/;
 
 export const EXCHANGE_ASSET_ID_HINT =
-  "lowercase letters, digits, hyphens, and underscores; start with a letter; end with a letter or digit (e.g. my-agent-network or agent_broker_get_date)";
+  "letters, digits, hyphens, and underscores; start with a letter; end with a letter or digit (e.g. my-agent-network or agent_broker_get_date)";
 
 /** Full Project tab hint — always shown under the Asset id field. */
 export const EXCHANGE_ASSET_ID_FIELD_HINT = `Exchange asset slug (GAV assetId). [${EXCHANGE_ASSET_ID_HINT}]`;
@@ -19,25 +20,22 @@ export function isValidExchangeAssetId(id: string): boolean {
   return EXCHANGE_ASSET_ID_PATTERN.test(id);
 }
 
-/** Restrict keystrokes — lowercase [a-z0-9_-] only. */
+/** Restrict keystrokes — [a-zA-Z0-9_-] only. */
 export function restrictExchangeAssetIdInput(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9_-]/g, "");
+  return value.replace(/[^a-zA-Z0-9_-]/g, "");
 }
 
 export function exchangeAssetIdValidationMessage(id: string): string {
   const trimmed = id.trim();
   if (!trimmed) return "Asset id is required.";
-  if (/[A-Z]/.test(trimmed)) {
-    return `Asset id "${trimmed}" must use lowercase letters only (e.g. my-agent-network, not myAgentNetwork).`;
+  if (/^[^a-zA-Z]/.test(trimmed)) {
+    return `Asset id "${trimmed}" must start with a letter.`;
   }
-  if (/^[^a-z]/.test(trimmed)) {
-    return `Asset id "${trimmed}" must start with a lowercase letter.`;
+  if (/[^a-zA-Z0-9_-]/.test(trimmed)) {
+    return `Asset id "${trimmed}" may only contain letters, digits, hyphens, and underscores.`;
   }
-  if (/[^a-z0-9_-]/.test(trimmed)) {
-    return `Asset id "${trimmed}" may only contain lowercase letters, digits, hyphens, and underscores.`;
-  }
-  if (/[^a-z0-9]$/.test(trimmed)) {
-    return `Asset id "${trimmed}" must end with a lowercase letter or digit.`;
+  if (/[^a-zA-Z0-9]$/.test(trimmed)) {
+    return `Asset id "${trimmed}" must end with a letter or digit.`;
   }
   return `Asset id "${trimmed}" is invalid. ${EXCHANGE_ASSET_ID_HINT}`;
 }
@@ -47,15 +45,15 @@ export function normalizeExchangeAssetId(input: string, fallback = "agent-networ
   const trimmed = input.trim();
   if (trimmed && isValidExchangeAssetId(trimmed)) return trimmed;
 
+  // Mixed case is allowed, so preserve whatever case the user typed — just
+  // replace runs of unsupported characters with a single hyphen.
   let slug = input
-    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
     .replace(/[^a-zA-Z0-9]+/g, "-")
-    .toLowerCase()
     .replace(/-+/g, "-")
     .replace(/^-+|-+$/g, "");
 
-  if (slug && !/^[a-z]/.test(slug)) {
-    slug = `a-${slug.replace(/^[^a-z]+/, "")}`;
+  if (slug && !/^[a-zA-Z]/.test(slug)) {
+    slug = `a-${slug.replace(/^[^a-zA-Z]+/, "")}`;
   }
   slug = slug.replace(/-+$/, "");
 

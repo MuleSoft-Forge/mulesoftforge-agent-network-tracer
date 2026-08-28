@@ -566,18 +566,28 @@ console.log("\n[6c] Broker map keys (snake_case)");
   check("exchange asset id accepts kebab-case", isValidExchangeAssetId("it-help-desk"));
   check("exchange asset id accepts snake_case", isValidExchangeAssetId("agent_network_reasoningonly_assetid"));
   check("exchange asset id accepts mixed separators", isValidExchangeAssetId("agent_broker_get_date"));
-  check("exchange asset id rejects camelCase", !isValidExchangeAssetId("itHelpDesk"));
+  check("exchange asset id accepts camelCase", isValidExchangeAssetId("itHelpDesk"));
+  check("exchange asset id accepts PascalCase", isValidExchangeAssetId("MyAgentNetwork"));
+  check("exchange asset id rejects leading digit", !isValidExchangeAssetId("2agents"));
+  check("exchange asset id rejects spaces", !isValidExchangeAssetId("my agent"));
   check("exchange asset id rejects trailing hyphen", !isValidExchangeAssetId("my-network-"));
   check("exchange asset id rejects trailing underscore", !isValidExchangeAssetId("my_broker_"));
   check("pattern constant matches validator", EXCHANGE_ASSET_ID_PATTERN.test("agent-network"));
-  check("normalize camelCase slug", normalizeExchangeAssetId("ItHelpDesk") === "it-help-desk");
+  check("normalize preserves valid camelCase", normalizeExchangeAssetId("ItHelpDesk") === "ItHelpDesk");
+  check("normalize slugs unsupported chars", normalizeExchangeAssetId("It Help Desk!") === "It-Help-Desk");
   check("normalize preserves snake_case", normalizeExchangeAssetId("agent_broker_get_date") === "agent_broker_get_date");
-  check("restrict strips uppercase", restrictExchangeAssetIdInput("My-Agent") === "my-agent");
+  check("restrict preserves uppercase", restrictExchangeAssetIdInput("My-Agent") === "My-Agent");
+  check("restrict strips spaces", restrictExchangeAssetIdInput("My Agent") === "MyAgent");
   check("restrict preserves underscore", restrictExchangeAssetIdInput("agent_broker_get_date") === "agent_broker_get_date");
-  check("validation message mentions lowercase", exchangeAssetIdValidationMessage("MyAgent").includes("lowercase"));
+  check("validation message flags leading char", exchangeAssetIdValidationMessage("2agents").includes("start with a letter"));
   check(
     "invalid asset id fails validation",
-    !validateProject(apply(createScaffoldProject("ORG"), { type: "setIdentity", patch: { assetId: "BadAssetId" } })).ok
+    !validateProject(apply(createScaffoldProject("ORG"), { type: "setIdentity", patch: { assetId: "Bad Asset Id" } })).ok
+  );
+  check(
+    "mixed-case asset id raises no assetId issue",
+    !validateProject(apply(createScaffoldProject("ORG"), { type: "setIdentity", patch: { assetId: "MyAgentNetwork" } }))
+      .issues.some((issue) => issue.code === "identity.assetId.invalid")
   );
 
   let p = createScaffoldProject("ORG");
