@@ -76,7 +76,7 @@ export function createNode(kind: GraphNodeKind, name: string, position: { x: num
   };
 }
 
-/** @param key Broker map key (snake_case). @param displayName A2A card name; defaults to key. */
+/** @param key Broker map key (agent id). @param displayName A2A card name; defaults to key. */
 export function createBroker(key: string, displayName?: string): Broker {
   const echo = createEchoNode();
   const trigger = createTriggerNode(echo.id);

@@ -94,6 +94,7 @@ import { instructionTextForEditor } from "@/lib/composer/instruction-text";
 import { buildExpressionCatalog, flattenExpressionCatalog, requestScopeMembers } from "@/lib/composer/agentfabric-expression-catalog";
 import {
   ANF_ID_PATTERN,
+  coerceAnfId,
   connectionIdForBaseName,
   isValidAnfId,
   normalizeAnfId,
@@ -101,6 +102,7 @@ import {
 import {
   BROKER_KEY_PATTERN,
   brokerKeyValidationMessage,
+  coerceBrokerKey,
   isValidBrokerKey,
   normalizeBrokerKey,
 } from "@/lib/composer/broker-key";
@@ -484,18 +486,32 @@ trigger start:
 }
 
 // ---------------------------------------------------------------------------
-console.log("\n[6c] Broker map keys (snake_case)");
+console.log("\n[6c] Broker map keys (relaxed IDs: mixed case, dashes, periods)");
 {
   check("customer_service_agent valid", isValidBrokerKey("customer_service_agent"));
   check("billing_agent valid", isValidBrokerKey("billing_agent"));
-  check("customerServiceAgent invalid", !isValidBrokerKey("customerServiceAgent"));
+  check("customerServiceAgent valid (mixed case)", isValidBrokerKey("customerServiceAgent"));
+  check("My-Broker valid (dash)", isValidBrokerKey("My-Broker"));
+  check("llm.openai.v2 valid (periods)", isValidBrokerKey("llm.openai.v2"));
   check("my_broker_ invalid (trailing underscore)", !isValidBrokerKey("my_broker_"));
+  check("my-broker- invalid (trailing dash)", !isValidBrokerKey("my-broker-"));
+  check("broker. invalid (trailing period)", !isValidBrokerKey("broker."));
+  check("2agent invalid (leading digit)", !isValidBrokerKey("2agent"));
   check("pattern constant matches validator", BROKER_KEY_PATTERN.test("agent2"));
-  check("normalize camelCase", normalizeBrokerKey("customerServiceAgent") === "customer_service_agent");
+  // normalizeBrokerKey canonicalizes to a clean snake_case slug (used for generated defaults).
+  check("normalize canonicalizes camelCase", normalizeBrokerKey("customerServiceAgent") === "customer_service_agent");
   check("normalize spaces", normalizeBrokerKey("My Broker") === "my_broker");
   check("normalize trailing underscore", normalizeBrokerKey("my_broker_") === "my_broker");
-  check("validation message mentions camelCase", brokerKeyValidationMessage("customerServiceAgent").includes("llmOpenaiConnection"));
-  check("connection id rejects camelCase", !isValidAnfId("llmOpenaiConnection"));
+  // coerceBrokerKey/coerceAnfId keep a valid id verbatim (user-typed/imported), else canonicalize.
+  check("coerce preserves valid mixed case", coerceBrokerKey("MyBroker") === "MyBroker");
+  check("coerce preserves valid dashes and periods", coerceBrokerKey("my-broker.v2") === "my-broker.v2");
+  check("coerce canonicalizes invalid input", coerceBrokerKey("My Broker!") === "my_broker");
+  check("coerce connection id preserves valid camelCase", coerceAnfId("openaiConnection") === "openaiConnection");
+  check(
+    "validation message explains trailing separator",
+    brokerKeyValidationMessage("my_broker_").includes("end with a letter or digit")
+  );
+  check("connection id accepts camelCase", isValidAnfId("llmOpenaiConnection"));
   check("connection id accepts snake_case", isValidAnfId("llm_openai_connection"));
   check(
     "addAsset assigns project-scoped connection id",
@@ -790,7 +806,7 @@ console.log("\n[8] Import files whose connection name != derived convention");
     "",
     "llm:",
     "  openai:",
-    '    target: "llm://openai_connection"',
+    '    target: "llm://openaiConnection"',
     '    kind: "OpenAI"',
     '    model: "gpt-4o"',
     "",
@@ -822,12 +838,12 @@ console.log("\n[8] Import files whose connection name != derived convention");
         JSON.stringify(errors)
       );
     }
-    check("import normalizes broker key to snake_case", res.project.brokers[0].name === "my_broker");
+    check("import preserves valid broker key", res.project.brokers[0].name === "myBroker");
     const asset = res.project.assets[0];
-    check("import normalizes invalid connection id from yaml", asset.connectionName === "openai_connection", asset.connectionName);
-    // Re-serialize keeps the normalized connection key so it still links.
+    check("import preserves valid connection id from yaml", asset.connectionName === "openaiConnection", asset.connectionName);
+    // Re-serialize keeps the connection key verbatim so it still links.
     const yaml = serializeAgentNetworkYaml(res.project);
-    check("re-serialized yaml keeps openai_connection key", yaml.includes("openai_connection:"));
+    check("re-serialized yaml keeps openaiConnection key", yaml.includes("openaiConnection:"));
   }
 }
 
@@ -3118,12 +3134,12 @@ console.log("\n[it-help round-trip fidelity]");
   if (project.ok) {
     const { serializeProject } = await import("@/lib/composer/serialize");
     const files = Object.fromEntries(serializeProject(project.project).map((f) => [f.path, f.content]));
-    check("broker key normalized from hyphens", project.project.brokers[0].name === "it_help_investigation");
+    check("broker key preserves hyphens", project.project.brokers[0].name === "it-help-investigation");
     check("registry round-trips", files["agent-network.yaml"].includes("registry:"));
     check("yaml info.version v1", files["agent-network.yaml"].includes("version: v1"));
     check("empty dependencies preserved", files["exchange.json"].includes('"dependencies": []'));
     check("literal llm url in yaml", files["agent-network.yaml"].includes("https://generativelanguage.googleapis.com"));
-    check("terminal status response serialized", files["brokers/it_help_investigation.agent"].includes("a2a:status_update_event"));
+    check("terminal status response serialized", files["brokers/it-help-investigation.agent"].includes("a2a:status_update_event"));
   }
 }
 

@@ -199,7 +199,7 @@ export const AGENT_NETWORK_YAML_BROKER: ExchangeJsonNestedDoc = {
       type: "string",
       composerUi: "Broker name",
       composerSource: "derived",
-      notes: "Yaml-safe snake_case key: lowercase letters, digits, underscores (no trailing _). Used as brokers map key and config.agent_name.",
+      notes: "Broker map key: start with a letter, then letters, digits, underscores, dashes, and periods; end with a letter or digit (mixed case allowed). Used as brokers map key and config.agent_name.",
     },
     {
       field: "kind",

@@ -6,6 +6,7 @@ import {
   ANF_ID_HINT,
   ANF_ID_PATTERN,
   anfIdValidationMessage,
+  coerceAnfId,
   isValidAnfId,
   normalizeAnfId,
 } from "@/lib/composer/anf-id";
@@ -23,4 +24,9 @@ export function brokerKeyValidationMessage(key: string): string {
 
 export function normalizeBrokerKey(input: string, fallback = "broker"): string {
   return normalizeAnfId(input, fallback);
+}
+
+/** Keep an already-valid broker key verbatim; otherwise canonicalize it. */
+export function coerceBrokerKey(input: string, fallback = "broker"): string {
+  return coerceAnfId(input, fallback);
 }

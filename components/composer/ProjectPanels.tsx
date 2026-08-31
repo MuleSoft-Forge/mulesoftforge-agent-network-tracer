@@ -12,9 +12,10 @@ import { PROJECT_ANCHOR } from "@/lib/composer/project-field-anchors";
 import ProjectCompletenessPanel from "@/components/composer/ProjectCompletenessPanel";
 import { MuleIcon } from "@/components/composer/MuleIcon";
 import { connectionNameForAsset, exchangeDependencyAssets, isPolicyClassifier, POLICY_CLASSIFIER, toIdentifier, variableGroupForAsset, type Broker, type ImportedAsset, type YamlNetworkInfo } from "@/lib/composer/model";
-import { BROKER_KEY_HINT, normalizeBrokerKey } from "@/lib/composer/broker-key";
+import { BROKER_KEY_HINT, coerceBrokerKey } from "@/lib/composer/broker-key";
 import {
   ANF_ID_HINT,
+  coerceAnfId,
   connectionIdForBaseName,
   normalizeAnfId,
 } from "@/lib/composer/anf-id";
@@ -560,7 +561,7 @@ function AssetCard({
                 if (asset.connectionName !== "") onUpdate({ connectionName: "" });
                 return;
               }
-              const normalized = normalizeAnfId(trimmed, "connection");
+              const normalized = coerceAnfId(trimmed, "connection");
               if (normalized !== asset.connectionName) {
                 onUpdate({ connectionName: normalized });
               }
@@ -1101,7 +1102,7 @@ export function ComposerPanelContent({
                             }
                             return;
                           }
-                          const normalized = normalizeBrokerKey(trimmed, "");
+                          const normalized = coerceBrokerKey(trimmed, "");
                           if (normalized !== broker.name) {
                             dispatch({ type: "updateBroker", patch: { name: normalized } });
                           }

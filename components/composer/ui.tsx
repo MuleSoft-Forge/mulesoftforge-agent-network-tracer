@@ -6,6 +6,7 @@ import { HelpLabel } from "@/components/composer/HelpLabel";
 import type { HelpEntry } from "@/lib/composer/help/help-catalog";
 import { useHelpMode } from "@/lib/composer/help/help-mode";
 import type { AssetKind } from "@/lib/composer/model";
+import { restrictAnfIdInput } from "@/lib/composer/anf-id";
 
 export const composerInputCls =
   "w-full rounded-anypoint border border-gray-300 bg-composer-surface px-2.5 py-1.5 text-sm text-gray-900 shadow-sm transition-anypoint focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2";
@@ -205,7 +206,7 @@ export function TextField({
           value={value}
           placeholder={placeholder}
           onChange={(e) =>
-            onChange(restrictAnfId ? e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "") : e.target.value)
+            onChange(restrictAnfId ? restrictAnfIdInput(e.target.value) : e.target.value)
           }
           onBlur={onBlur}
           onFocus={onFocus}
