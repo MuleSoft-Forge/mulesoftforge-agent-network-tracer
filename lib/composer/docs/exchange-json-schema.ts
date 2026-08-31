@@ -137,7 +137,9 @@ export const EXCHANGE_ASSET_VERSION_UI_DETAIL = {
     "This is your Exchange release version — leave 0.0.0 and Build will bump itself to the next in line.",
   points: [
     "Together with organization id and asset id, it forms the GAV coordinate Exchange uses to identify each publication (groupId:assetId:version).",
+    "MuleSoft advises against hand-picking a semver for each publish — Exchange manages the semantic version and auto-increments it (patch for changes; minor increments happen automatically and can't be set by hand).",
     "Changing it creates a new Exchange version entry. Republishing the same version may conflict with an existing release.",
+    "Republishing an asset before its hard delete reuses the next available patch (for example, 1.0.x).",
     "Also written to agent-network.yaml info.version, unless the project has a yaml-only version override from import.",
   ],
 } as const;
@@ -164,9 +166,10 @@ export const EXCHANGE_API_VERSION_UI_DETAIL = {
   title: "Exchange version group",
   summary: EXCHANGE_API_VERSION_FIELD_HINT,
   points: [
-    'Maps to Exchange asset versionGroup (e.g. "v1", "v1.0", "v2.0") — must match exactly at deploy time.',
+    'Maps to Exchange asset versionGroup (e.g. "v1", "v2") — must match exactly at deploy time.',
+    "Names are free-form: any string works. A v# pattern is MuleSoft's convention, not a requirement.",
     "At publish, Exchange auto-increments semver within this group; keep the same group for the life of a project line.",
-    "Changing groups starts a new major version line for associated assets (per MuleSoft publish docs).",
+    "Renaming it — or publishing under a new group — bumps the major version (x.0.0) for every associated asset (e.g. 1.x.x to 2.x.x); changes unrelated to the group bump only the patch.",
     "Not your asset semver (Version field), not descriptorVersion, and not yaml agentNetwork: 2.0.0.",
     "Deploy resolves the latest published semver for each connection/asset inside this group.",
   ],

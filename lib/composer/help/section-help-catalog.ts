@@ -1,6 +1,7 @@
 import {
   AF_AGENT_SCRIPT_REFERENCE_URL,
   A2A_INTERFACE_DOCS_URL,
+  AF_VERSION_ASSETS_DOCS_URL,
   ANF_YAML_REFERENCE_URL,
 } from "@/lib/composer/anf-docs-urls";
 import {
@@ -291,7 +292,7 @@ const SECTION_HELP: Record<SectionHelpId, HelpEntry> = {
       "Not the same as apiVersion (Exchange version group) or agentNetwork: 2.0.0 (yaml spec version)",
       ...EXCHANGE_ASSET_VERSION_UI_DETAIL.points,
     ],
-    docsUrl: `${ANF_YAML_REFERENCE_URL}#exchange-json-file`,
+    docsUrl: AF_VERSION_ASSETS_DOCS_URL,
   },
   "field.projectApiVersion": {
     id: "field.projectApiVersion",
@@ -308,7 +309,7 @@ const SECTION_HELP: Record<SectionHelpId, HelpEntry> = {
       "Do not confuse with agentNetwork: 2.0.0 (yaml spec) or descriptorVersion (exchange.json format)",
     ],
     gotchas: [...EXCHANGE_API_VERSION_UI_DETAIL.points],
-    docsUrl: `${ANF_YAML_REFERENCE_URL}#exchange-json-file`,
+    docsUrl: AF_VERSION_ASSETS_DOCS_URL,
   },
   "field.projectDescriptorVersion": {
     id: "field.projectDescriptorVersion",

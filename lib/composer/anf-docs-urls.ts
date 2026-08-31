@@ -8,6 +8,13 @@ export const A2A_INTERFACE_DOCS_URL = `${ANF_YAML_REFERENCE_URL}#interfaces-a2a`
 export const AF_AGENT_SCRIPT_REFERENCE_URL =
   "https://docs.mulesoft.com/agent-network/latest/af-agent-script-reference";
 
+/** MuleSoft "Publish Agent Network Assets" guide. */
+export const AF_PUBLISH_ASSETS_URL =
+  "https://docs.mulesoft.com/agent-network/latest/af-publish-agent-network-assets";
+
+/** Versioning section — version group vs. Exchange-managed semver. */
+export const AF_VERSION_ASSETS_DOCS_URL = `${AF_PUBLISH_ASSETS_URL}#version-assets`;
+
 /**
  * MuleSoft's governance ruleset on Exchange. Published against the v1 network
  * shape, so treat it as guidance rather than something Builder mirrors — see
