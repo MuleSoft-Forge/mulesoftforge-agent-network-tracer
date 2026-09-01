@@ -30,7 +30,7 @@ RUN npm run build
 # --- runner: serves web and runs the worker from one image ---
 FROM node:22-bookworm-slim AS runner
 WORKDIR /app
-ARG ANYPOINT_CLI_VERSION=1.6.14
+ARG ANYPOINT_CLI_VERSION=1.6.27
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     ANYPOINT_CLI_PATH=anypoint-cli-v4 \
@@ -44,7 +44,7 @@ RUN apt-get update \
 
 # Anypoint CLI + Agent Fabric plugin — the worker shells out to these for
 # build/publish/deploy. Pin the plugin so image builds are reproducible.
-RUN npm i -g "anypoint-cli-v4@${ANYPOINT_CLI_VERSION}" \
+RUN npm i -g "anypoint-cli-v4-public@${ANYPOINT_CLI_VERSION}" \
  && anypoint-cli-v4 plugins:install mulesoft-anypoint-cli-agent-fabric-plugin@1.3.0 \
  && anypoint-cli-v4 --version
 

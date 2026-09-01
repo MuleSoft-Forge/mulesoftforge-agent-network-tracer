@@ -2,7 +2,7 @@ import "server-only";
 import { execFile } from "node:child_process";
 import { config } from "@/lib/lifecycle-server/config";
 
-const NPM_PACKAGE_CLI = "anypoint-cli-v4";
+const NPM_PACKAGE_CLI = "anypoint-cli-v4-public";
 const NPM_PACKAGE_PLUGIN = "mulesoft-anypoint-cli-agent-fabric-plugin";
 const PROBE_TIMEOUT_MS = 20_000;
 

@@ -796,7 +796,7 @@ export default function OpsDashboard() {
           <div className="rounded-xl border border-blue-200 bg-blue-50/60 p-4 text-xs leading-relaxed text-blue-900">
             <p className="font-semibold">Update checklist (persistent path)</p>
             <ol className="mt-2 list-decimal space-y-1 pl-4">
-              <li>Check latest: `npm view anypoint-cli-v4 version` and `npm view mulesoft-anypoint-cli-agent-fabric-plugin version`.</li>
+              <li>Check latest: `npm view anypoint-cli-v4-public version` and `npm view mulesoft-anypoint-cli-agent-fabric-plugin version`.</li>
               <li>Update pinned versions in `Dockerfile` (`ANYPOINT_CLI_VERSION` and plugin version).</li>
               <li>Deploy a new image with `flyctl deploy --local-only`.</li>
               <li>Refresh this page and confirm installed matches latest.</li>
