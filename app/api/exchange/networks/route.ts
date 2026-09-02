@@ -2,23 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth } from "@/lib/api/auth-middleware";
 import { validationError } from "@/lib/api/error-responses";
-import { EXCHANGE_SEARCH_TYPES, searchExchangeAssets } from "@/lib/mulesoft/exchange-search";
+import { EXCHANGE_SEARCH_TYPES, listAllExchangeAssetsInOrg } from "@/lib/mulesoft/exchange-search";
 import { fetchExchangeAssetViaGraphQL } from "@/lib/mulesoft/exchange-graphql";
 
 export const dynamic = "force-dynamic";
 
-/**
- * `search` is optional and defaults to the generic term this route has always
- * used. Exchange's asset search is keyword/semantic even with a type filter, so
- * the default term is not guaranteed to surface every agent network in a
- * business group — callers that need a specific one can narrow it by name.
- */
 const ListRequestSchema = z.object({
   organizationId: z.string().min(1),
   search: z.string().trim().min(1).max(200).optional(),
 });
-
-const DEFAULT_SEARCH_TERM = "network";
 
 const MAX_NETWORKS = 40;
 
@@ -46,17 +38,27 @@ export async function GET(request: NextRequest) {
   const { organizationId, search } = parseResult.data;
   const authHeader = { Authorization: `Bearer ${accessToken}` };
 
-  const { hits } = await searchExchangeAssets(
+  const hits = await listAllExchangeAssetsInOrg(
     baseUrl,
     organizationId,
-    search ?? DEFAULT_SEARCH_TERM,
     authHeader,
     fetch,
+    undefined,
     [EXCHANGE_SEARCH_TYPES.AGENT_NETWORK]
   );
 
+  const normalizedSearch = search?.trim().toLowerCase() ?? "";
+  const filteredHits =
+    normalizedSearch.length === 0
+      ? hits
+      : hits.filter((hit) => {
+          const name = (hit.name ?? "").toLowerCase();
+          const assetId = hit.assetId.toLowerCase();
+          return name.includes(normalizedSearch) || assetId.includes(normalizedSearch);
+        });
+
   const unique = new Map<string, { groupId: string; assetId: string; name: string }>();
-  for (const hit of hits) {
+  for (const hit of filteredHits) {
     const key = `${hit.groupId}:${hit.assetId}`;
     if (!unique.has(key)) {
       unique.set(key, {

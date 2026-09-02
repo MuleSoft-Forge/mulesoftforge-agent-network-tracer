@@ -40,6 +40,32 @@ export function isRemovalJobCommand(command: JobCommand): boolean {
 }
 
 export type DeployTargetKind = "shared" | "private";
+export const REMOVAL_TARGET_TYPES = [
+  "agent",
+  "agent-network",
+  "app",
+  "connector",
+  "crate",
+  "custom",
+  "data-weave-library",
+  "evented-api",
+  "example",
+  "extension",
+  "graphql",
+  "http-api",
+  "llm",
+  "mcp",
+  "policy",
+  "policy-implementation",
+  "raml-fragment",
+  "rest-api",
+  "rpa-activity-template",
+  "rpa-process-template",
+  "ruleset",
+  "soap-api",
+  "template",
+] as const;
+export type RemovalTargetType = (typeof REMOVAL_TARGET_TYPES)[number];
 
 export interface DeployProperty {
   name: string;
@@ -68,6 +94,8 @@ export interface DeployOptions {
  *     build locally.
  */
 export interface RemovalOptions {
+  /** Teardown target type. Defaults to "agent-network". */
+  type?: RemovalTargetType;
   /** Business group name for the CLI's `--organization` flag. */
   organization?: string;
   /**
@@ -157,6 +185,7 @@ const deployOptionsSchema = z.object({
 export const GAV_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]*:[a-zA-Z0-9][a-zA-Z0-9._-]*:[a-zA-Z0-9][a-zA-Z0-9._+-]*$/;
 
 const removalOptionsSchema = z.object({
+  type: z.enum(REMOVAL_TARGET_TYPES).default("agent-network"),
   organization: z.string().max(128).optional(),
   environment: z.string().max(128).optional(),
   gav: z.string().max(512).regex(GAV_PATTERN).optional(),

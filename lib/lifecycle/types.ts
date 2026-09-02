@@ -66,6 +66,30 @@ export type JobEvent =
 export function isRemovalCommand(command: JobCommand): boolean {
   return command === "unpublish" || command === "undeploy" || command === "teardown";
 }
+export type RemovalTargetType =
+  | "agent"
+  | "agent-network"
+  | "app"
+  | "connector"
+  | "crate"
+  | "custom"
+  | "data-weave-library"
+  | "evented-api"
+  | "example"
+  | "extension"
+  | "graphql"
+  | "http-api"
+  | "llm"
+  | "mcp"
+  | "policy"
+  | "policy-implementation"
+  | "raml-fragment"
+  | "rest-api"
+  | "rpa-activity-template"
+  | "rpa-process-template"
+  | "ruleset"
+  | "soap-api"
+  | "template";
 
 /**
  * Options for `unpublish` / `undeploy`. Supplying `gav` targets a remote asset
@@ -73,6 +97,8 @@ export function isRemovalCommand(command: JobCommand): boolean {
  * project instead.
  */
 export interface RemovalOptions {
+  /** Teardown target type. Defaults server-side to "agent-network". */
+  type?: RemovalTargetType;
   /** Business group id from session context; resolved to a name server-side. */
   organizationId?: string;
   /** Required for undeploy. On unpublish it enables the active-instance check. */

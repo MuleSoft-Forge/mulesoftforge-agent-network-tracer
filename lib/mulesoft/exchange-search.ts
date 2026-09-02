@@ -275,12 +275,14 @@ export async function listAllExchangeAssetsInOrg(
   organizationId: string,
   authHeader: Record<string, string>,
   fetchFn: FetchFn = fetch,
-  size = 250
+  size = 250,
+  types: string[] = []
 ): Promise<ExchangeSearchHit[]> {
   const body: Record<string, unknown> = {
     size,
     organizationId: [organizationId],
   };
+  if (types.length > 0) body.types = types;
 
   let hits: PseasHit[] = [];
   try {

@@ -47,6 +47,33 @@ const deploySchema = z
 // Same split of responsibility as deploy: coarse shape here, strict argv
 // validation in the worker (removal-argv).
 const removalSchema = z.object({
+  type: z
+    .enum([
+      "agent",
+      "agent-network",
+      "app",
+      "connector",
+      "crate",
+      "custom",
+      "data-weave-library",
+      "evented-api",
+      "example",
+      "extension",
+      "graphql",
+      "http-api",
+      "llm",
+      "mcp",
+      "policy",
+      "policy-implementation",
+      "raml-fragment",
+      "rest-api",
+      "rpa-activity-template",
+      "rpa-process-template",
+      "ruleset",
+      "soap-api",
+      "template",
+    ])
+    .default("agent-network"),
   organizationId: z.string().optional(),
   environment: z.string().max(128).optional(),
   gav: z.string().max(512).regex(GAV_PATTERN, "Expected groupId:assetId:version").optional(),

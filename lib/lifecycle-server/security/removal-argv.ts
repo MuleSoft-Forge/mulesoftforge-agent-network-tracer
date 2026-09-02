@@ -13,7 +13,7 @@
  *     caller passing a gav means the runner must not also pass a path.
  */
 
-import { GAV_PATTERN, type RemovalCommand, type RemovalOptions } from "../contracts";
+import { GAV_PATTERN, type RemovalCommand, type RemovalOptions, type RemovalTargetType } from "../contracts";
 
 function assertEnvironment(value: unknown): string {
   const s = String(value ?? "").trim();
@@ -41,6 +41,7 @@ function assertGav(value: unknown): string {
 }
 
 export interface ValidatedRemoval {
+  type: RemovalTargetType;
   organization: string;
   /** Always present for undeploy; optional safety check for unpublish. */
   environment?: string;
@@ -57,9 +58,12 @@ export function validateRemovalOptions(
   }
 
   const out: ValidatedRemoval = {
+    type: "agent-network",
     organization: assertOrganization(removal.organization),
     hardDelete: false,
   };
+
+  out.type = removal.type ?? "agent-network";
 
   if (removal.gav !== undefined) {
     out.gav = assertGav(removal.gav);
