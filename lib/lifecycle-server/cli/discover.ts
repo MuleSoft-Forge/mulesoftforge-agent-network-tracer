@@ -7,8 +7,17 @@
 
 import { execFile } from "node:child_process";
 import { config } from "../config";
+import { withCliLock } from "./cli-lock";
 
 const PROBE_TIMEOUT_MS = 20000;
+
+// The CLI and agent-fabric plugin are installed into the image at build time
+// and cannot change while a machine is alive, so a successful detection is
+// valid for the life of the process. Re-probing on every /lifecycle and /ops
+// request is exactly what let concurrent CLI spawns collide and hang, so cache
+// aggressively. Failures get a short TTL so a transient stall self-heals.
+const SUCCESS_TTL_MS = 60 * 60 * 1000;
+const FAILURE_TTL_MS = 15 * 1000;
 
 export type CliUnavailableReason =
   | "cli-not-found"
@@ -57,40 +66,87 @@ function hasKnownAgentFabricPlugin(text: string): boolean {
   );
 }
 
-export async function detectCli(): Promise<CliDetection> {
+async function runDetection(): Promise<CliDetection> {
   const cliPath = config.anypointCliPath;
+  const abortController = new AbortController();
 
-  const versionProbe = await probe(cliPath, ["--version"]);
-  const version = (versionProbe.stdout || versionProbe.stderr).trim().split("\n")[0] || null;
+  return withCliLock<CliDetection>(
+    abortController.signal,
+    async () => {
+      const versionProbe = await probe(cliPath, ["--version"]);
+      const version = (versionProbe.stdout || versionProbe.stderr).trim().split("\n")[0] || null;
 
-  if (!versionProbe.ok) {
-    return {
+      if (!versionProbe.ok) {
+        return {
+          available: false,
+          cliPath,
+          version,
+          pluginInstalled: false,
+          reason: "cli-not-runnable",
+          hint: `Anypoint CLI at "${cliPath}" failed to run. ${versionProbe.stderr.trim()}`.trim(),
+        };
+      }
+
+      const help = await probe(cliPath, ["agent-network", "--help"]);
+      let pluginInstalled = hasAgentNetworkTopic(`${help.stdout}\n${help.stderr}`);
+      if (!pluginInstalled) {
+        const plugins = await probe(cliPath, ["plugins"]);
+        pluginInstalled = plugins.ok && hasKnownAgentFabricPlugin(`${plugins.stdout}\n${plugins.stderr}`);
+      }
+
+      if (!pluginInstalled) {
+        return {
+          available: false,
+          cliPath,
+          version,
+          pluginInstalled: false,
+          reason: "plugin-not-installed",
+          hint: "The agent-fabric plugin is not installed, so `agent-network` commands are unavailable.",
+        };
+      }
+
+      return { available: true, cliPath, version, pluginInstalled: true, reason: null, hint: null };
+    },
+    () => ({
       available: false,
       cliPath,
-      version,
+      version: null,
       pluginInstalled: false,
-      reason: "cli-not-runnable",
-      hint: `Anypoint CLI at "${cliPath}" failed to run. ${versionProbe.stderr.trim()}`.trim(),
-    };
-  }
+      reason: "detect-failed",
+      hint: "CLI detection was aborted before probe start.",
+    })
+  );
+}
 
-  const help = await probe(cliPath, ["agent-network", "--help"]);
-  let pluginInstalled = hasAgentNetworkTopic(`${help.stdout}\n${help.stderr}`);
-  if (!pluginInstalled) {
-    const plugins = await probe(cliPath, ["plugins"]);
-    pluginInstalled = plugins.ok && hasKnownAgentFabricPlugin(`${plugins.stdout}\n${plugins.stderr}`);
-  }
+let cached: { at: number; result: CliDetection } | null = null;
+let inFlight: Promise<CliDetection> | null = null;
 
-  if (!pluginInstalled) {
-    return {
-      available: false,
-      cliPath,
-      version,
-      pluginInstalled: false,
-      reason: "plugin-not-installed",
-      hint: "The agent-fabric plugin is not installed, so `agent-network` commands are unavailable.",
-    };
-  }
+function isFresh(entry: { at: number; result: CliDetection }): boolean {
+  const ttl = entry.result.available ? SUCCESS_TTL_MS : FAILURE_TTL_MS;
+  return Date.now() - entry.at < ttl;
+}
 
-  return { available: true, cliPath, version, pluginInstalled: true, reason: null, hint: null };
+/**
+ * Detect the CLI once and cache it. A successful detection is stable for the
+ * life of the process (the image is immutable), so subsequent callers get an
+ * instant, spawn-free answer. Concurrent callers share a single in-flight probe
+ * so they can never race each other into the CLI's concurrent-launch hang.
+ * Pass `{ force: true }` to bypass the cache (e.g. an explicit operator re-check).
+ */
+export async function detectCli(options?: { force?: boolean }): Promise<CliDetection> {
+  if (!options?.force && cached && isFresh(cached)) {
+    return cached.result;
+  }
+  if (inFlight) {
+    return inFlight;
+  }
+  inFlight = runDetection()
+    .then((result) => {
+      cached = { at: Date.now(), result };
+      return result;
+    })
+    .finally(() => {
+      inFlight = null;
+    });
+  return inFlight;
 }

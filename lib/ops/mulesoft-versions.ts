@@ -1,10 +1,17 @@
 import "server-only";
 import { execFile } from "node:child_process";
 import { config } from "@/lib/lifecycle-server/config";
+import { withCliLock } from "@/lib/lifecycle-server/cli/cli-lock";
 
 const NPM_PACKAGE_CLI = "anypoint-cli-v4-public";
 const NPM_PACKAGE_PLUGIN = "mulesoft-anypoint-cli-agent-fabric-plugin";
 const PROBE_TIMEOUT_MS = 20_000;
+
+// The /ops page auto-refreshes every 10s. Installed versions never change at
+// runtime and the npm "latest" lookup moves rarely, so cache the whole report
+// to stop hammering the CLI (and colliding with lifecycle CLI detection) on
+// every refresh.
+const CACHE_TTL_MS = 60 * 1000;
 
 interface ProbeResult {
   ok: boolean;
@@ -75,20 +82,54 @@ function parseInstalledPluginVersion(text: string): string | null {
   return match ? match[1] : null;
 }
 
+let cached: { at: number; result: MulesoftVersions } | null = null;
+let inFlight: Promise<MulesoftVersions> | null = null;
+
 export async function readMulesoftVersions(): Promise<MulesoftVersions> {
+  if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
+    return cached.result;
+  }
+  if (inFlight) {
+    return inFlight;
+  }
+  inFlight = probeMulesoftVersions()
+    .then((result) => {
+      cached = { at: Date.now(), result };
+      return result;
+    })
+    .finally(() => {
+      inFlight = null;
+    });
+  return inFlight;
+}
+
+async function probeMulesoftVersions(): Promise<MulesoftVersions> {
   const notes: string[] = [];
   const cliPath = config.anypointCliPath;
 
-  // anypoint-cli-v4 can't tolerate two of its own invocations starting at once on
-  // the same machine — verified by reproduction, two concurrent calls reliably
-  // hang until the probe timeout instead of running. Keep the two CLI probes
-  // sequential; the npm registry probes are a different binary and can overlap.
+  // The npm registry probes hit a different binary, so they can overlap freely.
   const npmProbes = Promise.all([
     probe("npm", ["view", NPM_PACKAGE_CLI, "version"]),
     probe("npm", ["view", NPM_PACKAGE_PLUGIN, "version"]),
   ]);
-  const cliVersionProbe = await probe(cliPath, ["--version"]);
-  const pluginListProbe = await probe(cliPath, ["plugins"]);
+
+  // anypoint-cli-v4 can't tolerate two of its own invocations starting at once on
+  // the same machine — verified by reproduction, two concurrent calls reliably
+  // hang until the probe timeout instead of running. Run the two CLI probes
+  // sequentially AND under the shared CLI lock, so this can't race the lifecycle
+  // config route's detection probe on the same web process.
+  const abortController = new AbortController();
+  const { cliVersionProbe, pluginListProbe } = await withCliLock(
+    abortController.signal,
+    async () => ({
+      cliVersionProbe: await probe(cliPath, ["--version"]),
+      pluginListProbe: await probe(cliPath, ["plugins"]),
+    }),
+    () => ({
+      cliVersionProbe: { ok: false, stdout: "", stderr: "", error: "aborted before probe" } as ProbeResult,
+      pluginListProbe: { ok: false, stdout: "", stderr: "", error: "aborted before probe" } as ProbeResult,
+    })
+  );
   const [cliLatestProbe, pluginLatestProbe] = await npmProbes;
 
   const cliInstalledVersion = normalizeVersion(
