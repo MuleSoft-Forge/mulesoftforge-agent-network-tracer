@@ -617,15 +617,28 @@ export default function ComposerLanding({
                     <p className="mt-1 text-xs leading-relaxed text-composer-label-muted">
                       {COMPOSER_WORKSHOP_TEMPLATE.summary}
                     </p>
-                    <a
-                      href={COMPOSER_WORKSHOP_TEMPLATE.workshopUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-primary hover:text-primary/80"
-                    >
-                      {COMPOSER_WORKSHOP_TEMPLATE.workshopLabel}{" "}
-                      <ExternalLink className="h-3 w-3" aria-hidden />
-                    </a>
+                    <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+                      <a
+                        href={COMPOSER_WORKSHOP_TEMPLATE.workshopUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:text-primary/80"
+                      >
+                        {COMPOSER_WORKSHOP_TEMPLATE.workshopLabel}{" "}
+                        <ExternalLink className="h-3 w-3" aria-hidden />
+                      </a>
+                      {COMPOSER_WORKSHOP_TEMPLATE.uiUrl ? (
+                        <a
+                          href={COMPOSER_WORKSHOP_TEMPLATE.uiUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:text-primary/80"
+                        >
+                          {COMPOSER_WORKSHOP_TEMPLATE.uiLabel ?? "Live workshop UI"}{" "}
+                          <ExternalLink className="h-3 w-3" aria-hidden />
+                        </a>
+                      ) : null}
+                    </div>
 
                     <Image
                       src={COMPOSER_WORKSHOP_TEMPLATE.imageSrc}
@@ -675,14 +688,26 @@ export default function ComposerLanding({
                       ) : null}
                       <p className="mt-1 text-sm font-semibold text-gray-900">{example.title}</p>
                       <p className="mt-1 text-xs leading-relaxed text-composer-label-muted">{example.summary}</p>
-                      <a
-                        href={example.sourceUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-primary hover:text-primary/80"
-                      >
-                        View on GitHub <ExternalLink className="h-3 w-3" aria-hidden />
-                      </a>
+                      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+                        <a
+                          href={example.sourceUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:text-primary/80"
+                        >
+                          View on GitHub <ExternalLink className="h-3 w-3" aria-hidden />
+                        </a>
+                        {example.docsUrl ? (
+                          <a
+                            href={example.docsUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:text-primary/80"
+                          >
+                            View docs <ExternalLink className="h-3 w-3" aria-hidden />
+                          </a>
+                        ) : null}
+                      </div>
 
                       {example.imageSrc && example.imageWidth && example.imageHeight ? (
                         <Image

@@ -5398,7 +5398,7 @@ console.log("\n[composer examples]");
   );
   check(
     "vogue-premiere connections land in the selected org as registry-local",
-    vogue.project.assets.length === 6 &&
+    vogue.project.assets.length === 5 &&
       vogue.project.assets.every((a) => a.registryLocal && a.namespace === "example-org")
   );
   check("vogue-premiere example broker key", vogue.project.brokers[0].name === "vogue_premiere");

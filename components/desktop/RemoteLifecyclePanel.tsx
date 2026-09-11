@@ -418,6 +418,15 @@ export default function RemoteLifecyclePanel() {
     }
   }, [cli.busy]);
 
+  // Follow the tail of the CLI output as new lines stream in, so the newest
+  // entry stays in view without the user having to scroll. Also re-pins when
+  // toggling between the Activity and raw CLI views, since their heights differ.
+  useEffect(() => {
+    const el = logRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [cli.log.length, cli.busy, showRawCli]);
+
   function requestCancel() {
     setCancelling(true);
     void cli.cancel();

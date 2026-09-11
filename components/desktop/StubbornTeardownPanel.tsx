@@ -33,6 +33,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { readAnypointUiContext, UI_CONTEXT_CHANGED_EVENT } from "@/lib/anypoint/ui-context";
+import type { RemovalTargetType } from "@/lib/lifecycle/types";
 
 type DeleteMode = "hard" | "soft";
 
@@ -66,6 +67,37 @@ interface TargetOutcome {
   lines: VersionOutcome[];
   error?: string;
 }
+
+const DEFAULT_SCAN_TYPES: RemovalTargetType[] = ["agent", "agent-network", "mcp", "llm"];
+const SCAN_TYPE_OPTIONS_UNSORTED = [
+  "agent",
+  "agent-network",
+  "app",
+  "connector",
+  "crate",
+  "custom",
+  "data-weave-library",
+  "evented-api",
+  "example",
+  "extension",
+  "graphql",
+  "http-api",
+  "llm",
+  "mcp",
+  "policy",
+  "policy-implementation",
+  "raml-fragment",
+  "rest-api",
+  "rpa-activity-template",
+  "rpa-process-template",
+  "ruleset",
+  "soap-api",
+  "template",
+] as const satisfies readonly RemovalTargetType[];
+
+const SCAN_TYPE_OPTIONS: RemovalTargetType[] = [...SCAN_TYPE_OPTIONS_UNSORTED].sort((a, b) =>
+  a.localeCompare(b)
+);
 
 function assetKey(a: { groupId: string; assetId: string }): string {
   return `${a.groupId}:${a.assetId}`;
@@ -198,6 +230,11 @@ export default function StubbornTeardownPanel() {
   // Manual "delete by coordinates" fallback for a known orphan the scan misses.
   const [manualAssetId, setManualAssetId] = useState("");
   const [manualVersion, setManualVersion] = useState("");
+  const [assetFilter, setAssetFilter] = useState("");
+  const [selectedTypes, setSelectedTypes] = useState<RemovalTargetType[]>(DEFAULT_SCAN_TYPES);
+  const [allTypesSelected, setAllTypesSelected] = useState(false);
+  const [typeFilterOpen, setTypeFilterOpen] = useState(false);
+  const typeFilterRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const syncFromUiContext = () => {
@@ -220,16 +257,36 @@ export default function StubbornTeardownPanel() {
   useEffect(() => {
     setScan({ status: "idle" });
     setOutcomes({});
+    setSelectedTypes(DEFAULT_SCAN_TYPES);
+    setAllTypesSelected(false);
+    setTypeFilterOpen(false);
   }, [orgId]);
 
-  const runScan = useCallback(async () => {
+  useEffect(() => {
+    const onPointerDown = (event: MouseEvent) => {
+      if (!typeFilterRef.current) return;
+      if (!typeFilterRef.current.contains(event.target as Node)) {
+        setTypeFilterOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, []);
+
+  const runScan = useCallback(async (typesOverride?: RemovalTargetType[], includeAllOverride?: boolean) => {
     if (!orgId) return;
     setScan({ status: "loading" });
     setOutcomes({});
     try {
-      const res = await fetch(
-        `/api/exchange/assets?organizationId=${encodeURIComponent(orgId)}`
-      );
+      const params = new URLSearchParams({ organizationId: orgId });
+      const includeAll = includeAllOverride ?? allTypesSelected;
+      if (includeAll) {
+        params.append("type", "all");
+      } else {
+        const scanTypes = typesOverride ?? selectedTypes;
+        for (const type of scanTypes) params.append("type", type);
+      }
+      const res = await fetch(`/api/exchange/assets?${params.toString()}`);
       if (!res.ok) throw new Error(`Scan failed (HTTP ${res.status})`);
       const body = (await res.json()) as { assets?: GroupAsset[] };
       setScan({ status: "done", assets: body.assets ?? [] });
@@ -239,7 +296,12 @@ export default function StubbornTeardownPanel() {
         message: err instanceof Error ? err.message : "Could not list assets",
       });
     }
-  }, [orgId]);
+  }, [allTypesSelected, orgId, selectedTypes]);
+
+  useEffect(() => {
+    if (collapsed || !orgId || scan.status !== "idle") return;
+    void runScan();
+  }, [collapsed, orgId, runScan, scan.status]);
 
   /** Resolve the versions to delete for a target (specific one, or all of them). */
   const resolveVersions = useCallback(
@@ -370,6 +432,40 @@ export default function StubbornTeardownPanel() {
     };
   }, [orgId, manualAssetId, manualVersion]);
 
+  const toggleType = useCallback((type: RemovalTargetType) => {
+    setAllTypesSelected(false);
+    setSelectedTypes((prev) => {
+      const next = prev.includes(type)
+        ? prev.filter((item) => item !== type)
+        : [...prev, type];
+      const resolved = next.length === 0 ? [...DEFAULT_SCAN_TYPES] : next;
+      void runScan(resolved, false);
+      return resolved;
+    });
+  }, [runScan]);
+
+  const enableAllTypes = useCallback(() => {
+    setAllTypesSelected(true);
+    setSelectedTypes([]);
+    void runScan([], true);
+  }, [runScan]);
+
+  const filteredAssets = useMemo(() => {
+    if (scan.status !== "done") return [];
+    const query = assetFilter.trim().toLowerCase();
+    return scan.assets.filter((asset) => {
+      const name = asset.name.toLowerCase();
+      const assetId = asset.assetId.toLowerCase();
+      const groupId = asset.groupId.toLowerCase();
+      if (!query) return true;
+      return (
+        name.includes(query) ||
+        assetId.includes(query) ||
+        groupId.includes(query)
+      );
+    });
+  }, [scan, assetFilter]);
+
   const anyRunning = Object.values(outcomes).some((o) => o.running);
 
   return (
@@ -465,6 +561,59 @@ export default function StubbornTeardownPanel() {
           </button>
         </div>
 
+        <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+          <input
+            type="text"
+            value={assetFilter}
+            onChange={(e) => setAssetFilter(e.target.value)}
+            placeholder="Filter by name, asset id, or group id…"
+            className="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-900 focus:border-primary/40 focus:outline-none"
+          />
+          <div className="relative sm:w-72" ref={typeFilterRef}>
+            <button
+              type="button"
+              onClick={() => setTypeFilterOpen((open) => !open)}
+              className="flex w-full items-center justify-between rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-900 hover:border-primary/40"
+            >
+              <span className="truncate text-left">
+                {allTypesSelected
+                  ? "All types"
+                  : selectedTypes.length === 1
+                    ? selectedTypes[0]
+                    : `${selectedTypes.length} types selected`}
+              </span>
+              <ChevronDown className="h-3.5 w-3.5 shrink-0 text-gray-500" aria-hidden />
+            </button>
+            {typeFilterOpen && (
+              <div className="absolute z-10 mt-1 max-h-56 w-full overflow-auto rounded-lg border border-gray-200 bg-white p-2 shadow-lg">
+                <label className="mb-1 flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-[11px] text-gray-700 hover:bg-gray-50">
+                  <input
+                    type="checkbox"
+                    checked={allTypesSelected}
+                    onChange={enableAllTypes}
+                    className="h-3.5 w-3.5"
+                  />
+                  All types
+                </label>
+                {SCAN_TYPE_OPTIONS.map((type) => (
+                  <label
+                    key={type}
+                    className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-[11px] text-gray-700 hover:bg-gray-50"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={!allTypesSelected && selectedTypes.includes(type)}
+                      onChange={() => toggleType(type)}
+                      className="h-3.5 w-3.5"
+                    />
+                    <span className="truncate">{type}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
         {!orgId && (
           <p className="mt-2 text-[11px] text-gray-400">Select a business group in the left menu.</p>
         )}
@@ -482,9 +631,15 @@ export default function StubbornTeardownPanel() {
           </p>
         )}
 
-        {scan.status === "done" && scan.assets.length > 0 && (
+        {scan.status === "done" && scan.assets.length > 0 && filteredAssets.length === 0 && (
+          <p className="mt-2 rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-600">
+            No assets match that filter.
+          </p>
+        )}
+
+        {scan.status === "done" && scan.assets.length > 0 && filteredAssets.length > 0 && (
           <ul className="mt-2 space-y-1.5">
-            {scan.assets.map((asset) => {
+            {filteredAssets.map((asset) => {
               const key = assetKey(asset);
               const outcome = outcomes[key];
               return (

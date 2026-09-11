@@ -13,48 +13,58 @@
     "variables": {
       "stylingAgent": {
         "url": {
-          "description": "Styling A2A agent URL",
-          "default": "https://www.a2d-ai.com/api/platform/71ffb179-20e9-4cdc-8ba3-f4fd4abdc2e1/a2a",
+          "description": "Styling A2A agent URL (v2 mock — filters on 'Customer: <username>' inlined in message text).",
+          "default": "https://www.a2d-ai.com/api/platform/06a61882-fe1f-4b17-8cdd-6cf8e21e5846/a2a",
           "secret": false
         }
       },
       "availabilityAgent": {
         "url": {
-          "description": "Availability A2A agent URL",
-          "default": "https://www.a2d-ai.com/api/platform/8e503ffc-8e5f-480d-aa3b-8421b572a5a2/a2a",
+          "description": "Availability A2A agent URL (v2 mock — filters on 'Customer: <username>' inlined in message text).",
+          "default": "https://www.a2d-ai.com/api/platform/1b1d4d65-7d31-4d39-b7cc-a0d8bf902aec/a2a",
           "secret": false
         }
       },
       "loyaltyAgent": {
         "url": {
-          "description": "Loyalty A2A agent URL",
-          "default": "https://www.a2d-ai.com/api/platform/dbebcf30-1327-4fcb-b8cd-525c2f37417c/a2a",
+          "description": "Loyalty A2A agent URL (v2 mock — filters on 'Customer: <username>' inlined in message text).",
+          "default": "https://www.a2d-ai.com/api/platform/e1361d2a-fe3e-4c42-9eb4-f229b05089db/a2a",
           "secret": false
         }
       },
-      "customerMcp": {
+      "commerceMcp": {
         "url": {
-          "description": "Customer MCP server URL",
-          "default": "https://www.a2d-ai.com/api/platform/5b9581fd-ffae-460f-a21a-d8a3afab99fb",
+          "description": "Commerce MCP server URL (workshop-provisioned CloudHub Mule app that validates JWTs and enforces persona ownership via SQL). Exposes get_customer_profile, get_shipping_status, and create_order. Set this to your workshop tenant's Commerce MCP URL.",
+          "default": "REPLACE_ME",
           "secret": false
         }
       },
-      "orderMcp": {
-        "url": {
-          "description": "Order MCP server URL",
-          "default": "https://www.a2d-ai.com/api/platform/8bbb5f18-1a6d-4d10-baca-fe3873f88cf7",
+      "oboKeycloak": {
+        "tokenEndpoint": {
+          "description": "Keycloak token endpoint for OBO token exchange (RFC 8693).",
+          "default": "https://lemur-12.cloud-iam.com/auth/realms/vogue-premiere-ws/protocol/openid-connect/token",
           "secret": false
+        },
+        "clientId": {
+          "description": "Confidential OBO client id (also the target audience commerce-mcp-obo).",
+          "default": "REPLACE_ME",
+          "secret": false
+        },
+        "clientSecret": {
+          "description": "Confidential OBO client secret.",
+          "default": "REPLACE_ME",
+          "secret": true
         }
       },
       "openai": {
         "url": {
-          "description": "OpenAI (or proxy) base URL",
-          "default": "https://api.openai.com/v1",
+          "description": "OpenAI (or proxy) base URL. Defaults to the workshop's metered Model Proxy.",
+          "default": "https://llm-proxy.workshops.mulesoft.com/openai/v1/",
           "secret": false
         },
         "apiKey": {
           "description": "OpenAI API key",
-          "default": "",
+          "default": "REPLACE_ME",
           "secret": true
         }
       }

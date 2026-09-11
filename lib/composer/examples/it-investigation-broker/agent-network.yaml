@@ -165,6 +165,13 @@ brokers:
             - id: ticket-triage
               name: IT Ticket Triage
               description: Classifies and resolves IT support tickets.
+              examples:
+                - How do I reset my VPN password?
+                - My email is not syncing
+                - How do I set up two-factor authentication?
+                - Provision a Figma license for jane.doe@company.com
+                - Check if we have available GitHub Enterprise seats
+                - I need access to Jira
               tags:
                 - it-support
                 - help-desk

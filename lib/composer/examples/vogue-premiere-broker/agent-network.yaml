@@ -1,7 +1,7 @@
 agentNetwork: 2.0.0
 info:
-  label: Vogue Premiere Agent Network
-  version: 1.0.0
+  label: "Vogue Premiere Agent Network"
+  version: v1
 registry:
   agents:
     stylingAgent:
@@ -12,11 +12,11 @@ registry:
         interfaces:
           a2a_v03:
             card:
+              name: Styling Agent
+              description: Recommends complete outfits for the customer.
               url: ${stylingAgent.url}
               protocolVersion: 0.3.0
-              name: Styling Agent
               version: 1.0.0
-              description: Recommends complete outfits for the customer.
               capabilities:
                 pushNotifications: false
               defaultInputModes:
@@ -45,11 +45,11 @@ registry:
         interfaces:
           a2a_v03:
             card:
+              name: Availability Agent
+              description: Verifies stock and sizes across Product 360 and the OMS.
               url: ${availabilityAgent.url}
               protocolVersion: 0.3.0
-              name: Availability Agent
               version: 1.0.0
-              description: Verifies stock and sizes across Product 360 and the OMS.
               capabilities:
                 pushNotifications: false
               defaultInputModes:
@@ -78,11 +78,11 @@ registry:
         interfaces:
           a2a_v03:
             card:
+              name: Loyalty Agent
+              description: Applies tier-specific loyalty perks.
               url: ${loyaltyAgent.url}
               protocolVersion: 0.3.0
-              name: Loyalty Agent
               version: 1.0.0
-              description: Applies tier-specific loyalty perks.
               capabilities:
                 pushNotifications: false
               defaultInputModes:
@@ -104,16 +104,9 @@ registry:
                     - application/json
                     - text/plain
   mcps:
-    customerMcp:
+    commerceMcp:
       info:
-        label: Customer MCP Server
-      metadata:
-        transport:
-          kind: streamableHttp
-          path: /mcp
-    orderMcp:
-      info:
-        label: Order MCP Server
+        label: Commerce MCP Server
       metadata:
         transport:
           kind: streamableHttp
@@ -141,16 +134,21 @@ context:
       ref:
         name: loyaltyAgent
       url: ${loyaltyAgent.url}
-    customer_mcp_connection:
+    commerce_mcp_connection:
       kind: mcp
       ref:
-        name: customerMcp
-      url: ${customerMcp.url}
-    order_mcp_connection:
-      kind: mcp
-      ref:
-        name: orderMcp
-      url: ${orderMcp.url}
+        name: commerceMcp
+      url: ${commerceMcp.url}
+      authentication:
+        kind: oauth2-obo
+        flow: oauth2-token-exchange
+        timeout: 50000
+        tokenEndpoint: ${oboKeycloak.tokenEndpoint}
+        clientId: ${oboKeycloak.clientId}
+        clientSecret: ${oboKeycloak.clientSecret}
+        targetType: audience
+        targetValue: commerce-mcp-obo
+        scope: openid
     openai_connection:
       kind: llm
       ref:
@@ -167,8 +165,8 @@ brokers:
       a2a:
         card:
           name: Vogue Premiere Styling Concierge
-          version: 1.0.0
           description: A personal luxury fashion assistant that handles styling, availability, loyalty, and orders.
+          version: 1.0.0
           capabilities:
             streaming: true
             pushNotifications: false
@@ -182,23 +180,19 @@ brokers:
             - id: vogue-style-concierge
               name: Vogue Style Concierge
               description: Handles customer-facing styling, availability, loyalty, and order interactions for Vogue Premiere.
+              examples:
+                - "I have a dinner in Napa next Saturday."
+                - "What loyalty perks do I have?"
+                - "Are these all in stock in my size?"
+                - "Place the order"
               tags:
                 - styling
                 - loyalty
                 - orders
                 - vogue
-              examples:
-                - Hi, this is Alex Chen. I have a dinner in Napa next Saturday and I'm looking for an outfit that's nicer than business casual, but not a full suit
-                - Can you check if all those products are available in my size?
-                - Show me my loyalty perks
-                - Place the order for the whole outfit.
               inputModes:
                 - application/json
                 - text/plain
               outputModes:
                 - application/json
                 - text/plain
-          supportedInterfaces:
-            - url: https://myOmniGateway/vogue_premiere/
-              protocolVersion: "1.0"
-              protocolBinding: JSONRPC

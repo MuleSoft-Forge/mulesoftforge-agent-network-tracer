@@ -20,48 +20,58 @@ export const EXCHANGE_JSON = `{
     "variables": {
       "stylingAgent": {
         "url": {
-          "description": "Styling A2A agent URL",
-          "default": "https://www.a2d-ai.com/api/platform/71ffb179-20e9-4cdc-8ba3-f4fd4abdc2e1/a2a",
+          "description": "Styling A2A agent URL (v2 mock — filters on 'Customer: <username>' inlined in message text).",
+          "default": "https://www.a2d-ai.com/api/platform/06a61882-fe1f-4b17-8cdd-6cf8e21e5846/a2a",
           "secret": false
         }
       },
       "availabilityAgent": {
         "url": {
-          "description": "Availability A2A agent URL",
-          "default": "https://www.a2d-ai.com/api/platform/8e503ffc-8e5f-480d-aa3b-8421b572a5a2/a2a",
+          "description": "Availability A2A agent URL (v2 mock — filters on 'Customer: <username>' inlined in message text).",
+          "default": "https://www.a2d-ai.com/api/platform/1b1d4d65-7d31-4d39-b7cc-a0d8bf902aec/a2a",
           "secret": false
         }
       },
       "loyaltyAgent": {
         "url": {
-          "description": "Loyalty A2A agent URL",
-          "default": "https://www.a2d-ai.com/api/platform/dbebcf30-1327-4fcb-b8cd-525c2f37417c/a2a",
+          "description": "Loyalty A2A agent URL (v2 mock — filters on 'Customer: <username>' inlined in message text).",
+          "default": "https://www.a2d-ai.com/api/platform/e1361d2a-fe3e-4c42-9eb4-f229b05089db/a2a",
           "secret": false
         }
       },
-      "customerMcp": {
+      "commerceMcp": {
         "url": {
-          "description": "Customer MCP server URL",
-          "default": "https://www.a2d-ai.com/api/platform/5b9581fd-ffae-460f-a21a-d8a3afab99fb",
+          "description": "Commerce MCP server URL (workshop-provisioned CloudHub Mule app that validates JWTs and enforces persona ownership via SQL). Exposes get_customer_profile, get_shipping_status, and create_order. Set this to your workshop tenant's Commerce MCP URL.",
+          "default": "REPLACE_ME",
           "secret": false
         }
       },
-      "orderMcp": {
-        "url": {
-          "description": "Order MCP server URL",
-          "default": "https://www.a2d-ai.com/api/platform/8bbb5f18-1a6d-4d10-baca-fe3873f88cf7",
+      "oboKeycloak": {
+        "tokenEndpoint": {
+          "description": "Keycloak token endpoint for OBO token exchange (RFC 8693).",
+          "default": "https://lemur-12.cloud-iam.com/auth/realms/vogue-premiere-ws/protocol/openid-connect/token",
           "secret": false
+        },
+        "clientId": {
+          "description": "Confidential OBO client id (also the target audience commerce-mcp-obo).",
+          "default": "REPLACE_ME",
+          "secret": false
+        },
+        "clientSecret": {
+          "description": "Confidential OBO client secret.",
+          "default": "REPLACE_ME",
+          "secret": true
         }
       },
       "openai": {
         "url": {
-          "description": "OpenAI (or proxy) base URL",
-          "default": "https://api.openai.com/v1",
+          "description": "OpenAI (or proxy) base URL. Defaults to the workshop's metered Model Proxy.",
+          "default": "https://llm-proxy.workshops.mulesoft.com/openai/v1/",
           "secret": false
         },
         "apiKey": {
           "description": "OpenAI API key",
-          "default": "",
+          "default": "REPLACE_ME",
           "secret": true
         }
       }
@@ -76,8 +86,8 @@ export const EXCHANGE_JSON = `{
 
 export const AGENT_YAML = `agentNetwork: 2.0.0
 info:
-  label: Vogue Premiere Agent Network
-  version: 1.0.0
+  label: "Vogue Premiere Agent Network"
+  version: v1
 registry:
   agents:
     stylingAgent:
@@ -88,11 +98,11 @@ registry:
         interfaces:
           a2a_v03:
             card:
+              name: Styling Agent
+              description: Recommends complete outfits for the customer.
               url: \${stylingAgent.url}
               protocolVersion: 0.3.0
-              name: Styling Agent
               version: 1.0.0
-              description: Recommends complete outfits for the customer.
               capabilities:
                 pushNotifications: false
               defaultInputModes:
@@ -121,11 +131,11 @@ registry:
         interfaces:
           a2a_v03:
             card:
+              name: Availability Agent
+              description: Verifies stock and sizes across Product 360 and the OMS.
               url: \${availabilityAgent.url}
               protocolVersion: 0.3.0
-              name: Availability Agent
               version: 1.0.0
-              description: Verifies stock and sizes across Product 360 and the OMS.
               capabilities:
                 pushNotifications: false
               defaultInputModes:
@@ -154,11 +164,11 @@ registry:
         interfaces:
           a2a_v03:
             card:
+              name: Loyalty Agent
+              description: Applies tier-specific loyalty perks.
               url: \${loyaltyAgent.url}
               protocolVersion: 0.3.0
-              name: Loyalty Agent
               version: 1.0.0
-              description: Applies tier-specific loyalty perks.
               capabilities:
                 pushNotifications: false
               defaultInputModes:
@@ -180,16 +190,9 @@ registry:
                     - application/json
                     - text/plain
   mcps:
-    customerMcp:
+    commerceMcp:
       info:
-        label: Customer MCP Server
-      metadata:
-        transport:
-          kind: streamableHttp
-          path: /mcp
-    orderMcp:
-      info:
-        label: Order MCP Server
+        label: Commerce MCP Server
       metadata:
         transport:
           kind: streamableHttp
@@ -217,16 +220,21 @@ context:
       ref:
         name: loyaltyAgent
       url: \${loyaltyAgent.url}
-    customer_mcp_connection:
+    commerce_mcp_connection:
       kind: mcp
       ref:
-        name: customerMcp
-      url: \${customerMcp.url}
-    order_mcp_connection:
-      kind: mcp
-      ref:
-        name: orderMcp
-      url: \${orderMcp.url}
+        name: commerceMcp
+      url: \${commerceMcp.url}
+      authentication:
+        kind: oauth2-obo
+        flow: oauth2-token-exchange
+        timeout: 50000
+        tokenEndpoint: \${oboKeycloak.tokenEndpoint}
+        clientId: \${oboKeycloak.clientId}
+        clientSecret: \${oboKeycloak.clientSecret}
+        targetType: audience
+        targetValue: commerce-mcp-obo
+        scope: openid
     openai_connection:
       kind: llm
       ref:
@@ -243,8 +251,8 @@ brokers:
       a2a:
         card:
           name: Vogue Premiere Styling Concierge
-          version: 1.0.0
           description: A personal luxury fashion assistant that handles styling, availability, loyalty, and orders.
+          version: 1.0.0
           capabilities:
             streaming: true
             pushNotifications: false
@@ -258,26 +266,22 @@ brokers:
             - id: vogue-style-concierge
               name: Vogue Style Concierge
               description: Handles customer-facing styling, availability, loyalty, and order interactions for Vogue Premiere.
+              examples:
+                - "I have a dinner in Napa next Saturday."
+                - "What loyalty perks do I have?"
+                - "Are these all in stock in my size?"
+                - "Place the order"
               tags:
                 - styling
                 - loyalty
                 - orders
                 - vogue
-              examples:
-                - Hi, this is Alex Chen. I have a dinner in Napa next Saturday and I'm looking for an outfit that's nicer than business casual, but not a full suit
-                - Can you check if all those products are available in my size?
-                - Show me my loyalty perks
-                - Place the order for the whole outfit.
               inputModes:
                 - application/json
                 - text/plain
               outputModes:
                 - application/json
                 - text/plain
-          supportedInterfaces:
-            - url: https://myOmniGateway/vogue_premiere/
-              protocolVersion: "1.0"
-              protocolBinding: JSONRPC
 `;
 
 export const BROKER_AGENT = `# @dialect: AGENTFABRIC=1.0
@@ -295,13 +299,14 @@ llm:
     kind: "OpenAI"
     model: "gpt-5-mini"
 
+
+# -- ACTION DEFINITIONS -------------------------------------------------------
+
 actions:
   fetch_customer_profile:
-    target: "mcp://customer_mcp_connection"
+    target: "mcp://commerce_mcp_connection"
     kind: "mcp:tool"
     tool_name: "get_customer_profile"
-    inputs:
-      customer_name: string
 
   send_to_styling_agent:
     target: "a2a://styling_agent_connection"
@@ -316,18 +321,21 @@ actions:
     kind: "a2a:send_message"
 
   get_order_status:
-    target: "mcp://order_mcp_connection"
+    target: "mcp://commerce_mcp_connection"
     kind: "mcp:tool"
     tool_name: "get_shipping_status"
     inputs:
-      orderId: string
+      order_id: string
 
   place_order:
-    target: "mcp://order_mcp_connection"
+    target: "mcp://commerce_mcp_connection"
     kind: "mcp:tool"
-    tool_name: "post_order"
+    tool_name: "create_order"
     inputs:
-      customerName: string
+      items: string
+
+
+# -- TRIGGER ------------------------------------------------------------------
 
 trigger customerTrigger:
   kind: "a2a"
@@ -335,13 +343,25 @@ trigger customerTrigger:
   on_message: ->
     transition to @executor.fetchProfile
 
+
+# -- STEP 1: FETCH CUSTOMER PROFILE ------------------------------------------
+# Deterministic executor: calls Commerce MCP to fetch the authenticated
+# customer's profile. Identity comes from the JWT — no input args. The
+# OBO-exchanged token (injected by commerce_mcp_connection's oauth2-obo config)
+# carries sub, which Commerce MCP decodes to return the correct persona's profile.
+# Downstream nodes reference @executor.fetchProfile.output.username to inline
+# the authenticated identity into A2A mock messages and other actions.
+
 executor fetchProfile:
-  description: "Calls the mock Customer MCP, which unconditionally returns Alex Chen. The \`customer_name\` input is required by the MCP but ignored by the mock."
+  description: "Calls Commerce MCP get_customer_profile. Identity travels in the OBO-exchanged token injected by the commerce_mcp_connection oauth2-obo config. Returns the authenticated persona's profile."
   do: ->
     run @actions.fetch_customer_profile
-      with customer_name = ""
+      with http_headers = {"Authorization": @request.headers["Authorization"]}
   on_exit: ->
     transition to @generator.classifyIntent
+
+
+# -- STEP 2: INTENT CLASSIFICATION -------------------------------------------
 
 generator classifyIntent:
   description: "Classifies the customer's primary intent."
@@ -363,6 +383,7 @@ generator classifyIntent:
       - Always pick one label. Even if the message is short, vague, or references unnamed items ("those items", "these", "it"), pick your best guess based on the words present. A downstream specialist agent will handle the actual work — it can ask the customer for clarification if needed.
       - Do NOT ask the customer any questions. Do NOT explain your reasoning. Do NOT include any assistant text.
       - The structured output alone is your response. Emit intent and stop.
+      - ALWAYS set the completion flags exactly as follows: additionalInputRequired=false, goalComplete=true, goalFailed=false, authRequired=false. NEVER set additionalInputRequired=true — downstream specialists handle any clarification. Your job is classify-and-emit only.
   prompt: ->
     | {!@request.payload.message.parts[0].text}
   outputs:
@@ -379,6 +400,9 @@ generator classifyIntent:
           - "multi"
   on_exit: ->
     transition to @router.intentRouter
+
+
+# -- STEP 3: INTENT ROUTING ---------------------------------------------------
 
 router intentRouter:
   description: "Routes the request to the appropriate handler based on the classified intent."
@@ -401,166 +425,238 @@ router intentRouter:
   otherwise:
     target: @orchestrator.multiOrchestrator
 
+
+# -- STYLING PATH -------------------------------------------------------------
+
 subagent stylingSubagent:
-  description: "Delegates to the Styling Agent for outfit recommendations."
+  description: "Delegates to the Styling Agent for outfit recommendations. Inlines the authenticated username so the mock's persona filter can route to the correct scenario."
   label: "Styling Subagent"
   llm: @llm.openai_mini
   system:
     instructions: |
       You are a styling coordinator for Vogue Premiere.
-      Step 1: Send the customer's full request to style_advisor (the Styling Agent).
+      Step 1: Send the customer's full request to style_advisor (the Styling Agent). Keep the "Customer: <username>" prefix intact — the downstream mock filters on it.
       Step 2: Return the Styling Agent's recommendation as the summary output.
   reasoning:
     instructions: ->
-      | Customer request: {!@request.payload.message.parts[0].text}
+      | Customer: {!@executor.fetchProfile.output.username} | Customer request: {!@request.payload.message.parts[0].text}
     actions:
       style_advisor: @actions.send_to_styling_agent
+    max_number_of_loops: 3
+    task_timeout_secs: 60
     outputs:
       properties:
         summary:
           type: "string"
           description: "The personalized styling recommendation from the Styling Agent"
-    max_number_of_loops: 3
-    task_timeout_secs: 60
   on_exit: ->
     transition to @generator.stylingSummary
 
 generator stylingSummary:
   description: "Generates the styling reply."
   system:
-    instructions: |
-      You generate warm, exclusive, personalized styling replies for Vogue Premiere customers.
+    instructions: "You generate warm, exclusive, personalized styling replies for Vogue Premiere customers."
   prompt: ->
     | Original customer request: {!@request.payload.message.parts[0].text}. Styling recommendation: {!@subagent.stylingSubagent.output.summary}
   on_exit: ->
     transition to @echo.stylingResponse
 
 echo stylingResponse:
-  description: "echo stylingResponse"
   kind: "a2a:status_update_event"
   state: "TASK_STATE_COMPLETED"
-  message: a2a.message({messageId: uuid(), parts: [a2a.textPart(@generator.stylingSummary.output)]})
+  message: a2a.message({
+    messageId: uuid(),
+    parts: [
+      a2a.textPart(@generator.stylingSummary.output),
+      a2a.dataPart({
+        data: {
+          "intent": "styling",
+          "identity": @executor.fetchProfile.output.username,
+          "obo_exchanged_token": @executor.fetchProfile.output.obo_exchanged_token,
+          "nodes_json": "[\\"fetchProfile\\", \\"classifyIntent\\", \\"stylingSubagent\\", \\"stylingSummary\\"]",
+          "agents_called_json": "[\\"commerce_mcp_connection\\", \\"styling_agent_connection\\"]",
+          "tools_called_json": "[\\"get_customer_profile\\"]",
+          "llm_calls_json": "[\\"classifyIntent\\", \\"stylingSubagent\\", \\"stylingSummary\\"]"
+        }
+      })
+    ]
+  })
+
+
+# -- AVAILABILITY PATH --------------------------------------------------------
 
 subagent availabilitySubagent:
-  description: "Delegates to the Availability Agent for stock and sizing checks."
+  description: "Delegates to the Availability Agent for stock and sizing checks. Inlines the authenticated username so the mock's persona filter can route to the correct scenario."
   label: "Availability Subagent"
   llm: @llm.openai_mini
   system:
     instructions: |
       You are an availability coordinator for Vogue Premiere.
-      Step 1: Send the customer's full request to check_availability (the Availability Agent) for a stock, sizing, and inventory check.
+      Step 1: Send the customer's full request to check_availability (the Availability Agent) for a stock, sizing, and inventory check. Keep the "Customer: <username>" prefix intact — the downstream mock filters on it.
       Step 2: Return the Availability Agent's response as the summary output.
   reasoning:
     instructions: ->
-      | Customer request: {!@request.payload.message.parts[0].text}
+      | Customer: {!@executor.fetchProfile.output.username} | Customer request: {!@request.payload.message.parts[0].text}
     actions:
       check_availability: @actions.send_to_availability_agent
+    max_number_of_loops: 3
+    task_timeout_secs: 60
     outputs:
       properties:
         summary:
           type: "string"
           description: "The availability information from the Availability Agent"
-    max_number_of_loops: 3
-    task_timeout_secs: 60
   on_exit: ->
     transition to @generator.availabilitySummary
 
 generator availabilitySummary:
   description: "Generates the availability reply."
   system:
-    instructions: |
-      You generate warm, exclusive, personalized availability replies for Vogue Premiere customers.
+    instructions: "You generate warm, exclusive, personalized availability replies for Vogue Premiere customers."
   prompt: ->
     | Original customer request: {!@request.payload.message.parts[0].text}. Availability check result: {!@subagent.availabilitySubagent.output.summary}
   on_exit: ->
     transition to @echo.availabilityResponse
 
 echo availabilityResponse:
-  description: "echo availabilityResponse"
   kind: "a2a:status_update_event"
   state: "TASK_STATE_COMPLETED"
-  message: a2a.message({messageId: uuid(), parts: [a2a.textPart(@generator.availabilitySummary.output)]})
+  message: a2a.message({
+    messageId: uuid(),
+    parts: [
+      a2a.textPart(@generator.availabilitySummary.output),
+      a2a.dataPart({
+        data: {
+          "intent": "availability",
+          "identity": @executor.fetchProfile.output.username,
+          "obo_exchanged_token": @executor.fetchProfile.output.obo_exchanged_token,
+          "nodes_json": "[\\"fetchProfile\\", \\"classifyIntent\\", \\"availabilitySubagent\\", \\"availabilitySummary\\"]",
+          "agents_called_json": "[\\"commerce_mcp_connection\\", \\"availability_agent_connection\\"]",
+          "tools_called_json": "[\\"get_customer_profile\\"]",
+          "llm_calls_json": "[\\"classifyIntent\\", \\"availabilitySubagent\\", \\"availabilitySummary\\"]"
+        }
+      })
+    ]
+  })
+
+
+# -- LOYALTY PATH -------------------------------------------------------------
 
 subagent loyaltySubagent:
-  description: "Handles loyalty program queries by delegating to the Loyalty Agent."
+  description: "Handles loyalty program queries by delegating to the Loyalty Agent. Inlines the authenticated username so the mock's persona filter can route to the correct scenario."
   label: "Loyalty Subagent"
   llm: @llm.openai_mini
   system:
     instructions: |
       You are a loyalty program assistant for Vogue Premiere.
-      Step 1: Send the customer's full request to loyalty_lookup (the Loyalty Agent) to retrieve their points balance, rewards, and membership tier.
+      Step 1: Send the customer's full request to loyalty_lookup (the Loyalty Agent) to retrieve their points balance, rewards, and membership tier. Keep the "Customer: <username>" prefix intact — the downstream mock filters on it.
       Step 2: Return the Loyalty Agent's response as the summary output.
   reasoning:
     instructions: ->
-      | Customer request: {!@request.payload.message.parts[0].text}
+      | Customer: {!@executor.fetchProfile.output.username} | Customer request: {!@request.payload.message.parts[0].text}
     actions:
       loyalty_lookup: @actions.send_to_loyalty_agent
+    max_number_of_loops: 3
+    task_timeout_secs: 30
     outputs:
       properties:
         summary:
           type: "string"
           description: "The loyalty program information from the Loyalty Agent"
-    max_number_of_loops: 3
-    task_timeout_secs: 30
   on_exit: ->
     transition to @generator.loyaltySummary
 
 generator loyaltySummary:
   description: "Generates the loyalty reply."
   system:
-    instructions: |
-      You generate warm, exclusive, personalized loyalty replies for Vogue Premiere customers.
+    instructions: "You generate warm, exclusive, personalized loyalty replies for Vogue Premiere customers."
   prompt: ->
     | Original customer request: {!@request.payload.message.parts[0].text}. Loyalty information: {!@subagent.loyaltySubagent.output.summary}
   on_exit: ->
     transition to @echo.loyaltyResponse
 
 echo loyaltyResponse:
-  description: "echo loyaltyResponse"
   kind: "a2a:status_update_event"
   state: "TASK_STATE_COMPLETED"
-  message: a2a.message({messageId: uuid(), parts: [a2a.textPart(@generator.loyaltySummary.output)]})
+  message: a2a.message({
+    messageId: uuid(),
+    parts: [
+      a2a.textPart(@generator.loyaltySummary.output),
+      a2a.dataPart({
+        data: {
+          "intent": "loyalty",
+          "identity": @executor.fetchProfile.output.username,
+          "obo_exchanged_token": @executor.fetchProfile.output.obo_exchanged_token,
+          "nodes_json": "[\\"fetchProfile\\", \\"classifyIntent\\", \\"loyaltySubagent\\", \\"loyaltySummary\\"]",
+          "agents_called_json": "[\\"commerce_mcp_connection\\", \\"loyalty_agent_connection\\"]",
+          "tools_called_json": "[\\"get_customer_profile\\"]",
+          "llm_calls_json": "[\\"classifyIntent\\", \\"loyaltySubagent\\", \\"loyaltySummary\\"]"
+        }
+      })
+    ]
+  })
+
+
+# -- ORDER STATUS PATH --------------------------------------------------------
 
 subagent orderSubagent:
-  description: "Retrieves the status of an existing order using the Order MCP."
+  description: "Retrieves the status of an existing order via Commerce MCP. Commerce MCP enforces ownership at the resource layer — cross-user lookups return access_denied."
   label: "Order Status Subagent"
   llm: @llm.openai_mini
   system:
     instructions: |
       You are an order status assistant for Vogue Premiere.
-      Step 1: Extract the order ID from the customer's message.
-      Step 2: Call check_order_status with the extracted order ID.
-      Step 3: Return the order status details as the summary output. If no order ID is found in the message, set summary to "No order ID provided. Please share your order number and I will look it up for you."
+      Step 1: Extract the order_id from the customer's message.
+      Step 2: Call check_order_status with the extracted order_id. The authenticated customer's identity travels in the OBO-exchanged token injected by commerce_mcp_connection.
+      Step 3: Return the order status details as the summary output. If Commerce MCP returns an access_denied error, surface that to the customer as-is. If no order_id is found in the message, set summary to "No order ID provided. Please share your order number and I will look it up for you."
   reasoning:
     instructions: ->
       | Customer request: {!@request.payload.message.parts[0].text}
     actions:
       check_order_status: @actions.get_order_status
-        with orderId = ...
+        with order_id = ...
+        with http_headers = {"Authorization": @request.headers["Authorization"]}
+    max_number_of_loops: 3
     outputs:
       properties:
         summary:
           type: "string"
-          description: "The order status information retrieved from the Order MCP"
-    max_number_of_loops: 3
+          description: "The order status information retrieved from Commerce MCP"
   on_exit: ->
     transition to @generator.orderStatusSummary
 
 generator orderStatusSummary:
   description: "Generates the order status reply."
   system:
-    instructions: |
-      You generate warm, exclusive, personalized order status replies for Vogue Premiere customers.
+    instructions: "You generate warm, exclusive, personalized order status replies for Vogue Premiere customers."
   prompt: ->
     | Original customer request: {!@request.payload.message.parts[0].text}. Order status result: {!@subagent.orderSubagent.output.summary}
   on_exit: ->
     transition to @echo.orderStatusResponse
 
 echo orderStatusResponse:
-  description: "echo orderStatusResponse"
   kind: "a2a:status_update_event"
   state: "TASK_STATE_COMPLETED"
-  message: a2a.message({messageId: uuid(), parts: [a2a.textPart(@generator.orderStatusSummary.output)]})
+  message: a2a.message({
+    messageId: uuid(),
+    parts: [
+      a2a.textPart(@generator.orderStatusSummary.output),
+      a2a.dataPart({
+        data: {
+          "intent": "order_status",
+          "identity": @executor.fetchProfile.output.username,
+          "obo_exchanged_token": @executor.fetchProfile.output.obo_exchanged_token,
+          "nodes_json": "[\\"fetchProfile\\", \\"classifyIntent\\", \\"orderSubagent\\", \\"orderStatusSummary\\"]",
+          "agents_called_json": "[\\"commerce_mcp_connection\\"]",
+          "tools_called_json": "[\\"get_customer_profile\\", \\"get_shipping_status\\"]",
+          "llm_calls_json": "[\\"classifyIntent\\", \\"orderSubagent\\", \\"orderStatusSummary\\"]"
+        }
+      })
+    ]
+  })
+
+
+# -- ORDER COMMIT PATH (ROUTER-GATED) -----------------------------------------
 
 generator confirmIntent:
   description: "Determines whether the customer's message contains an explicit order-placement confirmation phrase."
@@ -575,6 +671,7 @@ generator confirmIntent:
       Rules:
       - Always emit one value. Never ask the customer questions.
       - Do NOT include any assistant text or reasoning. The structured output is your only response.
+      - ALWAYS set the completion flags exactly as follows: additionalInputRequired=false, goalComplete=true, goalFailed=false, authRequired=false. NEVER set additionalInputRequired=true — the router handles what happens next based on has_explicit_confirmation. Your job is emit-and-stop.
   prompt: ->
     | {!@request.payload.message.parts[0].text}
   outputs:
@@ -595,15 +692,19 @@ router orderConfirmRouter:
     target: @echo.confirmationRequiredEcho
 
 executor orderCommitExecutor:
-  description: "Places the order via the Order MCP tool. Irreversible — gated by orderConfirmRouter."
+  description: "Places the order via Commerce MCP's create_order tool. Identity travels in the OBO-exchanged token injected by commerce_mcp_connection, so the confirmation is persona-scoped. Irreversible — gated by orderConfirmRouter."
   do: ->
     run @actions.place_order
-      with customerName = "Alex Chen"
+      with items = "your selected items"
+      with http_headers = {"Authorization": @request.headers["Authorization"]}
   on_exit: ->
     transition to @echo.orderPlacedEcho
 
+
+# -- MULTI-INTENT PATH --------------------------------------------------------
+
 orchestrator multiOrchestrator:
-  description: "Handles multi-intent requests by coordinating styling, availability, and loyalty agents."
+  description: "Handles multi-intent requests by coordinating styling, availability, and loyalty agents. Inlines the authenticated username so downstream mocks filter to the correct persona."
   label: "Multi-Intent Orchestrator"
   llm: @llm.openai_mini
   system:
@@ -611,63 +712,99 @@ orchestrator multiOrchestrator:
       You are a multi-intent coordinator for Vogue Premiere. The customer's request spans multiple areas. Follow these steps:
 
       Step 1: Identify which of the following intents are present: styling, availability, loyalty.
-      Step 2: For each identified intent, call the corresponding agent:
+      Step 2: For each identified intent, call the corresponding agent. Keep the "Customer: <username>" prefix intact when forwarding the customer's message — the downstream mocks filter on it.
         - Styling intent → style_advisor
         - Availability intent → check_availability
         - Loyalty intent → loyalty_lookup
       Step 3: Combine all agent responses into a unified summary output that addresses each intent in the customer's message.
   reasoning:
     instructions: ->
-      | Customer request: {!@request.payload.message.parts[0].text}
+      | Customer: {!@executor.fetchProfile.output.username} | Customer request: {!@request.payload.message.parts[0].text}
     actions:
       style_advisor: @actions.send_to_styling_agent
       check_availability: @actions.send_to_availability_agent
       loyalty_lookup: @actions.send_to_loyalty_agent
+    max_number_of_loops: 8
+    task_timeout_secs: 90
     outputs:
       properties:
         summary:
           type: "string"
           description: "A unified response combining all relevant agent outputs"
-    max_number_of_loops: 8
-    task_timeout_secs: 90
   on_exit: ->
     transition to @generator.multiSummary
 
 generator multiSummary:
   description: "Generates the multi-intent reply."
   system:
-    instructions: |
-      You generate warm, exclusive, personalized multi-intent replies for Vogue Premiere customers.
+    instructions: "You generate warm, exclusive, personalized multi-intent replies for Vogue Premiere customers."
   prompt: ->
     | Original customer request: {!@request.payload.message.parts[0].text}. Combined agent results: {!@orchestrator.multiOrchestrator.output.summary}
   on_exit: ->
     transition to @echo.multiResponse
 
 echo multiResponse:
-  description: "echo multiResponse"
-  kind: "a2a:status_update_event"
-  state: "TASK_STATE_COMPLETED"
-  message: a2a.message({messageId: uuid(), parts: [a2a.textPart(@generator.multiSummary.output)]})
-
-echo confirmationRequiredEcho:
-  description: "echo confirmationRequiredEcho"
   kind: "a2a:status_update_event"
   state: "TASK_STATE_COMPLETED"
   message: a2a.message({
     messageId: uuid(),
     parts: [
-      a2a.textPart("To complete your order, please confirm with a phrase such as 'place the order' or 'confirm my order'. What would you like to do?")
+      a2a.textPart(@generator.multiSummary.output),
+      a2a.dataPart({
+        data: {
+          "intent": "multi",
+          "identity": @executor.fetchProfile.output.username,
+          "obo_exchanged_token": @executor.fetchProfile.output.obo_exchanged_token,
+          "nodes_json": "[\\"fetchProfile\\", \\"classifyIntent\\", \\"multiOrchestrator\\", \\"multiSummary\\"]",
+          "tools_called_json": "[\\"get_customer_profile\\"]",
+          "llm_calls_json": "[\\"classifyIntent\\", \\"multiOrchestrator\\", \\"multiSummary\\"]"
+        }
+      })
+    ]
+  })
+
+
+# -- ECHO NODES ---------------------------------------------------------------
+
+echo confirmationRequiredEcho:
+  kind: "a2a:status_update_event"
+  state: "TASK_STATE_COMPLETED"
+  message: a2a.message({
+    messageId: uuid(),
+    parts: [
+      a2a.textPart("To complete your order, please confirm with a phrase such as 'place the order' or 'confirm my order'. What would you like to do?"),
+      a2a.dataPart({
+        data: {
+          "intent": "confirmation_required",
+          "identity": @executor.fetchProfile.output.username,
+          "obo_exchanged_token": @executor.fetchProfile.output.obo_exchanged_token,
+          "nodes_json": "[\\"fetchProfile\\", \\"classifyIntent\\", \\"confirmIntent\\"]",
+          "agents_called_json": "[\\"commerce_mcp_connection\\"]",
+          "tools_called_json": "[\\"get_customer_profile\\"]",
+          "llm_calls_json": "[\\"classifyIntent\\", \\"confirmIntent\\"]"
+        }
+      })
     ]
   })
 
 echo orderPlacedEcho:
-  description: "echo orderPlacedEcho"
   kind: "a2a:status_update_event"
   state: "TASK_STATE_COMPLETED"
   message: a2a.message({
     messageId: uuid(),
     parts: [
-      a2a.textPart("Your order has been placed successfully. Thank you for shopping with Vogue Premiere. You will receive a confirmation shortly.")
+      a2a.textPart("Your order has been placed successfully. Thank you for shopping with Vogue Premiere. You will receive a confirmation shortly."),
+      a2a.dataPart({
+        data: {
+          "intent": "order_commit",
+          "identity": @executor.fetchProfile.output.username,
+          "obo_exchanged_token": @executor.fetchProfile.output.obo_exchanged_token,
+          "nodes_json": "[\\"fetchProfile\\", \\"classifyIntent\\", \\"confirmIntent\\", \\"orderCommitExecutor\\"]",
+          "agents_called_json": "[\\"commerce_mcp_connection\\"]",
+          "tools_called_json": "[\\"get_customer_profile\\", \\"create_order\\"]",
+          "llm_calls_json": "[\\"classifyIntent\\", \\"confirmIntent\\"]"
+        }
+      })
     ]
   })
 `;

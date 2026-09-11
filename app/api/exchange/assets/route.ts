@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireAuth } from "@/lib/api/auth-middleware";
 import { validationError } from "@/lib/api/error-responses";
 import { listAllExchangeAssetsInOrg } from "@/lib/mulesoft/exchange-search";
+import { REMOVAL_TARGET_TYPES } from "@/lib/lifecycle-server/contracts";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +17,11 @@ export const dynamic = "force-dynamic";
  */
 const ListRequestSchema = z.object({
   organizationId: z.string().min(1),
+  types: z.array(z.enum(REMOVAL_TARGET_TYPES)).optional(),
+  includeAllTypes: z.boolean().default(false),
 });
+
+const DEFAULT_SCAN_TYPES = ["agent", "agent-network", "mcp", "llm"] as const;
 
 export interface ExchangeGroupAsset {
   groupId: string;
@@ -31,18 +36,27 @@ export async function GET(request: NextRequest) {
   if (authResult instanceof NextResponse) return authResult;
 
   const { baseUrl, accessToken } = authResult;
+  const requestedTypesRaw = request.nextUrl.searchParams
+    .getAll("type")
+    .map((value) => value.trim().toLowerCase())
+    .filter((value) => value.length > 0);
+  const includeAllTypes = requestedTypesRaw.includes("all");
+  const requestedTypes = requestedTypesRaw.filter((value) => value !== "all");
   const parseResult = ListRequestSchema.safeParse({
     organizationId: request.nextUrl.searchParams.get("organizationId"),
+    types: requestedTypes.length > 0 ? requestedTypes : undefined,
+    includeAllTypes,
   });
 
   if (!parseResult.success) {
     return validationError(parseResult.error);
   }
 
-  const { organizationId } = parseResult.data;
+  const { organizationId, types, includeAllTypes: useAllTypes } = parseResult.data;
   const authHeader = { Authorization: `Bearer ${accessToken}` };
+  const scanTypes = useAllTypes ? [] : (types ?? [...DEFAULT_SCAN_TYPES]);
 
-  const hits = await listAllExchangeAssetsInOrg(baseUrl, organizationId, authHeader);
+  const hits = await listAllExchangeAssetsInOrg(baseUrl, organizationId, authHeader, fetch, 250, scanTypes);
 
   const assets: ExchangeGroupAsset[] = hits.map((hit) => ({
     groupId: hit.groupId,
