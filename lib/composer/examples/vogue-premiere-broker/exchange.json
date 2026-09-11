@@ -39,7 +39,7 @@
       "commerceMcp": {
         "url": {
           "description": "Commerce MCP server URL (CloudHub-deployed Mule app that validates JWTs and enforces persona ownership via SQL). Exposes get_customer_profile, get_shipping_status, and create_order.",
-          "default": "REPLACE_ME",
+          "default": "https://commerce-mcp-4sx6ke.rajrd4-2.usa-e1.cloudhub.io",
           "secret": false
         }
       },
@@ -51,24 +51,22 @@
         },
         "clientId": {
           "description": "Confidential OBO client id (also the target audience commerce-mcp-obo).",
-          "default": "REPLACE_ME",
+          "default": "commerce-mcp-obo",
           "secret": false
         },
         "clientSecret": {
           "description": "Confidential OBO client secret.",
-          "default": "REPLACE_ME",
           "secret": true
         }
       },
       "openai": {
         "url": {
-          "description": "Own metered Model Proxy (test-proxy) in this org. /models now 200 via conditional DW header-injection (see reference/docs/llm-proxy.md). Upstream = Azure demos proxy.",
-          "default": "https://llm-proxy.workshops.mulesoft.com/openai/v1/",
+          "description": "OpenAI (or proxy) base URL.",
+          "default": "https://api.openai.com/v1/",
           "secret": false
         },
         "apiKey": {
           "description": "OpenAI API key",
-          "default": "REPLACE_ME",
           "secret": true
         }
       }
