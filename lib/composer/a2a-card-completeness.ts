@@ -166,7 +166,12 @@ export function buildA2aCardCompleteness(card: BrokerCard): A2aCardCompleteness 
           anchor: A2A_CARD_ANCHOR.endpointUrl,
           label: "A2A endpoint URL",
           jsonPath: "supportedInterfaces[0].url",
-          tier: "required",
+          // The official A2A protocol marks supported_interfaces[].url REQUIRED,
+          // but MuleSoft's bundled a2a_v1.json schema (and the deploy gate) do
+          // not — and the public URL is often assigned by the Omni Gateway at
+          // deploy. We build MuleSoft objects, so we follow MuleSoft's schema
+          // and treat this as recommended rather than a blocking error.
+          tier: "recommended",
           status: itemStatus(endpointUrl.length > 0, pathHasError(schemaByPath, "supportedInterfaces")),
           valuePreview:
             endpointUrl.length > 0

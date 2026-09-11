@@ -11,11 +11,15 @@ export const EXCHANGE_JSON = `{
   "classifier": "agentic-network",
   "organizationId": "{ENTER YOUR ORG ID HERE}",
   "descriptorVersion": "1.0.0",
-  "apiVersion": "v1.0",
+  "apiVersion": "v1",
   "tags": [
     "agentscript",
     "vogue-premiere"
   ],
+  "groupId": "{ENTER YOUR ORG ID HERE}",
+  "assetId": "vogue-premiere-broker-v2-template",
+  "version": "1.0.0",
+  "dependencies": [],
   "metadata": {
     "variables": {
       "stylingAgent": {
@@ -41,7 +45,7 @@ export const EXCHANGE_JSON = `{
       },
       "commerceMcp": {
         "url": {
-          "description": "Commerce MCP server URL (workshop-provisioned CloudHub Mule app that validates JWTs and enforces persona ownership via SQL). Exposes get_customer_profile, get_shipping_status, and create_order. Set this to your workshop tenant's Commerce MCP URL.",
+          "description": "Commerce MCP server URL (CloudHub-deployed Mule app that validates JWTs and enforces persona ownership via SQL). Exposes get_customer_profile, get_shipping_status, and create_order.",
           "default": "REPLACE_ME",
           "secret": false
         }
@@ -65,7 +69,7 @@ export const EXCHANGE_JSON = `{
       },
       "openai": {
         "url": {
-          "description": "OpenAI (or proxy) base URL. Defaults to the workshop's metered Model Proxy.",
+          "description": "Own metered Model Proxy (test-proxy) in this org. /models now 200 via conditional DW header-injection (see reference/docs/llm-proxy.md). Upstream = Azure demos proxy.",
           "default": "https://llm-proxy.workshops.mulesoft.com/openai/v1/",
           "secret": false
         },
@@ -76,11 +80,7 @@ export const EXCHANGE_JSON = `{
         }
       }
     }
-  },
-  "dependencies": [],
-  "groupId": "{ENTER YOUR ORG ID HERE}",
-  "assetId": "vogue-premiere-broker-v2-template",
-  "version": "1.0.0"
+  }
 }
 `;
 
@@ -281,8 +281,7 @@ brokers:
                 - text/plain
               outputModes:
                 - application/json
-                - text/plain
-`;
+                - text/plain`;
 
 export const BROKER_AGENT = `# @dialect: AGENTFABRIC=1.0
 
@@ -806,5 +805,4 @@ echo orderPlacedEcho:
         }
       })
     ]
-  })
-`;
+  })`;
